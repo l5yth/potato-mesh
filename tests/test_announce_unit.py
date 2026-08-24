@@ -273,40 +273,6 @@ def _stub_dogfeed(monkeypatch, *, private=False, numbers=(12, 50)):
     monkeypatch.setattr(announce, "fetch_activity", lambda url, proto, **_kw: numbers)
 
 
-class TestAnnouncementGates:
-    """Tests for :func:`announce.announcements_enabled` (SPEC MA7 a)."""
-
-    def test_gate_disabled_by_default(self, monkeypatch):
-        """Off by default: ANNOUNCE unset means no unsolicited TX."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", False)
-        monkeypatch.setattr(announce.config, "RX_ONLY", False)
-        assert announce.announcements_enabled() is False
-
-    def test_gate_enabled_when_opted_in(self, monkeypatch):
-        """Enabled when the operator opts in and RX_ONLY is off."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
-        monkeypatch.setattr(announce.config, "RX_ONLY", False)
-        assert announce.announcements_enabled() is True
-
-    def test_gate_disabled_when_rx_only(self, monkeypatch):
-        """RX_ONLY forbids every ingestor TX and so overrides the opt-in."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
-        monkeypatch.setattr(announce.config, "RX_ONLY", True)
-        assert announce.announcements_enabled() is False
-
-    def test_gate_disabled_when_rx_only_and_not_opted_in(self, monkeypatch):
-        """Both gates closed is still closed (no double-negative surprise)."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", False)
-        monkeypatch.setattr(announce.config, "RX_ONLY", True)
-        assert announce.announcements_enabled() is False
-
-    def test_gate_defaults_to_off_when_attribute_missing(self, monkeypatch):
-        """A config module without ``ANNOUNCE`` fails closed, not open."""
-        monkeypatch.delattr(announce.config, "ANNOUNCE", raising=False)
-        monkeypatch.setattr(announce.config, "RX_ONLY", False)
-        assert announce.announcements_enabled() is False
-
-
 class TestAnnounceDue:
     """Tests for :func:`announce.announce_due` (SPEC MA7 d / MA8)."""
 
@@ -314,7 +280,9 @@ class TestAnnounceDue:
         """Withheld until 24 h after start."""
         now = 1_000_000
         assert (
-            announce.announce_due(start_time=now - 1000, last_announce=None, now=now)
+            announce.announce_due(
+                start_monotonic=now - 1000, last_announce=None, now=now
+            )
             is False
         )
 
@@ -322,7 +290,9 @@ class TestAnnounceDue:
         """Eligible once 24 h have elapsed since start."""
         now = 1_000_000
         assert (
-            announce.announce_due(start_time=now - 90_000, last_announce=None, now=now)
+            announce.announce_due(
+                start_monotonic=now - 90_000, last_announce=None, now=now
+            )
             is True
         )
 
@@ -331,7 +301,7 @@ class TestAnnounceDue:
         now = 1_000_000
         assert (
             announce.announce_due(
-                start_time=now - 200_000, last_announce=now - 3600, now=now
+                start_monotonic=now - 200_000, last_announce=now - 3600, now=now
             )
             is False
         )
@@ -341,7 +311,7 @@ class TestAnnounceDue:
         now = 1_000_000
         assert (
             announce.announce_due(
-                start_time=now - 200_000, last_announce=now - 90_000, now=now
+                start_monotonic=now - 200_000, last_announce=now - 90_000, now=now
             )
             is True
         )
@@ -349,6 +319,16 @@ class TestAnnounceDue:
 
 class TestSendAnnouncementToInstance:
     """Tests for :func:`announce.send_announcement_to_instance` (MA6/MA7)."""
+
+    @pytest.fixture(autouse=True)
+    def _permit(self, permit_tx):
+        """Isolate these tests from the transmit policy.
+
+        Transmission is off by default, so without this every test here would
+        stop at the gate and pass vacuously. The gate itself is covered by
+        ``test_refuses_when_transmit_policy_closed`` below and by
+        ``tests/test_tx_policy_unit.py``.
+        """
 
     def test_sends_the_built_line_when_public(self, monkeypatch):
         """A public instance receives the dogfed announcement line."""
@@ -452,9 +432,37 @@ class TestSendAnnouncementToInstance:
         )
         assert any("skipped: instance private" in msg for msg, _meta in logs)
 
+    def test_refuses_when_transmit_policy_closed(self, monkeypatch):
+        """The exported send path re-checks the policy itself.
+
+        ``send_announcement_to_instance`` is in ``__all__`` and dispatches to a
+        duck-typed provider method, so a provider written without the gate must
+        still not be able to transmit.
+        """
+        monkeypatch.setattr(announce.config, "TX_ENABLED", False)
+        _stub_dogfeed(monkeypatch)
+        provider = _RecordingProvider()
+        assert (
+            announce.send_announcement_to_instance(
+                provider, "IFACE", "https://x", "meshtastic"
+            )
+            is False
+        )
+        assert provider.sent == []
+
 
 class TestRunAnnouncementCycle:
     """Tests for :func:`announce.run_announcement_cycle` (SPEC MA8 per-domain)."""
+
+    @pytest.fixture(autouse=True)
+    def _permit(self, permit_tx):
+        """Isolate these tests from the transmit policy.
+
+        Transmission is off by default, so without this every test here would
+        stop at the gate and pass vacuously. The gate itself is covered by
+        ``test_refuses_when_transmit_policy_closed`` below and by
+        ``tests/test_tx_policy_unit.py``.
+        """
 
     def test_domains_announces_each_configured_instance(self, monkeypatch):
         """Every configured instance is announced to, with its own link."""
@@ -494,21 +502,23 @@ class TestMaybeRunAnnouncements:
 
     def test_gate_noop_when_not_enabled(self, monkeypatch):
         """No cycle runs and last_announce is unchanged when RX_ONLY forbids TX."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
+        monkeypatch.setattr(announce.config, "TX_ENABLED", True)
+        monkeypatch.setattr(announce.config, "TX_ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", True)
         ran = []
         monkeypatch.setattr(
             announce, "run_announcement_cycle", lambda *a, **k: ran.append(True)
         )
         result = announce.maybe_run_announcements(
-            "P", "I", start_time=0, last_announce=42.0, now=1_000_000
+            "P", "I", start_monotonic=0, last_announce=42.0, now=1_000_000
         )
         assert result == 42.0
         assert ran == []
 
     def test_cadence_noop_when_not_due(self, monkeypatch):
         """No cycle runs before the 24 h delay; last_announce is unchanged."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
+        monkeypatch.setattr(announce.config, "TX_ENABLED", True)
+        monkeypatch.setattr(announce.config, "TX_ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", False)
         ran = []
         monkeypatch.setattr(
@@ -516,14 +526,15 @@ class TestMaybeRunAnnouncements:
         )
         now = 1_000_000
         result = announce.maybe_run_announcements(
-            "P", "I", start_time=now - 1000, last_announce=None, now=now
+            "P", "I", start_monotonic=now - 1000, last_announce=None, now=now
         )
         assert result is None
         assert ran == []
 
     def test_cadence_runs_cycle_and_advances_timestamp(self, monkeypatch):
         """When due, the cycle runs and last_announce advances to now."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
+        monkeypatch.setattr(announce.config, "TX_ENABLED", True)
+        monkeypatch.setattr(announce.config, "TX_ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", False)
         ran = []
         monkeypatch.setattr(
@@ -533,16 +544,64 @@ class TestMaybeRunAnnouncements:
         )
         now = 1_000_000
         result = announce.maybe_run_announcements(
-            "P", "IFACE", start_time=now - 90_000, last_announce=None, now=now
+            "P", "IFACE", start_monotonic=now - 90_000, last_announce=None, now=now
         )
         assert result == now
         assert ran == [("P", "IFACE")]
 
-    def test_cadence_defaults_now_to_wall_clock(self, monkeypatch):
-        """With ``now`` omitted the current wall clock is used (gate-off path)."""
-        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
-        monkeypatch.setattr(announce.config, "RX_ONLY", True)
-        result = announce.maybe_run_announcements(
-            "P", "I", start_time=0, last_announce=7.0
+    def test_defaults_now_to_monotonic_not_wall_clock(self, monkeypatch):
+        """With ``now`` omitted the *monotonic* clock is used, never wall clock.
+
+        Guards the NTP-step defect: a wall-clock basis lets a clock jump on an
+        RTC-less host clear the 24 h anti-spam delay instantly.
+        """
+        monkeypatch.setattr(announce.config, "TX_ENABLED", True)
+        monkeypatch.setattr(announce.config, "TX_ANNOUNCE", True)
+        monkeypatch.setattr(announce.config, "RX_ONLY", False)
+        monkeypatch.setattr(announce.time, "monotonic", lambda: 500_000.0)
+        monkeypatch.setattr(
+            announce.time, "time", lambda: pytest.fail("wall clock consulted")
         )
-        assert result == 7.0
+        ran = []
+        monkeypatch.setattr(
+            announce, "run_announcement_cycle", lambda *a, **k: ran.append(True)
+        )
+        # 500_000 s since start comfortably exceeds the 24 h delay.
+        result = announce.maybe_run_announcements(
+            "P", "I", start_monotonic=0.0, last_announce=None
+        )
+        assert result == 500_000.0
+        assert ran == [True]
+
+    @pytest.mark.parametrize(
+        ("flags", "expected_gate"),
+        [
+            ({}, "TX_ENABLED"),
+            ({"TX_ANNOUNCE": True}, "TX_ENABLED"),
+            ({"TX_ENABLED": True}, "TX_ANNOUNCE"),
+            ({"TX_ENABLED": True, "TX_ANNOUNCE": True, "RX_ONLY": True}, "RX_ONLY"),
+        ],
+    )
+    def test_suppressed_paths_run_no_cycle_and_name_the_gate(
+        self, monkeypatch, capsys, flags, expected_gate
+    ):
+        """Every closed-gate path is a silent-on-air no-op that logs *why*.
+
+        The default (no flags set) is the case every deployment now hits, and it
+        was previously exercised only at the predicate level — never through the
+        daemon entry point, so a reordering that ran the cycle before the gate
+        would not have been caught.
+        """
+        monkeypatch.setattr(announce.config, "DEBUG", True)
+        for name in ("TX_ENABLED", "TX_ANNOUNCE", "RX_ONLY"):
+            monkeypatch.setattr(announce.config, name, flags.get(name, False))
+        ran = []
+        monkeypatch.setattr(
+            announce, "run_announcement_cycle", lambda *a, **k: ran.append(True)
+        )
+        result = announce.maybe_run_announcements(
+            "P", "I", start_monotonic=0, last_announce=42.0, now=1_000_000
+        )
+        assert result == 42.0
+        assert ran == []
+        assert f"blocked_by={expected_gate!r}" in capsys.readouterr().out

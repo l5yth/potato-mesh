@@ -114,10 +114,10 @@ The web app can be configured with environment variables (defaults shown):
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat in UDP transport (which cannot auto-detect "self"). |
-| `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Seconds between MeshCore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h — when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
+| `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | **Requires `TX_ENABLED=1`** (polling other nodes is a transmission). Seconds between MeshCore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h — when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between MeshCore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
-| `ANNOUNCE` | `0` | Set to `1` to let the ingestor broadcast a one-line activity summary (`"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. <INSTANCE_DOMAIN>"`) on its default channel — at most once per 24 h, and never in the first 24 h after start. **Off by default**: it is the ingestor's only unsolicited transmission on a shared human channel, and communities differ on whether automated traffic is welcome there. `RX_ONLY=1` overrides it. |
-| `RX_ONLY` | `0` | Set to `1` to forbid every ingestor-initiated mesh transmission (receive-only listening post). Disables the MeshCore contact telemetry/status polls and the `ANNOUNCE` activity broadcast; local companion-link reads (self telemetry, roster, channels) continue. |
+| `TX_ENABLED` | `0` | Master switch for **everything the ingestor puts on the air**. Off by default — the ingestor is a listener. Set to `1` to allow transmitting; this is what enables MeshCore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+| `TX_ANNOUNCE` | `0` | Set to `1` (**with** `TX_ENABLED=1`) to broadcast a one-line activity summary on the default channel — at most once per 24 h, never in the first 24 h after start. Off by default: it is unsolicited automated traffic on a channel people read. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
@@ -303,6 +303,55 @@ ingestion limited, set `ALLOWED_CHANNELS` to a comma-separated whitelist (for
 example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
 Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
 appear in the allowlist.
+
+### Transmitting on the mesh
+
+**By default a PotatoMesh ingestor never transmits.** It listens, and forwards
+what it hears to your dashboard. Nothing below happens unless you turn it on.
+
+That default is deliberate. Airtime on a LoRa mesh is a shared, scarce resource,
+and whether automated traffic belongs on a community's channels is that
+community's decision — not a default we get to make for you.
+
+| Variable | Default | What turning it on means |
+| --- | --- | --- |
+| `TX_ENABLED` | `0` | The ingestor may transmit. On its own this enables **MeshCore on-air telemetry polling**: round-robin requests to other nodes for their battery/sensor readings, at most one request per `MESHCORE_TELEMETRY_POLL_SECONDS` (default 300 s) and at most once per 24 h per node. This is how other nodes' telemetry reaches your dashboard. Meshtastic ingestion needs no transmission at all. |
+| `TX_ANNOUNCE` | `0` | **Requires `TX_ENABLED=1`.** Broadcasts one line on your default channel, at most once every 24 h, and never in the first 24 h after the ingestor starts. |
+
+The announcement looks like this:
+
+```
+Meshtastic activity in the last 24h: 42 active nodes, 118 packets/hour. https://mesh.example.org
+```
+
+The numbers are read back from your own instance's public API, so they reflect
+the whole mesh your dashboard sees rather than the one radio doing the talking.
+It is suppressed automatically when your instance runs with `PRIVATE=1`, and
+that check fails closed — if the ingestor cannot reach your instance to ask, it
+does not transmit.
+
+Both flags must be on for an announcement to go out:
+
+| `TX_ENABLED` | `TX_ANNOUNCE` | Result |
+| --- | --- | --- |
+| `0` | `0` | Receive only. The default. |
+| `0` | `1` | Receive only — `TX_ENABLED=0` wins. |
+| `1` | `0` | Telemetry polling on, no announcements. |
+| `1` | `1` | Telemetry polling on, one announcement per 24 h. |
+
+**What is never gated.** Reads over the companion link — USB or BLE to your own
+radio, for its own telemetry, contact roster, and channel list — are not mesh
+transmissions. They cost no airtime and always work.
+
+**Checking what your ingestor will do.** It states the resolved policy in its
+log at startup, without needing `DEBUG=1`:
+
+```
+[2026-08-24T09:12:44.117Z] [potato-mesh] [info] context=tx.policy announcements_permitted=False rx_only=False transmit_permitted=False tx_announce=False tx_enabled=False Transmit policy resolved
+```
+
+If you set a flag and nothing happens, that line tells you what the ingestor
+actually resolved — including a flag that never reached the container.
 
 ### MeshCore
 

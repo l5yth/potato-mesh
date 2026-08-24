@@ -3172,9 +3172,10 @@ with `protocol="meshcore"`. The poll loop honours
 only — no broker, Invariant I). Each contact is additionally capped by a
 fixed 24 h per-node cooldown (stamped at the poll attempt; an all-fresh
 roster tick transmits nothing, and departed contacts are pruned from the
-stamp table). `RX_ONLY=1` forbids every ingestor-initiated transmission:
-contact polls stop entirely while the airtime-free companion-link self reads
-continue.
+stamp table). The transmit policy forbids every ingestor-initiated
+transmission unless `TX_ENABLED=1` (**default `0`**), with the legacy
+`RX_ONLY=1` vetoing it regardless: contact polls stop entirely while the
+airtime-free companion-link self reads continue.
 
 ### TI-R1 — Regression: prior acceptance still holds
 ```bash
@@ -4002,9 +4003,10 @@ merged `packets` figure, appends the per-interval delta to its hourly
 `MAX`-per-protocol 24 h packets/hour moving average (MA4–MA5). Each ingestor then
 periodically broadcasts a one-line activity summary — numbers **dogfed from the
 target instance's own API** — on its protocol's default channel (MA6), gated by
-the `ANNOUNCE` opt-in (default `0`) and `RX_ONLY` (the global TX kill switch,
-which overrides it), the target's `/version` privacy flag
-(fail-closed), and a ≥ 24 h post-start delay (MA7–MA8), via an **optional**
+`TX_ENABLED` (the master transmit switch, default `0`), `TX_ANNOUNCE` (the
+narrower announcement opt-in, default `0`), the target's `/version` privacy flag
+(fail-closed), and a ≥ 24 h post-start delay (MA7–MA8), with the legacy
+`RX_ONLY` retained as a veto, via an **optional**
 duck-typed provider send
 that leaves `MeshProtocol` conformance intact (MA9). Unless a check says
 otherwise, start the server in **public** mode
@@ -4088,19 +4090,23 @@ where `<N>` = the target's `GET /api/stats` `<protocol>.nodes.day` and `<M>` =
 line is truncated to the protocol's character limit. `<domain>` = the configured
 `INSTANCE_DOMAIN`.
 
-### MA-A7 — Announcement gates: ANNOUNCE opt-in, RX_ONLY, privacy fail-closed, 24 h — MA7
+### MA-A7 — Announcement gates: TX_ENABLED, TX_ANNOUNCE, privacy fail-closed, 24 h — MA7
 ```bash
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py )
 ( . .venv/bin/activate && pytest -q tests/test_announce_unit.py \
-    -k "gate or private or rx_only or elapsed" )
+    -k "gate or private or suppressed or elapsed or monotonic" )
 ```
-**Expected:** pass. **No** announcement is sent when any gate fails: `ANNOUNCE` is
-unset (the default `0` — the announcement is opt-in, so an ingestor deployed to
-feed a map never transmits on its own); `RX_ONLY=1` (the receive-only flag still
-forbids every ingestor TX and overrides `ANNOUNCE=1`); the target `/version`
-reports `private_mode: true`; the `/version` fetch **errors or is unparseable**
-(fail-closed — treated as private/skip); or `< 24 h` have elapsed since ingestor
-start. With `ANNOUNCE=1`, `RX_ONLY` unset, `private_mode: false`, and `≥ 24 h`
-elapsed, exactly one announcement per 24 h per domain is transmitted.
+**Expected:** both pass. **No** announcement is sent when any gate fails:
+`TX_ENABLED` is unset (**the default `0`** — an ingestor deployed to feed a map
+transmits nothing at all, announcement or telemetry poll); `TX_ANNOUNCE` is unset
+(the default `0` — permission to transmit is not permission to broadcast
+unsolicited on a shared human channel); the legacy `RX_ONLY=1` is set (it vetoes
+`TX_ENABLED=1` and the contradiction is warned about at startup); the target
+`/version` reports `private_mode: true`; the `/version` fetch **errors or is
+unparseable** (fail-closed — treated as private/skip); or `< 24 h` have elapsed
+since ingestor start. With `TX_ENABLED=1`, `TX_ANNOUNCE=1`, `RX_ONLY` unset,
+`private_mode: false`, and `≥ 24 h` elapsed, exactly one announcement per 24 h per
+domain is transmitted. Each closed gate names itself in the log (`blocked_by`).
 
 ### MA-A8 — Default channel/scope + 24 h cadence — MA8
 ```bash
@@ -5006,3 +5012,117 @@ on the coordinate. Fixes clicks near the crown falling outside the hit area
 legend / map-layer suites, and **B1–B5** stay green; the changes add one CSS rule,
 resize the legend swatch, and grow the pin's icon box — nothing touches the API,
 storage, SSE, or privacy paths.
+
+---
+
+## Bugfix: TX kill switch failed open; transmit policy is now default-off (`TX_*`)
+
+Maps to SPEC decision **MA7** (amended ×2). Every ingestor-initiated mesh
+transmission is now off unless asked for, expressed once in
+`data/mesh_ingestor/tx_policy.py` and enforced at each of the four transmit
+sites beside `activity.record_tx()`. Two operator flags — `TX_ENABLED` (master)
+and `TX_ANNOUNCE` (announcement opt-in), both default `0` — replace `ANNOUNCE`,
+and the legacy `RX_ONLY` is retained as an undocumented veto.
+
+### TX-A1 — The kill switch cannot fail open — MA7 a
+```bash
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py \
+    -k "kill_switch or fails_safe or spellings" )
+```
+**Expected:** pass. `RX_ONLY` was parsed as an exact `os.environ.get(...) == "1"`,
+so `RX_ONLY=true`, `TRUE`, `yes`, `on`, `" 1"` and `"1 "` all resolved to
+**False** and the receive-only ingestor **transmitted anyway**. Every one of those
+spellings now engages the switch, and an *unrecognized* value resolves to
+engaged — a kill switch fails toward killed. `TX_ENABLED` / `TX_ANNOUNCE` fail the
+opposite way for the same reason: toward silence. All three **warn** on an
+unparseable value rather than raising — deliberately unlike `TRANSPORT`,
+`PROTOCOL` and `MESH_UDP_PORT`, which all reject a bad value at import. Those
+are selectors with no safe fallback; a transmit flag has one, so a typo costs a
+feature rather than the ingestor's ability to keep *receiving*.
+
+### TX-A2 — Transmission is off by default, at every altitude — MA7 a/b
+```bash
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py \
+    -k "defaults_off or TransmitPermitted or AnnouncementsPermitted" )
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "refuses_closed_policy or status_fallback_rechecks" )
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py \
+    -k "refuses_when_transmit_policy_closed or suppressed" )
+```
+**Expected:** all pass. With no TX env set, `transmit_permitted()` is `False`: the
+MeshCore on-air contact telemetry/status polls do not run **and** no announcement
+is sent. The gate is enforced at **three** altitudes, not one — the daemon entry
+point (`maybe_run_announcements`), the exported mid-level send
+(`send_announcement_to_instance`), and the transmit primitives themselves (both
+providers' `send_channel_announcement`, and each of the two on-air requests in
+`_poll_contact_telemetry`, beside that site's `record_tx`). The mid-level check
+is load-bearing rather than redundant: `send_channel_announcement` is **not** a
+`MeshProtocol` member (`mesh_protocol.py` defines five, and this is not one of
+them), so nothing structurally forces a provider to carry the gate — the
+`CLAUDE.md` protocol checklist now asks for it, but a checklist is documentation,
+not enforcement. Verified by execution: without this check,
+`run_announcement_cycle` — which is in `announce.__all__` — transmits through a
+gateless provider with every flag off. Companion-link self reads
+(USB/BLE to the operator's own radio) are not transmissions and continue.
+
+### TX-A3 — `TX_ENABLED=1` + `RX_ONLY=1` resolves to silence, loudly — MA7 a
+```bash
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py -k "contradict or matrix" )
+```
+**Expected:** pass. The legacy veto wins over the new master switch — a kill
+switch an operator deliberately engaged is never silently overridden by a flag
+that arrives later in the same `.env` — and the contradictory combination emits a
+`warning` at startup naming `RX_ONLY`, because resolving to *silence* is the
+surprising direction for whoever just set `TX_ENABLED=1`.
+
+### TX-A4 — The flags reach every packaged deployment — MA10
+```bash
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py -k "DeploymentSurface" )
+( TX_ENABLED=1 docker compose config | grep -E '^\s+TX_(ENABLED|ANNOUNCE):' )
+```
+**Expected:** both pass. The opt-in previously reached **no** packaged
+deployment: `x-ingestor-base.environment:` is a closed allowlist with no
+`env_file:`, so `ANNOUNCE=1` in `.env` never entered the container, and
+`flake.nix` and `data/Dockerfile` were equally closed. `docker-compose.yml` now
+passes both flags through (the `.dev`/`.prod` overlays inherit the mapping), the
+image declares both defaults in each stage, the Nix module exposes `txEnabled` /
+`txAnnounce`, and `.env.example` documents them under a `TRANSMIT SETTINGS`
+heading. A knob nobody can set is a knob that does not exist.
+
+### TX-A5 — The 24 h anti-spam delay survives an NTP step — MA7 c
+```bash
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py -k "monotonic" )
+( . .venv/bin/activate && pytest -q tests/test_daemon_unit.py -k "announcements_delegates" )
+```
+**Expected:** pass. The delay was measured against wall clock
+(`ingestors.STATE.start_time`, `time.time()`), so on an RTC-less host — a Pi or
+SBC, exactly the hardware these run on — a post-boot NTP step of hours-to-years
+cleared it instantly and the first announcement fired on the next 60 s loop.
+Scheduling now reads `ingestors.ingestor_start_monotonic()` and `time.monotonic()`,
+matching every other daemon timer. `start_time` stays wall clock because it goes
+out on the heartbeat wire (D8 unchanged).
+
+### TX-A6 — Operator-facing docs describe `TX_*` and never `RX_ONLY` — MA7
+```bash
+( grep -c 'TX_ENABLED' README.md ) && ( ! grep -q 'RX_ONLY' README.md )
+( . .venv/bin/activate && pytest -q tests/test_tx_policy_unit.py -k "not_reintroduced" )
+```
+**Expected:** pass. `README.md` carries a **Transmitting on the mesh** section —
+what each flag turns on, the two-flag truth table, the literal announcement text,
+what is never gated, and the startup log line to check — rather than the feature
+being visible only in release notes. `RX_ONLY` appears nowhere in it: it remains
+supported in code for existing deployments but is retired from documentation.
+
+### TX-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**MA-A1–MA-A9** (the activity feature — counting, heartbeat delta, aggregation and
+`/api/stats` are untouched; only the gates moved), **TI-A3** (MeshCore telemetry —
+the poll machinery is unchanged, its permission now defaults off, and the
+acceptance text is amended to say so), **A4b** (provider conformance — the gate is
+inside the optional duck-typed send, so `MeshProtocol` is untouched), and **C2**
+(canonical POST shapes — `tests/` fixtures unmodified). The web app is not
+touched at all: no Ruby, JS, API, storage, SSE, or privacy path changes.
+

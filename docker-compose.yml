@@ -57,6 +57,8 @@ x-ingestor-base: &ingestor-base
     DEBUG: ${DEBUG:-0}
     PROTOCOL: ${PROTOCOL:-meshtastic}
     ENERGY_SAVING: ${ENERGY_SAVING:-0}
+    TX_ENABLED: ${TX_ENABLED:-0}
+    TX_ANNOUNCE: ${TX_ANNOUNCE:-0}
     FEDERATION: ${FEDERATION:-1}
     PRIVATE: ${PRIVATE:-0}
   volumes:

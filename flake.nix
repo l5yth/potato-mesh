@@ -290,6 +290,28 @@
                 default = "/dev/ttyACM0";
                 description = "Connection target: serial port, IP:port for TCP, or Bluetooth address for BLE";
               };
+
+              txEnabled = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Allow the ingestor to transmit on the mesh. Off by default: the
+                  ingestor is a listener unless you opt in. Enables MeshCore on-air
+                  contact telemetry polling. Companion-link reads to your own radio
+                  are not transmissions and are unaffected.
+                '';
+              };
+
+              txAnnounce = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Broadcast a one-line activity summary on the default channel, at
+                  most once per 24h and never in the first 24h after start. Requires
+                  txEnabled. Unsolicited automated traffic on a shared channel, so it
+                  is off by default.
+                '';
+              };
             };
           };
 
@@ -360,6 +382,8 @@
                 CONNECTION = cfg.ingestor.connection;
                 DEBUG = if cfg.debug then "1" else "0";
                 XDG_DATA_HOME = cfg.dataDir;
+                TX_ENABLED = if cfg.ingestor.txEnabled then "1" else "0";
+                TX_ANNOUNCE = if cfg.ingestor.txAnnounce then "1" else "0";
               } // lib.optionalAttrs (cfg.allowedChannels != null) {
                 ALLOWED_CHANNELS = cfg.allowedChannels;
               } // lib.optionalAttrs (cfg.hiddenChannels != null) {

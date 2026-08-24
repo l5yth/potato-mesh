@@ -66,6 +66,7 @@ The `data/mesh_ingestor/mesh_protocol.py` module defines a `@runtime_checkable` 
 2. Register it in `data/mesh_ingestor/protocols/__init__.py`.
 3. Pass an instance via `daemon.main(provider=...)` or make it the default in `main()`.
 4. Cover the protocol with unit tests in `tests/test_provider_unit.py` — at minimum an `isinstance(..., MeshProtocol)` conformance check and any retry/error-handling paths.
+5. **Gate every transmission.** If the protocol transmits on the mesh at all, each transmit site must call `tx_policy.transmit_permitted()` (or `announcements_permitted()` for the optional `send_channel_announcement`) immediately before the send, beside its `activity.record_tx()`. Transmission is off by default (SPEC MA7); a provider that omits the check would transmit against the operator's configuration. Companion-link reads to the host's own radio are not transmissions and are not gated.
 
 Consult `data/mesh_ingestor/CONTRACTS.md` for the canonical event shapes all protocols must emit.
 

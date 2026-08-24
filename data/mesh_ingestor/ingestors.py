@@ -33,6 +33,11 @@ class _IngestorState:
     """Mutable ingestor identity and heartbeat tracking data."""
 
     start_time: int = field(default_factory=lambda: int(time.time()))
+    #: Monotonic companion to :attr:`start_time`, used for elapsed-time
+    #: decisions.  ``start_time`` is wall clock because it goes out on the
+    #: heartbeat wire; wall clock cannot measure "24 h since boot" on a host
+    #: whose clock NTP steps after start, so scheduling reads this instead.
+    start_monotonic: float = field(default_factory=time.monotonic)
     last_heartbeat: int | None = None
     node_id: str | None = None
 
@@ -45,9 +50,23 @@ INGESTOR_STATE = STATE
 
 
 def ingestor_start_time() -> int:
-    """Return the unix timestamp representing when the ingestor booted."""
+    """Return the unix timestamp representing when the ingestor booted.
+
+    Wall clock, because it is reported on the heartbeat wire.  For elapsed-time
+    decisions use :func:`ingestor_start_monotonic` instead.
+    """
 
     return STATE.start_time
+
+
+def ingestor_start_monotonic() -> float:
+    """Return the monotonic reading taken when the ingestor booted.
+
+    Step-immune, so it is the correct basis for "has N seconds elapsed since
+    start?" checks such as the announcement's 24-hour initial delay (SPEC MA7 c).
+    """
+
+    return STATE.start_monotonic
 
 
 def set_ingestor_node_id(node_id: str | None) -> str | None:
@@ -140,6 +159,7 @@ __all__ = [
     "HEARTBEAT_INTERVAL_SECS",
     "INGESTOR_STATE",
     "ingestor_start_time",
+    "ingestor_start_monotonic",
     "queue_ingestor_heartbeat",
     "set_ingestor_node_id",
 ]
