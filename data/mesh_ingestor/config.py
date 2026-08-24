@@ -67,6 +67,105 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
+def _debug_log(
+    message: str,
+    *,
+    context: str | None = None,
+    severity: str = "debug",
+    always: bool = False,
+    **metadata: Any,
+) -> None:
+    """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled.
+
+    Parameters:
+        message: Text to display when debug logging is active.
+        context: Optional logical component emitting the message.
+        severity: Log level label to embed in the formatted output.
+        always: When ``True``, bypasses the :data:`DEBUG` guard.
+        **metadata: Additional structured log metadata.
+    """
+
+    normalized_severity = severity.lower()
+
+    if not DEBUG and not always and normalized_severity == "debug":
+        return
+
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    timestamp = timestamp.replace("+00:00", "Z")
+    parts = [f"[{timestamp}]", "[potato-mesh]", f"[{normalized_severity}]"]
+    if context:
+        parts.append(f"context={context}")
+    for key, value in sorted(metadata.items()):
+        parts.append(f"{key}={value!r}")
+    parts.append(message)
+    print(" ".join(parts))
+
+
+#: Values accepted as "on" by :func:`_env_flag`, compared case-insensitively
+#: after stripping.  Deliberately broader than the historic exact-``"1"`` test:
+#: a transmit switch spelled ``true`` must not silently mean *transmit*.
+_TRUTHY_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
+
+#: Values accepted as "off" by :func:`_env_flag`.
+_FALSY_FLAG_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _env_flag(name: str, *, default: bool, on_invalid: bool) -> bool:
+    """Resolve a boolean environment variable, failing safe on garbage.
+
+    Boolean env vars were historically compared as ``os.environ.get(X) == "1"``,
+    which silently resolved ``true``/``TRUE``/``yes``/``" 1"`` to :data:`False`.
+    For a *transmit* switch that is a fail-**open** bug: an operator who wrote
+    ``RX_ONLY=true`` got an ingestor that transmitted anyway.  This parser
+    accepts the common spellings, strips surrounding whitespace (so a stray
+    space in a ``.env`` file is inert, matching :data:`MESH_UDP_PORT`), and
+    resolves anything it cannot understand to *on_invalid* — which each caller
+    sets to whichever value means "do not transmit" — after warning loudly.
+
+    A blank value is treated as unset so an empty ``.env`` line means "default",
+    not "off" — the same blank tolerance :data:`MESH_UDP_PORT` has.
+
+    Unparseable values **warn rather than raise**, deliberately unlike
+    :data:`TRANSPORT` and :data:`PROTOCOL` (which reject an unknown value at
+    import) and unlike :data:`MESH_UDP_PORT` (whose ``int()`` raises on
+    anything non-numeric).  Those are *selectors*: with no safe fallback,
+    refusing to start is the only correct answer.  A transmit flag has one — it
+    can resolve toward silence — so a typo costs the operator a feature they
+    have to notice is missing, not an ingestor that crash-loops and stops
+    receiving.  Since receiving is the ingestor's whole job, staying up while
+    transmitting nothing strictly dominates.
+
+    Parameters:
+        name: Environment variable to read.
+        default: Value used when the variable is unset or blank.
+        on_invalid: Value used when the variable holds an unrecognized string.
+            Callers pass the fail-safe side of their own switch.
+
+    Returns:
+        The resolved boolean.
+    """
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if not normalized:
+        return default
+    if normalized in _TRUTHY_FLAG_VALUES:
+        return True
+    if normalized in _FALSY_FLAG_VALUES:
+        return False
+    _debug_log(
+        f"Unrecognized {name} value; treating as {'1' if on_invalid else '0'}",
+        context="config",
+        severity="warning",
+        variable=name,
+        value=raw,
+        resolved=on_invalid,
+        accepted=sorted(_TRUTHY_FLAG_VALUES | _FALSY_FLAG_VALUES),
+    )
+    return on_invalid
+
 _KNOWN_PROTOCOLS = ("meshtastic", "meshcore", "reticulum")
 
 _raw_protocol = os.environ.get("PROTOCOL", "meshtastic").strip().lower()
@@ -147,15 +246,53 @@ raise ``ValueError`` at import and prevent the service from starting."""
 INGESTOR_NODE_ID = os.environ.get("INGESTOR_NODE_ID", "").strip() or None
 """Optional ``!xxxxxxxx`` host node id used for the ingestor heartbeat in UDP mode."""
 
-RX_ONLY = os.environ.get("RX_ONLY") == "1"
-"""Receive-only mode: forbid every ingestor-initiated mesh transmission.
+TX_ENABLED = _env_flag("TX_ENABLED", default=False, on_invalid=False)
+"""Master switch for every ingestor-initiated mesh transmission (SPEC MA7 a).
 
-Some operators run listening posts where any TX is undesired.  When set, the
-ingestor never transmits on the mesh: this disables the MeshCore contact
-telemetry/status polls and the periodic activity announcement (SPEC MA7), the
-only ingestor-initiated RF traffic.  Local companion-link reads (host
-self-telemetry, contact roster, channel queries) are not transmissions and
-continue to work."""
+**Default off.**  An ingestor is a listener first: deploying one to feed a
+dashboard does not imply consent to put traffic on the community's air.  Until
+this is set, the ingestor is a pure receiver — no activity announcement, and no
+MeshCore on-air contact telemetry/status polls.
+
+Local companion-link reads (host self-telemetry, the contact roster, channel
+queries) are *not* mesh transmissions: they travel over USB/BLE to the operator's
+own radio, cost no airtime, and continue regardless of this flag.
+
+Set ``TX_ENABLED=1`` to allow transmission.  This is the only documented transmit
+switch; :data:`RX_ONLY` is its retired predecessor and still vetoes it.
+Announcements additionally require :data:`TX_ANNOUNCE`.
+"""
+
+TX_ANNOUNCE = _env_flag("TX_ANNOUNCE", default=False, on_invalid=False)
+"""Opt in to the periodic activity announcement (SPEC MA7 b).
+
+**Default off**, and subordinate to :data:`TX_ENABLED`: the announcement is the
+ingestor's only *unsolicited* transmission on a shared human channel, and local
+conventions on automated traffic differ widely, so it takes a second deliberate
+opt-in on top of the master switch.  ``TX_ENABLED=0`` overrides
+``TX_ANNOUNCE=1``; both must be on before a single announcement is sent.
+"""
+
+RX_ONLY = _env_flag("RX_ONLY", default=False, on_invalid=True)
+"""Legacy receive-only kill switch — superseded by :data:`TX_ENABLED`.
+
+Honored wherever it reaches the process environment, so an existing deployment
+that sets it keeps working, but removed from operator-facing documentation and
+deliberately **not** added to the packaged deployment surfaces (compose, the
+image, the Nix module) — it was never settable there, and new configurations
+express the same intent by simply leaving :data:`TX_ENABLED` unset, which is now
+the default.
+
+It remains a **veto**.  Where it is set, no ingestor-initiated transmission
+happens even if ``TX_ENABLED=1`` is also present — a kill switch an operator
+deliberately engaged is never silently overridden by a flag that arrives later
+in the same ``.env`` file.  That combination is contradictory, so
+:func:`~data.mesh_ingestor.tx_policy.log_tx_policy` warns about it at startup.
+
+Note the deliberately asymmetric fail-safe: an unparseable value resolves to
+:data:`True` (silence), because for a kill switch the safe reading of garbage is
+*engaged*.
+"""
 
 MESHCORE_TELEMETRY_POLL_SECONDS = int(
     os.environ.get("MESHCORE_TELEMETRY_POLL_SECONDS", "300").strip() or "300"
@@ -374,40 +511,6 @@ _INGESTOR_HEARTBEAT_SECS = DEFAULT_INGESTOR_HEARTBEAT_SECS
 _SELF_NODE_REPORT_INTERVAL_SECS = DEFAULT_SELF_NODE_REPORT_INTERVAL_SECS
 
 
-def _debug_log(
-    message: str,
-    *,
-    context: str | None = None,
-    severity: str = "debug",
-    always: bool = False,
-    **metadata: Any,
-) -> None:
-    """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled.
-
-    Parameters:
-        message: Text to display when debug logging is active.
-        context: Optional logical component emitting the message.
-        severity: Log level label to embed in the formatted output.
-        always: When ``True``, bypasses the :data:`DEBUG` guard.
-        **metadata: Additional structured log metadata.
-    """
-
-    normalized_severity = severity.lower()
-
-    if not DEBUG and not always and normalized_severity == "debug":
-        return
-
-    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    timestamp = timestamp.replace("+00:00", "Z")
-    parts = [f"[{timestamp}]", "[potato-mesh]", f"[{normalized_severity}]"]
-    if context:
-        parts.append(f"context={context}")
-    for key, value in sorted(metadata.items()):
-        parts.append(f"{key}={value!r}")
-    parts.append(message)
-    print(" ".join(parts))
-
-
 __all__ = [
     "CONNECTION",
     "SNAPSHOT_SECS",
@@ -429,6 +532,10 @@ __all__ = [
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
     "RETICULUM_CONFIG_DIR",
+    "TX_ENABLED",
+    "TX_ANNOUNCE",
+    "RX_ONLY",
+    "PROTOCOL",
     "_RECONNECT_INITIAL_DELAY_SECS",
     "_RECONNECT_MAX_DELAY_SECS",
     "_CLOSE_TIMEOUT_SECS",

@@ -20,20 +20,24 @@
  * @module main/filter-helpers
  */
 
-import { isMeshcoreProtocol } from '../protocol-helpers.js';
+import { isMeshcoreProtocol, isReticulumProtocol } from '../protocol-helpers.js';
 import { getRoleKey } from '../role-helpers.js';
 
 /**
  * Canonical protocol token for use in compound filter keys.
  *
- * Collapses null/absent/unknown protocol values to ``'meshtastic'`` so that
- * pre-protocol legacy records land in the Meshtastic filter bucket.
+ * Known non-Meshtastic protocols keep their own bucket so that toggling a
+ * Meshtastic role filter never hides them; null/absent/unknown protocol
+ * values collapse to ``'meshtastic'`` so pre-protocol legacy records land in
+ * the Meshtastic filter bucket.
  *
  * @param {string|null|undefined} protocol Raw protocol value.
- * @returns {'meshtastic'|'meshcore'} Normalised protocol token.
+ * @returns {'meshtastic'|'meshcore'|'reticulum'} Normalised protocol token.
  */
 export function normalizeFilterProtocol(protocol) {
-  return isMeshcoreProtocol(protocol) ? 'meshcore' : 'meshtastic';
+  if (isMeshcoreProtocol(protocol)) return 'meshcore';
+  if (isReticulumProtocol(protocol)) return 'reticulum';
+  return 'meshtastic';
 }
 
 /**

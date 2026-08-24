@@ -7258,7 +7258,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       )
       # The pre-0.7.0 flat key is gone (breaking change).
       expect(payload).not_to have_key("active_nodes")
-      # reticulum is an always-zero forward-looking stub.
+      # reticulum is live but nothing reticulum was seeded here, so all zero.
       expect(payload["reticulum"]["nodes"].values).to all(eq(0))
       expect(payload["reticulum"]["messages"].values).to all(eq(0))
       expect(payload["reticulum"]["telemetry"].values).to all(eq(0))

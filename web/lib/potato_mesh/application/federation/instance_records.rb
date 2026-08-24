@@ -58,8 +58,9 @@ module PotatoMesh
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
             latitude, longitude, last_update_time, is_private, nodes_count,
-            meshcore_nodes_count, meshtastic_nodes_count, contact_link, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            meshcore_nodes_count, meshtastic_nodes_count, reticulum_nodes_count,
+            contact_link, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             domain=excluded.domain,
             pubkey=excluded.pubkey,
@@ -74,6 +75,7 @@ module PotatoMesh
             nodes_count=COALESCE(excluded.nodes_count, instances.nodes_count),
             meshcore_nodes_count=COALESCE(excluded.meshcore_nodes_count, instances.meshcore_nodes_count),
             meshtastic_nodes_count=COALESCE(excluded.meshtastic_nodes_count, instances.meshtastic_nodes_count),
+            reticulum_nodes_count=COALESCE(excluded.reticulum_nodes_count, instances.reticulum_nodes_count),
             contact_link=excluded.contact_link,
             signature=excluded.signature
         SQL
@@ -94,6 +96,7 @@ module PotatoMesh
           nodes_count,
           coerce_integer(attributes[:meshcore_nodes_count]),
           coerce_integer(attributes[:meshtastic_nodes_count]),
+          coerce_integer(attributes[:reticulum_nodes_count]),
           attributes[:contact_link],
           signature,
         ]

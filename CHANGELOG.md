@@ -3,44 +3,153 @@
 
 # CHANGELOG
 
-## Unreleased
+### Features
+* Data/Web: Reticulum protocol support — `PROTOCOL=reticulum` selects a passive RNS announce listener that ingests `lxmf.delivery`/`nomadnetwork.node` announces as `protocol="reticulum"` nodes; the web app whitelists the protocol end-to-end (ingest + `?protocol=` filter), serves live `reticulum` stats scopes and activity-series keys, signs a live `reticulum_nodes_count` on the federation wire (the v2 canonical already carried the field, so peer signatures are unaffected), and renders reticulum nodes across the UI (icon, filter chip, mesh-activity row, federation column) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 
-Frontend design & UX audit remediation (SPEC UX1–UX15): 38 audit findings
-fixed across accessibility, degenerate states, information architecture, and
-the shell — plus the CHANNEL/FREQUENCY → MESHTASTIC_/MESHCORE_ preset config
-migration (deprecated-with-fallback) feeding the new join strip.
-
-A follow-up Claude-Design review (SPEC FU1–FU13) then remediated 8 rendering
-issues plus polish: the join strip moved to the footer with per-protocol counts
-on the map toggles, an equal-area diamond MeshCore marker, a condensed nodes
-table, and reported-only disclosure rows.
+## v0.7.5
 
 ### Features
-* Web: `GET /api/stats/activity` — bucketed packets/hour time-series over `ingestor_activity` (snake_case `window_seconds`/`bucket_seconds`), feeding the map-card sparkline and a protocol-aware `/charts` figure (SPEC F2)
-* Web: `/charts` gains a protocol-aware "Mesh activity" figure (packets/h per protocol, 7 d) between the channel-utilization and environmental charts; the aggregated-telemetry intro is de-scoped from "Meshtastic" to all protocols (SPEC F2-5)
-* Web: mesh-activity map card collapses to a compact caption strip on phones (≤ 640 px) so it no longer covers a small map (design 1d)
-* Web: "Mesh activity" map card — bottom-left overlay showing packets/h (total + per-protocol split) from `/api/stats`, toggle-reactive and hidden when idle, with a 24 h sparkline drawn from `/api/stats/activity` (SPEC MA-F1…MA-F6, F2-4)
-* Web: join strip renders the radio settings newcomers need; new `MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` + `MESHCORE_PRESET`/`MESHCORE_FREQ` env vars (`CHANNEL`/`FREQUENCY` deprecated but honoured)
-* Web: node freshness buckets (live/today/stale) on table rows and map markers, riding the shared relative-time tick
-* Web: MeshCore nodes render as equal-area diamond map chips — shape encodes protocol, colour keeps encoding role
-* Web: nodes table gains grouped headers, curated mobile columns (Battery survives), a per-row disclosure of hidden fields, row hover/click, numeric alignment, captions/scopes
+* Make the activity announcement opt-in via ANNOUNCE (default off) by @seybsen in <https://github.com/l5yth/potato-mesh/pull/886>
 
 ### Fixes
-* Web: mesh-activity card — idle card no longer paints an empty pill over the map on phones (≤659px), the mobile strip spans the map as a caption, the sparkline gains headroom and rebases with the protocol toggles, the card is a labelled `role="group"`, and the /charts intro heading drops the single-protocol badge (design-review remediation, SPEC MR1–MR8)
-* Web: neighbor/trace line legend toggles highlight when their lines are visible (was reversed — highlighted when hidden), matching the role chips (SPEC NT1)
-* Web/data: `GET /api/stats` exposes the mesh-activity packets/hour rate as `<scope>.packets.hour` (folded into the S1 scope→metric→window tree) rather than a top-level `packets_per_hour` map, and `total.packets.hour` now **sums** the per-protocol rates instead of taking a single MAX vantage (distinct protocols never share the air, so they add); the ingestor announcement dogfeed reads the new path (SPEC MA4/MA5, pre-release amendment of the merged-but-unreleased #859)
-* Web: WCAG AA text contrast — role-badge text computed by background luminance; chat log entries, error text, links, and focus rings tokenised (`--danger`, single `--accent`)
-* Web: federation table's undefined CSS tokens aliased — row borders and the sticky header render again
-* Web: legend expanded by default on /map, honest toggle label (filter suffix only when filters are active), line-style key on the neighbor/trace toggles; fixed the malformed `data-legend-collapsed` attribute
-* Web: noscript notice + server-rendered "no nodes heard yet" waiting row; empty table cells render a muted dash; visible `● live` / `❚❚ paused HH:MM` refresh state
-* Web: dark-only stylesheet completed (DM7 component-layer fold), reduced-motion now also gates Leaflet zoom and tab-strip scrolling; shell cleanups (title clamp, 1100 px hamburger, static pages demoted to the footer, count moved off the h1, compact region toggle, wrapped announcements, 32 px hub hit area, chat hanging indent)
-* Web: design-review follow-up (SPEC FU1–FU13) — chat badge/icon no longer offset by the inherited hang (now 19ch); region toggle is 🌍, greyscale-until-open; legend dash-key inks its full length and the two columns share a top baseline; nodes table condensed with both header rows pinned; disclosure rows list only fields that reported (honest zeros kept); join strip moved to the footer with per-protocol counts on the map toggles; the fixed footer keeps opaque chrome on every route
+* **Ingestor: every mesh transmission is now off by default** (`TX_ENABLED`, default `0`), covering the activity announcement *and* the MeshCore on-air contact telemetry polls; announcements take a second opt-in (`TX_ANNOUNCE=1`) on top by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: **`RX_ONLY` no longer fails open** — it was compared as an exact `== "1"`, so `RX_ONLY=true`, `TRUE`, `yes`, `on` and `" 1"` all silently resolved to *off* and a receive-only listening post transmitted anyway; all TX flags now accept the common spellings, strip whitespace, and resolve an unrecognized value toward silence by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: the `TX_*` flags reach every packaged deployment — `docker-compose.yml`, `data/Dockerfile`, the NixOS module (`txEnabled`/`txAnnounce`) and `.env.example`; the previous `ANNOUNCE` opt-in reached none of them, so setting it in `.env` had no effect at all by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: the announcement's 24 h anti-spam delay is measured on a monotonic clock — it used wall clock, so on an RTC-less host a post-boot NTP step cleared it instantly by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: transmit policy is stated in the log at startup without `DEBUG=1`, and each suppressed announcement names the gate that closed by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* App: await the in-flight request before closing its HTTP client in `loadMessages`/`loadNodes` — the unawaited return let `finally` close the client mid-request by @l5yth
+* App: raise the iOS deployment target to **15.0** (from 14.0) in the Podfile, Xcode project and `AppFrameworkInfo.plist` — Flutter 3.47's `Flutter` pod requires it, and `pod install` could not resolve against the old target. **Drops support for iOS 14 devices.** by @l5yth
+* CI: the Mobile workflow matrix no longer fails fast, so an iOS failure stops hiding whether the Android build passed by @l5yth
+* Docs: README gains a **Transmitting on the mesh** section — what each flag turns on, the truth table, the literal announcement text, and what is never gated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+
+## v0.7.4
+
+### Features
+* web: remediate frontend design & UX audit by @l5yth in <https://github.com/l5yth/potato-mesh/pull/855>
+* data,web: mesh activity reporting & announcements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/859>
+* web: mesh activity map card by @l5yth in <https://github.com/l5yth/potato-mesh/pull/860>
+* data: count every MeshCore RX-log frame; stamp position radio metadata by @l5yth in <https://github.com/l5yth/potato-mesh/pull/861>
+* web: frontent performance fixes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/864>
+* docs: document reverse-proxy deployment, asset caching, and scaling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/872>
+* web: cap the node table render to the top N with a show all control by @l5yth in <https://github.com/l5yth/potato-mesh/pull/869>
+* web: immutable cache-control for versioned assets + configurable stats TTL by @l5yth in <https://github.com/l5yth/potato-mesh/pull/868>
+* perf(web): index-seek /api/stats telemetry umbrella to end GVL stall by @l5yth in <https://github.com/l5yth/potato-mesh/pull/873>
+* data,web: Meshtastic waypoints as a first-class POI layer by @l5yth in <https://github.com/l5yth/potato-mesh/pull/874>
+* web,docker: bake git APP_VERSION into image for immutable asset caching by @l5yth in <https://github.com/l5yth/potato-mesh/pull/875>
+* web: LCP critical-path refinements (icon caching, preconnect, chat-tabs reflow) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/877>
+
+### Fixes
+* fix(docker): bump ingestor base to python 3.12.10 for cryptography's Rust MSRV by @l5yth in <https://github.com/l5yth/potato-mesh/pull/858>
+* matrix: tolerate compacted /api/messages rows by @l5yth in <https://github.com/l5yth/potato-mesh/pull/862>
+* data: harden MeshCore subscribe against unknown EventType by @l5yth in <https://github.com/l5yth/potato-mesh/pull/867>
+* web: bump sqlite3 to 2.9.5 for use-after-free advisory by @l5yth in <https://github.com/l5yth/potato-mesh/pull/876>
+* web: fix waypoints shipped-review audit findings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/878>
+
+### Chores
+* chore: bump version to 0.7.4 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/863>
+* build(deps): bump quinn-proto from 0.11.14 to 0.11.16 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/865>
+
+## v0.7.3
+
+### Features
+* web: HOT primary basemap (dark-filtered) with per-tile CARTO fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/844>
+* Bump all packages to 0.7.3 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/845>
+* data: meshcore rf metrics rssi/snr/hops/path by @l5yth in <https://github.com/l5yth/potato-mesh/pull/849>
+* data,web: ingest every telemetry family from both protocols by @l5yth in <https://github.com/l5yth/potato-mesh/pull/850>
+* web: live relative-time tick - last-seen/updated ages count up in place by @l5yth in <https://github.com/l5yth/potato-mesh/pull/851>
+* web: stack HOT over CARTO basemap layers, drop per-tile timeout by @l5yth in <https://github.com/l5yth/potato-mesh/pull/856>
+
+### Fixes
+* web: blend basemap providers to fix HOT/CARTO tile checkerboard by @l5yth in <https://github.com/l5yth/potato-mesh/pull/846>
+* web: node table keeps latest telemetry of every type (per-field merge) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/847>
+* web,data: reconcile MeshCore stale same-name node duplicates by @l5yth in <https://github.com/l5yth/potato-mesh/pull/857>
+
+## v0.7.2
+
+### Features
+* feat(ingestor): passive UDP transport (Mesh via UDP), primary-channel only by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/838>
+
+### Fixes
+* fix: security review — dashboard XSS, private-mode federation gap, Matrix bridge resilience by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/839>
+* fix: UDP-transport hardening, bridge tracker coverage, CI repairs; release 0.7.2 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/840>
+* web: fix MeshCore ghost nodes (stale contact enrichment discarded) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/841>
+* fix(docker): armv7 ingestor build toolchain; disable matrix fail-fast by @l5yth in <https://github.com/l5yth/potato-mesh/pull/842>
+
+## v0.7.1
+
+### Features
+* web: change tiles to carto by @l5yth in <https://github.com/l5yth/potato-mesh/pull/831>
+* web: progressively backfill all bulk collections by @l5yth in <https://github.com/l5yth/potato-mesh/pull/835>
+
+### Fixes
+* web: fix pubsub thread budget to not block entire app by @l5yth in <https://github.com/l5yth/potato-mesh/pull/828>
+* web: initial-load module-graph waterfall by @l5yth in <https://github.com/l5yth/potato-mesh/pull/832>
+* web: fix MeshCore chat duplicates and warm-cache message gap by @l5yth in <https://github.com/l5yth/potato-mesh/pull/834>
+* improve log wiring and capture all meshcore adverts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/836>
+* web: chat-log retention and vertical scroll fix by @l5yth in <https://github.com/l5yth/potato-mesh/pull/837>
+
+### Chores
+* chore: bump version 0.7.1 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/833>
+
+## v0.7.0
+
+### Features
+* web: add node opt-out marker and data retention policies by @l5yth in <https://github.com/l5yth/potato-mesh/pull/793>
+* web: breaking change on stats api by @l5yth in <https://github.com/l5yth/potato-mesh/pull/801>
+* web: federation signature v2 migration by @l5yth in <https://github.com/l5yth/potato-mesh/pull/805>
+* web: progressively load messages in batches by @l5yth in <https://github.com/l5yth/potato-mesh/pull/807>
+* web: render chat incrementally to reduce page load time by @l5yth in <https://github.com/l5yth/potato-mesh/pull/813>
+* web: implement local storage caching by @l5yth in <https://github.com/l5yth/potato-mesh/pull/814>
+* web: version JS/CSS assets to bust stale browser caches by @l5yth in <https://github.com/l5yth/potato-mesh/pull/815>
+* web: add pagination to all APIs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/820>
+* web: implement pubsub by @l5yth in <https://github.com/l5yth/potato-mesh/pull/821>
+* web: mark message author nodes as seen by @l5yth in <https://github.com/l5yth/potato-mesh/pull/822>
+* web: add visual feedback to pubsub events by @l5yth in <https://github.com/l5yth/potato-mesh/pull/824>
+
+### Fixes
+* data: move connected event to after ensure_contacts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/789>
+* fix sentinel position data by @l5yth in <https://github.com/l5yth/potato-mesh/pull/792>
+* Fix regression where Meshcore chat senders show as Meshtastic by @l5yth in <https://github.com/l5yth/potato-mesh/pull/794>
+* web: fix chat by @l5yth in <https://github.com/l5yth/potato-mesh/pull/800>
+* web: fix apis to use consistently use camel case by @l5yth in <https://github.com/l5yth/potato-mesh/pull/802>
+* web: fix meshcore node synthisation, merging, and deduplication by @l5yth in <https://github.com/l5yth/potato-mesh/pull/808>
+* web: fix federation dns status 500 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/809>
+* web: fix federation cycle and http response error handler by @l5yth in <https://github.com/l5yth/potato-mesh/pull/810>
+* fix: report custom LoRa config as "Custom SF{sf}/BW{bw}/CR{cr}" when use_preset=False (#811) by @giannoug in <https://github.com/l5yth/potato-mesh/pull/812>
+* fix: unify Meshtastic custom LoRa label with MeshCore format by @l5yth in <https://github.com/l5yth/potato-mesh/pull/818>
+* web: fix meshcore message duplication regression by @l5yth in <https://github.com/l5yth/potato-mesh/pull/825>
+* web: fix live-update DOM handling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/826>
+* web: fix api/events hang on shutdown by @l5yth in <https://github.com/l5yth/potato-mesh/pull/827>
+
+### Chores
+* chore: bump to 0.6.4 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/785>
+* build(deps): bump openssl from 0.10.78 to 0.10.79 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/787>
+* build(deps): bump openssl from 0.10.79 to 0.10.80 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/795>
+
+## v0.6.3
+
+### Features
+* web: rework map spider-net feature by @l5yth in <https://github.com/l5yth/potato-mesh/pull/769>
+* web: add seo improvements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/771>
+* data: refactor 3/7 protocols by @l5yth in <https://github.com/l5yth/potato-mesh/pull/774>
+* web: refactor 1/7 data processing by @l5yth in <https://github.com/l5yth/potato-mesh/pull/772>
+* web: refactor 2/7 federation by @l5yth in <https://github.com/l5yth/potato-mesh/pull/773>
+* web: refactor 5/7 node page charts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/776>
+* web: refactor 7/7 main js by @l5yth in <https://github.com/l5yth/potato-mesh/pull/778>
+* data: refactor 4/7 interfaces by @l5yth in <https://github.com/l5yth/potato-mesh/pull/775>
+* web: refactor 6/7 node page by @l5yth in <https://github.com/l5yth/potato-mesh/pull/777>
+
+### Fixes
+* matrix: fix matrix preset labels by @l5yth in <https://github.com/l5yth/potato-mesh/pull/770>
+* web: fix liveliness of api data hydration bug by @l5yth in <https://github.com/l5yth/potato-mesh/pull/783>
+
+### Chores
+* build(deps): bump rustls-webpki from 0.103.10 to 0.103.13 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/764>
+* build(deps): bump openssl from 0.10.75 to 0.10.78 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/766>
+* chore: bump version to 0.6.3 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/779>
+
 
 ## v0.6.2
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.2, focused on Meshcore-related fixes, federation accuracy, and bridge coverage. The Matrix bridge now understands Meshcore traffic, and several duplication and classification issues in the web app and ingestor have been tightened up.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * Matrix: enable meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/761>
@@ -56,10 +165,6 @@ Demo: <https://potatomesh.net/>
 * Web: fix federation node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/749>
 
 ## v0.6.1
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.1, focused on Meshcore polish, federation resilience, and ingestor stability in the wake of the v0.6.0 multi-protocol release.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * Web: per protocol active node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/735>
@@ -77,24 +182,6 @@ Demo: <https://potatomesh.net/>
 * Build(deps): bump rand from 0.9.2 to 0.9.4 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/741>
 
 ## v0.6.0
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.0 which introduces new features and overhauls the user interface. The primary notable change is added support for multi-protocol along with an implementation of **Meshcore** in ingestor, web app, and frontend.
-
-Demo: <https://potatomesh.net/>
-
-### Meshcore
-
-To start ingesting Meshcore data to an upgraded potato-mesh web app, simply tell your ingestor to use the `PROTOCOL="meshcore"`.
-
-### About Pages
-
-The other notable feature is the removal of the "darkmode" and "info" buttons in favor of customizable markdown pages that allow for more flexibility with regard to custom content (info about presets, contact information, etc.) - see `/pages/*.md` in the web app ([#723](https://github.com/l5yth/potato-mesh/pull/723)).
-
-### Breaking Variable Changes
-
-The following deprecated environmental variables have been removed in this release finally ([#704](https://github.com/l5yth/potato-mesh/pull/704)):
-* ~~POTATOMESH_INSTANCE~~ - please use `INSTANCE_DOMAIN`
-* ~~MESH_SERIAL~~ and ~~PORT~~ - please use `CONNECTION`
 
 ### Features
 * Web: add markdown static pages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/723>
@@ -124,10 +211,6 @@ The following deprecated environmental variables have been removed in this relea
 * Chore: prepare codebase for breaking release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/718>
 
 ## v0.5.12
-
-This is a service release of the app potato-mesh v0.5.12 which improves performance and stability.
-
-Notably, the frontend went through some graphical tweaks to prepare for an upcoming multi-protocol release (meshcore, reticulum, etc.).
 
 * Enh: surface meshcore role types (#680) by @l5yth in https://github.com/l5yth/potato-mesh/pull/685
 * Chore: refactor codebase before meshcore release by @l5yth in https://github.com/l5yth/potato-mesh/pull/682

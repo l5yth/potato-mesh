@@ -607,7 +607,7 @@ RSpec.describe "Multi-protocol support" do
         rx_iso: Time.at(now - 10).utc.iso8601,
         text: "garbage protocol value",
         ingestor: MESHCORE_INGESTOR_ID,
-        protocol: "reticulum",
+        protocol: "loramesh",
       }
       post "/api/messages", [msg].to_json, auth_headers
       expect(last_response.status).to eq(201)

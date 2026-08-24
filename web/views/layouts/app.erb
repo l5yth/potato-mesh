@@ -250,8 +250,8 @@
           </div>
         <% end %>
         <%# Protocol toggles carry the live per-protocol count (audit follow-up
-            04): the two icon buttons were unlabelled, so a count both names them
-            and states the MeshCore/Meshtastic split. JS fills the counts. %>
+            04): the icon buttons were unlabelled, so a count both names them
+            and states the per-protocol split. JS fills the counts. %>
         <button id="protocolToggleMeshcore" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide MeshCore nodes" aria-pressed="false" title="Toggle MeshCore node visibility" hidden>
           <img src="/assets/img/meshcore.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
           <span id="protocolToggleMeshcoreCount" class="protocol-toggle-count" aria-hidden="true"></span>
@@ -259,6 +259,10 @@
         <button id="protocolToggleMeshtastic" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide Meshtastic nodes" aria-pressed="false" title="Toggle Meshtastic node visibility" hidden>
           <img src="/assets/img/meshtastic.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
           <span id="protocolToggleMeshtasticCount" class="protocol-toggle-count" aria-hidden="true"></span>
+        </button>
+        <button id="protocolToggleReticulum" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide Reticulum nodes" aria-pressed="false" title="Toggle Reticulum node visibility" hidden>
+          <img src="/assets/img/reticulum.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
+          <span id="protocolToggleReticulumCount" class="protocol-toggle-count" aria-hidden="true"></span>
         </button>
         <span id="footerActiveNodes" class="meta-active-nodes"></span>
         <%# The join strip moved to the footer (audit follow-up 04), freeing the

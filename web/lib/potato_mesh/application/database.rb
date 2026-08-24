@@ -435,6 +435,11 @@ module PotatoMesh
           instance_columns << "meshtastic_nodes_count"
         end
 
+        unless instance_columns.include?("reticulum_nodes_count")
+          db.execute("ALTER TABLE instances ADD COLUMN reticulum_nodes_count INTEGER")
+          instance_columns << "reticulum_nodes_count"
+        end
+
         telemetry_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry'").flatten
         if telemetry_tables.empty?

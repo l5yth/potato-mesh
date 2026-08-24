@@ -170,11 +170,19 @@ RSpec.describe "UX audit remediation markup" do
       expect(html).not_to include("join-line__more")
     end
 
-    it "labels the two protocol toggles with per-protocol count elements" do
+    it "labels the protocol toggles with per-protocol count elements" do
       html = body_of("/")
       expect(html).to include('id="protocolToggleMeshcoreCount"')
       expect(html).to include('id="protocolToggleMeshtasticCount"')
+      expect(html).to include('id="protocolToggleReticulumCount"')
       expect(html).to include("protocol-toggle-count")
+    end
+
+    it "renders the reticulum toggle chip mirroring the other protocols (#888)" do
+      html = body_of("/")
+      expect(html).to include('id="protocolToggleReticulum"')
+      expect(html).to include('aria-label="Hide Reticulum nodes"')
+      expect(html).to include("/assets/img/reticulum.svg")
     end
   end
 

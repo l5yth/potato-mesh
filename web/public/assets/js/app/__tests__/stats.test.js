@@ -103,11 +103,24 @@ test('computeLocalActiveNodeStats counts nodes exactly at window boundary', () =
 
 test('computeLocalActiveNodeStats bins unknown protocols into meshtastic bucket', () => {
   const nodes = [
-    { last_heard: NOW - 100, protocol: 'reticulum' },
+    { last_heard: NOW - 100, protocol: 'loramesh' },
     { last_heard: NOW - 200, protocol: 'meshcore' },
   ];
   const result = computeLocalActiveNodeStats(nodes, NOW);
   assert.equal(result.hour, 2);
+  assert.equal(result.meshcore.hour, 1);
+  assert.equal(result.meshtastic.hour, 1);
+});
+
+test('computeLocalActiveNodeStats counts reticulum in its own bucket', () => {
+  const nodes = [
+    { last_heard: NOW - 100, protocol: 'reticulum' },
+    { last_heard: NOW - 200, protocol: 'meshcore' },
+    { last_heard: NOW - 300, protocol: 'meshtastic' },
+  ];
+  const result = computeLocalActiveNodeStats(nodes, NOW);
+  assert.equal(result.hour, 3);
+  assert.equal(result.reticulum.hour, 1);
   assert.equal(result.meshcore.hour, 1);
   assert.equal(result.meshtastic.hour, 1);
 });
@@ -381,10 +394,10 @@ test('normaliseActivitySeries keeps oldest-first per-protocol rates, clamped and
     'nope', // non-object → skipped
   ]);
   assert.deepEqual(series, [
-    { meshcore: 10, meshtastic: 20 },
-    { meshcore: 0, meshtastic: 5 },
-    { meshcore: 7, meshtastic: 0 },
-    { meshcore: 0, meshtastic: 3 },
+    { meshcore: 10, meshtastic: 20, reticulum: 0 },
+    { meshcore: 0, meshtastic: 5, reticulum: 0 },
+    { meshcore: 7, meshtastic: 0, reticulum: 0 },
+    { meshcore: 0, meshtastic: 3, reticulum: 0 },
   ]);
 });
 
@@ -402,7 +415,10 @@ test('fetchActivitySeries returns the normalised per-protocol series on success'
     return { ok: true, async json() { return [{ meshcore: 2, meshtastic: 5 }, { meshcore: 3, meshtastic: 8 }]; } };
   };
   const series = await fetchActivitySeries({ fetchImpl });
-  assert.deepEqual(series, [{ meshcore: 2, meshtastic: 5 }, { meshcore: 3, meshtastic: 8 }]);
+  assert.deepEqual(series, [
+    { meshcore: 2, meshtastic: 5, reticulum: 0 },
+    { meshcore: 3, meshtastic: 8, reticulum: 0 },
+  ]);
   assert.match(calls[0], /\/api\/stats\/activity\?window_seconds=86400&bucket_seconds=3600/);
 });
 
@@ -421,8 +437,8 @@ test('fetchActivitySeries caches the result for repeated calls with the same fet
     hits += 1;
     return { ok: true, async json() { return [{ meshcore: 1, meshtastic: 2 }]; } };
   };
-  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2 }]);
-  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2 }]);
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2, reticulum: 0 }]);
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2, reticulum: 0 }]);
   assert.equal(hits, 1, 'the second call is served from cache');
 });
 
@@ -436,7 +452,7 @@ test('fetchActivitySeries coalesces concurrent calls into one request', async ()
     fetchActivitySeries({ fetchImpl }),
     fetchActivitySeries({ fetchImpl }),
   ]);
-  assert.deepEqual(a, [{ meshcore: 3, meshtastic: 4 }]);
-  assert.deepEqual(b, [{ meshcore: 3, meshtastic: 4 }]);
+  assert.deepEqual(a, [{ meshcore: 3, meshtastic: 4, reticulum: 0 }]);
+  assert.deepEqual(b, [{ meshcore: 3, meshtastic: 4, reticulum: 0 }]);
   assert.equal(hits, 1, 'concurrent callers share one in-flight request');
 });

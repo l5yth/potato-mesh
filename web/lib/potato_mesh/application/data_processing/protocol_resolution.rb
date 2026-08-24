@@ -21,7 +21,7 @@ module PotatoMesh
       # carry an explicit protocol stamp via {#resolve_record_protocol}; values
       # outside this set are treated as malformed and fall back to the
       # ingestor-derived default.
-      KNOWN_PROTOCOLS = %w[meshtastic meshcore].freeze
+      KNOWN_PROTOCOLS = %w[meshtastic meshcore reticulum].freeze
 
       # Look up the protocol registered by a given ingestor node.
       #

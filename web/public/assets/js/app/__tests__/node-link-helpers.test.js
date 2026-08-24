@@ -121,8 +121,14 @@ test('renderNodeLongNameLink does not prepend icon for "meshcore" protocol', () 
   assert.ok(html.includes('Alice'), 'should still include the name');
 });
 
-test('renderNodeLongNameLink does not prepend icon for unknown protocol', () => {
+test('renderNodeLongNameLink prepends the reticulum icon for "reticulum" protocol', () => {
   const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: 'reticulum' });
+  assert.ok(html.includes('reticulum.svg'), 'should include the reticulum icon');
+  assert.ok(!html.includes('meshtastic.svg'), 'should not include the meshtastic icon');
+});
+
+test('renderNodeLongNameLink does not prepend icon for unknown protocol', () => {
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: 'loramesh' });
   assert.ok(!html.includes('meshtastic.svg'), 'should not include meshtastic icon for unknown protocol');
 });
 

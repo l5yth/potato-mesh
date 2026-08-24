@@ -585,6 +585,106 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # upsert_node — cross-protocol node-row hijack guard
+  #
+  # nodes.node_id is a global TEXT primary key, and both the MeshCore and
+  # Reticulum id mappings truncate a native identifier to its first 4 bytes,
+  # so nodes on *different* protocols can collide on one node_id.  A colliding
+  # record must be skipped wholesale: reticulum announces stamp a wall-clock
+  # lastHeard, so the freshness guard alone would let them flip the stored
+  # row's protocol and overwrite its fields.  Same-protocol collisions remain
+  # the accepted MeshCore-inherited merge behaviour (CONTRACTS.md, "Reticulum
+  # node id mapping").
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — cross-protocol id collision guard" do
+    include_context "with isolated db"
+
+    it "leaves an existing meshtastic row untouched when a reticulum record collides" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 600,
+        "num" => 0xaabbccdd,
+        "user" => { "longName" => "Meshtastic Original", "shortName" => "MTOR" },
+      })
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "user" => {
+          "longName" => "Reticulum Impostor",
+          "shortName" => "aabb",
+          "publicKey" => "aabbccdd" + "00" * 12,
+        },
+      }, protocol: "reticulum")
+      row = read_node(db)
+      db.close
+      expect(row["protocol"]).to eq("meshtastic")
+      expect(row["long_name"]).to eq("Meshtastic Original")
+      expect(row["public_key"]).to be_nil
+      expect(row["last_heard"]).to eq(now - 600)
+    end
+
+    it "leaves an existing reticulum row untouched when a meshtastic record collides" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 600,
+        "user" => {
+          "longName" => "Reticulum Original",
+          "shortName" => "aabb",
+          "publicKey" => "aabbccdd" + "00" * 12,
+        },
+      }, protocol: "reticulum")
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "user" => { "longName" => "Meshtastic Impostor", "shortName" => "MTIM" },
+      })
+      row = read_node(db)
+      db.close
+      expect(row["protocol"]).to eq("reticulum")
+      expect(row["long_name"]).to eq("Reticulum Original")
+      expect(row["short_name"]).to eq("aabb")
+      expect(row["last_heard"]).to eq(now - 600)
+    end
+
+    it "still applies normal same-protocol updates" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 600,
+        "user" => {
+          "longName" => "Reticulum Node",
+          "shortName" => "aabb",
+          "publicKey" => "aabbccdd" + "00" * 12,
+        },
+      }, protocol: "reticulum")
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "user" => {
+          "longName" => "Reticulum Node Renamed",
+          "shortName" => "aabb",
+          "publicKey" => "aabbccdd" + "00" * 12,
+        },
+      }, protocol: "reticulum")
+      row = read_node(db)
+      db.close
+      expect(row["protocol"]).to eq("reticulum")
+      expect(row["long_name"]).to eq("Reticulum Node Renamed")
+      expect(row["last_heard"]).to eq(now)
+    end
+
+    it "keeps the #747 self-heal: a meshcore record reclaims a default-meshtastic row" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now - 600, "num" => 0xaabbccdd })
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "user" => { "longName" => "MeshCore Contact", "shortName" => "MC" },
+      }, protocol: "meshcore")
+      row = read_node(db)
+      db.close
+      expect(row["protocol"]).to eq("meshcore")
+      expect(row["long_name"]).to eq("MeshCore Contact")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # upsert_node — issue #782: position sentinel handling
   #
   # Meshtastic firmware emits `(lat=0, lon=0)` and `position.time=0` whenever
@@ -3208,10 +3308,20 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       result = dp_with_lookup.send(
         :resolve_record_protocol,
         registered_db,
-        { "protocol" => "reticulum" },
+        { "protocol" => "loramesh" },
         "!mcingest1",
       )
       expect(result).to eq("meshcore")
+    end
+
+    it "honours an explicit reticulum stamp" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "reticulum" },
+        "!mcingest1",
+      )
+      expect(result).to eq("reticulum")
     end
 
     it "ignores a non-Hash record and falls back to ingestor lookup" do
@@ -3248,13 +3358,13 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp_with_lookup.send(
         :resolve_record_protocol,
         registered_db,
-        { "protocol" => "reticulum" },
+        { "protocol" => "loramesh" },
         "!mcingest1",
       )
       expect(warnings).not_to be_empty
       log = warnings.first
       expect(log[:message]).to match(/malformed protocol stamp/i)
-      expect(log[:value]).to eq("reticulum")
+      expect(log[:value]).to eq("loramesh")
       expect(log[:ingestor]).to eq("!mcingest1")
     end
 
@@ -3291,12 +3401,13 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(helper.send(:normalize_protocol_value, "meshcore")).to eq("meshcore")
       expect(helper.send(:normalize_protocol_value, "MESHTASTIC")).to eq("meshtastic")
       expect(helper.send(:normalize_protocol_value, "  Meshcore  ")).to eq("meshcore")
+      expect(helper.send(:normalize_protocol_value, "Reticulum")).to eq("reticulum")
     end
 
     it "returns nil for unknown or malformed values" do
       expect(helper.send(:normalize_protocol_value, nil)).to be_nil
       expect(helper.send(:normalize_protocol_value, "")).to be_nil
-      expect(helper.send(:normalize_protocol_value, "reticulum")).to be_nil
+      expect(helper.send(:normalize_protocol_value, "loramesh")).to be_nil
       expect(helper.send(:normalize_protocol_value, 42)).to be_nil
     end
   end

@@ -30,6 +30,9 @@ permissions:
 jobs:
   flutter:
     strategy:
+      # Report both platforms independently: a macOS failure used to cancel the
+      # Ubuntu job mid-build, hiding whether the Android build actually passed.
+      fail-fast: false
       matrix:
         os:
           - ubuntu-latest

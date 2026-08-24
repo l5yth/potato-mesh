@@ -20,7 +20,7 @@ import asyncio
 import sys
 import threading
 
-from ... import activity, config
+from ... import activity, config, tx_policy
 from ._constants import _ANNOUNCE_SEND_TIMEOUT_SECS, _CONNECT_TIMEOUT_SECS
 from .decode import _self_info_to_node_dict
 from .identity import _meshcore_node_id
@@ -215,11 +215,19 @@ class MeshcoreProvider:
         daemon resolves it via ``getattr`` and skips it when absent. It is a
         no-op when the interface has no live event loop / handle.
 
+        Enforces the transmit gates **here**, at the transmit primitive, rather
+        than relying on the caller: this method is a public, duck-typed provider
+        capability, so any second caller (a CLI, an operator script, a future
+        scheduler) must not be able to put traffic on the air by reaching past
+        the daemon's own check.
+
         Parameters:
             iface: Active :class:`_MeshcoreInterface`.
             text: Announcement string to transmit.
         """
 
+        if not tx_policy.announcements_permitted():
+            return
         if not isinstance(iface, _MeshcoreInterface):
             return
         mc = getattr(iface, "_mc", None)

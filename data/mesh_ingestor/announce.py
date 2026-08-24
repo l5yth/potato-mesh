@@ -14,16 +14,19 @@
 
 """Activity announcement: dogfeed the instance API and build the broadcast text.
 
-SPEC decision **MA6** — the ingestor periodically broadcasts a one-line activity
-summary on its protocol's default channel, drawing the numbers **back from the
-target instance's own API** (dogfeeding: one radio may not see the whole mesh).
+SPEC decision **MA6** — when the operator opts in (``TX_ENABLED=1`` **and**
+``TX_ANNOUNCE=1``, MA7 a/b), the ingestor periodically broadcasts a one-line
+activity summary on its protocol's default channel, drawing the numbers **back
+from the target instance's own API** (dogfeeding: one radio may not see the
+whole mesh).
 
 This module owns the read-only *dogfeed* HTTP client (GET ``/version`` and
 ``/api/stats`` — both public, no auth) and the character-limited message builder.
 The transmit primitive lives on each provider (``send_channel_announcement``,
-MA9); the scheduling and the ``RX_ONLY`` / privacy / 24-hour gates live in the
-daemon (MA7/MA8). Every fetch fails **soft** — any network or
-shape error returns ``None`` so the caller can fail closed.
+MA9) and enforces the transmit gates itself; the transmit policy lives in
+:mod:`~data.mesh_ingestor.tx_policy`, and the privacy / 24-hour gates and the
+cadence live here and in the daemon (MA7/MA8). Every fetch fails **soft** — any
+network or shape error returns ``None`` so the caller can fail closed.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ import json
 import time
 import urllib.request
 
-from . import config
+from . import config, tx_policy
 
 #: Conservative single-frame text limits per protocol (SPEC MA6). ASCII bytes ≈
 #: characters; the announcement template is short, so truncation is only a
@@ -214,42 +217,39 @@ def build_announcement(
 
 #: The first announcement is withheld until the ingestor has been running this
 #: long, so the dogfed 24-hour numbers are accurate over a full window and a
-#: restart storm cannot spam the channel (SPEC MA7 d).
+#: restart storm cannot spam the channel (SPEC MA7 c).
 ANNOUNCE_INITIAL_DELAY_SECS = 24 * 60 * 60
 
 #: Minimum spacing between announcement cycles once eligible (SPEC MA8).
 ANNOUNCE_INTERVAL_SECS = 24 * 60 * 60
 
 
-def announcements_enabled() -> bool:
-    """Return whether announcements may be transmitted at all (SPEC MA7 a).
+def announce_due(
+    *, start_monotonic: float, last_announce: float | None, now: float
+) -> bool:
+    """Return whether an announcement cycle is due (SPEC MA7 c / MA8).
 
-    ``True`` only when :data:`~data.mesh_ingestor.config.RX_ONLY` is off — the
-    reused receive-only flag (default off) is the single transmit gate; there is
-    no separate enable switch.
-
-    Returns:
-        ``True`` when the transmit gate permits an announcement.
-    """
-
-    return not getattr(config, "RX_ONLY", False)
-
-
-def announce_due(*, start_time: float, last_announce: float | None, now: float) -> bool:
-    """Return whether an announcement cycle is due (SPEC MA7 d / MA8).
+    All three arguments are :func:`time.monotonic` readings, **not** wall clock.
+    The 24-hour post-start delay exists so a restart storm cannot spam the
+    channel, and wall clock cannot express that: an RTC-less host (a Pi or SBC —
+    exactly the hardware these ingestors run on) boots with a stale clock, NTP
+    then steps it forward by hours or years, and a wall-clock ``now -
+    start_time`` clears the delay instantly on the next loop. A monotonic clock
+    is immune to steps, which is why the rest of the daemon's timers already use
+    one.
 
     Parameters:
-        start_time: Unix time the ingestor started.
-        last_announce: Unix time of the previous cycle, or ``None`` if none yet.
-        now: Current unix time.
+        start_monotonic: Monotonic reading taken when the ingestor started.
+        last_announce: Monotonic reading of the previous cycle, or ``None``.
+        now: Current monotonic reading.
 
     Returns:
         ``True`` when at least :data:`ANNOUNCE_INITIAL_DELAY_SECS` have elapsed
-        since *start_time* **and** at least :data:`ANNOUNCE_INTERVAL_SECS` since
-        *last_announce*.
+        since *start_monotonic* **and** at least :data:`ANNOUNCE_INTERVAL_SECS`
+        since *last_announce*.
     """
 
-    if now - start_time < ANNOUNCE_INITIAL_DELAY_SECS:
+    if now - start_monotonic < ANNOUNCE_INITIAL_DELAY_SECS:
         return False
     if last_announce is not None and now - last_announce < ANNOUNCE_INTERVAL_SECS:
         return False
@@ -261,7 +261,7 @@ def send_announcement_to_instance(
 ) -> bool:
     """Dogfeed one instance and, unless it is private, build and send the line.
 
-    The privacy gate is **fail-closed** (SPEC MA7 c / Invariant II): the
+    The privacy gate is **fail-closed** (SPEC MA7 d / Invariant II): the
     announcement is sent only when ``/version`` explicitly reports
     ``private_mode == False``; a ``True`` flag or any fetch/parse error skips it.
 
@@ -275,6 +275,19 @@ def send_announcement_to_instance(
         ``True`` when an announcement was transmitted, ``False`` otherwise.
     """
 
+    # Re-checked here even though the daemon entry point and both shipped
+    # providers also check: this function is exported, and the send target is a
+    # duck-typed provider method, so a provider written to the documented
+    # protocol checklist need not carry the gate itself.  The transmit policy
+    # must not depend on every future provider author remembering it.
+    if not tx_policy.announcements_permitted():
+        config._debug_log(
+            "Activity announcement skipped: transmit policy forbids it",
+            context="announce.tx",
+            url=instance_url,
+            blocked_by=tx_policy.describe_tx_policy()["blocked_by"],
+        )
+        return False
     if fetch_private_mode(instance_url) is not False:
         config._debug_log(
             "Activity announcement skipped: instance private or unreachable",
@@ -356,13 +369,13 @@ def maybe_run_announcements(
     provider: object,
     iface: object,
     *,
-    start_time: float,
+    start_monotonic: float,
     last_announce: float | None,
     now: float | None = None,
 ) -> float | None:
     """Daemon entry point: run an announcement cycle when scheduled (SPEC MA7/MA8).
 
-    Applies the enable / RX-only gate and the 24-hour schedule, then dogfeeds and
+    Applies the transmit gates and the 24-hour schedule, then dogfeeds and
     announces to each configured instance. The cycle timestamp advances whenever
     the schedule fires (whether or not any instance was actually announced to),
     so a private or unreachable instance is retried on the next 24-hour tick
@@ -371,9 +384,9 @@ def maybe_run_announcements(
     Parameters:
         provider: Active mesh provider.
         iface: Live mesh interface.
-        start_time: Unix time the ingestor started.
-        last_announce: Unix time of the previous cycle, or ``None``.
-        now: Current unix time; defaults to :func:`time.time`.
+        start_monotonic: Monotonic reading taken when the ingestor started.
+        last_announce: Monotonic reading of the previous cycle, or ``None``.
+        now: Current monotonic reading; defaults to :func:`time.monotonic`.
 
     Returns:
         The updated ``last_announce`` timestamp — *now* when a cycle ran, else
@@ -381,10 +394,20 @@ def maybe_run_announcements(
     """
 
     if now is None:
-        now = time.time()
-    if not announcements_enabled():
+        now = time.monotonic()
+    if not tx_policy.announcements_permitted():
+        # Name the closed gate: an operator who opted in and hears nothing must
+        # be able to tell "TX_ENABLED unset" from "RX_ONLY still set" from
+        # "still inside the 24 h delay" without a day of observation per guess.
+        config._debug_log(
+            "Activity announcement suppressed by transmit policy",
+            context="announce.tx",
+            blocked_by=tx_policy.describe_tx_policy()["blocked_by"],
+        )
         return last_announce
-    if not announce_due(start_time=start_time, last_announce=last_announce, now=now):
+    if not announce_due(
+        start_monotonic=start_monotonic, last_announce=last_announce, now=now
+    ):
         return last_announce
     run_announcement_cycle(provider, iface)
     return now
@@ -395,7 +418,6 @@ __all__ = [
     "ANNOUNCE_INITIAL_DELAY_SECS",
     "ANNOUNCE_INTERVAL_SECS",
     "announce_due",
-    "announcements_enabled",
     "build_announcement",
     "fetch_activity",
     "fetch_private_mode",

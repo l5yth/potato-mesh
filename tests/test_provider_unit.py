@@ -1597,6 +1597,11 @@ def _telemetry_env(monkeypatch, *, contacts=None, frozen_time=1_700_000_000):
         contacts: Optional contact dicts pre-registered on the interface.
         frozen_time: Wall-clock second ``time.time`` is pinned to.
 
+    Transmission is permitted here (SPEC MA7 defaults it off) so these tests
+    exercise the poll machinery itself; the policy is covered in
+    ``tests/test_tx_policy_unit.py``, and a test that needs it closed simply
+    re-patches the flag afterwards.
+
     Returns:
         Tuple ``(mc_tel, iface, stub, captured)`` — module under test, the
         interface, the stubbed handlers module, and the captured packet list.
@@ -1608,6 +1613,9 @@ def _telemetry_env(monkeypatch, *, contacts=None, frozen_time=1_700_000_000):
     stub = _make_stub_handlers_module()
     stub.store_packet_dict = lambda pkt: captured.append(pkt)
     monkeypatch.setattr(mc_tel.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(mc_tel.config, "TX_ENABLED", True)
+    monkeypatch.setattr(mc_tel.config, "TX_ANNOUNCE", True)
+    monkeypatch.setattr(mc_tel.config, "RX_ONLY", False)
     monkeypatch.setattr(_time, "time", lambda: frozen_time)
     iface = _MeshcoreInterface(target=None)
     for contact in contacts or []:
@@ -2162,8 +2170,96 @@ def test_telemetry_poll_loop_disabled_and_ticking(monkeypatch):
     assert calls["contact"] >= 1  # first on-air poll after one interval
 
 
+@pytest.mark.parametrize(
+    ("closed", "expected_gate"),
+    [
+        ({"TX_ENABLED": False}, "TX_ENABLED"),
+        ({"RX_ONLY": True}, "RX_ONLY"),
+    ],
+)
+def test_poll_contact_telemetry_refuses_closed_policy(
+    monkeypatch, closed, expected_gate
+):
+    """A closed transmit policy stops the poll *at the request*, not just the loop.
+
+    Covers the gate inside ``_poll_contact_telemetry`` itself: without this the
+    check could be deleted and every other test would still pass, because the
+    loop-entry interval check would mask it.
+    """
+    import types
+    import data.mesh_ingestor.activity as activity
+    import data.mesh_ingestor.tx_policy as tx_policy
+
+    mc_tel, iface, stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    for name, value in closed.items():
+        monkeypatch.setattr(mc_tel.config, name, value)
+    assert tx_policy.describe_tx_policy()["blocked_by"] == expected_gate
+
+    calls = {"telemetry": 0, "status": 0}
+
+    class _Commands:
+        async def req_telemetry_sync(self, contact):  # pragma: no cover
+            calls["telemetry"] += 1
+            return None
+
+        async def req_status_sync(self, contact):  # pragma: no cover
+            calls["status"] += 1
+            return None
+
+    activity.take_packet_count()  # drain
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            types.SimpleNamespace(commands=_Commands()), iface, stub, {}
+        )
+    )
+    assert calls == {"telemetry": 0, "status": 0}
+    assert activity.take_packet_count() == 0
+
+
+def test_poll_contact_telemetry_status_fallback_rechecks_policy(monkeypatch):
+    """The status fallback is a second transmission and takes its own check.
+
+    A policy that closes between the telemetry pull and the status fallback must
+    stop the fallback frame; one check covering both requests would let it out.
+    """
+    import types
+    import data.mesh_ingestor.activity as activity
+
+    mc_tel, iface, stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    calls = {"telemetry": 0, "status": 0}
+
+    class _Commands:
+        async def req_telemetry_sync(self, contact):
+            calls["telemetry"] += 1
+            # The operator revokes permission while this request is in flight.
+            monkeypatch.setattr(mc_tel.config, "TX_ENABLED", False)
+            return None
+
+        async def req_status_sync(self, contact):  # pragma: no cover
+            calls["status"] += 1
+            return None
+
+    activity.take_packet_count()  # drain
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            types.SimpleNamespace(commands=_Commands()), iface, stub, {}
+        )
+    )
+    assert calls == {"telemetry": 1, "status": 0}
+    assert activity.take_packet_count() == 1  # only the first request went out
+
+
 def test_telemetry_poll_loop_rx_only_disables_on_air_polls(monkeypatch):
-    """RX_ONLY forbids ingestor TX: contact polls stop, local self reads stay."""
+    """The legacy RX_ONLY veto still stops contact polls even with TX_ENABLED=1.
+
+    Local companion-link self reads cost no airtime and continue regardless.
+    """
     import types
 
     mc_tel, iface, stub, _captured = _telemetry_env(
@@ -5131,7 +5227,7 @@ def test_run_meshcore_autoadd_set_rejected_logs_warning(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_send_channel_announcement_meshtastic_sends_and_counts():
+def test_send_channel_announcement_meshtastic_sends_and_counts(permit_tx):
     """Meshtastic sends on CHANNEL_INDEX and counts the transmission (MA1)."""
     import data.mesh_ingestor.activity as activity
     import data.mesh_ingestor.config as config
@@ -5148,7 +5244,63 @@ def test_send_channel_announcement_meshtastic_sends_and_counts():
     assert activity.take_packet_count() == 1
 
 
-def test_send_channel_announcement_meshtastic_noop_without_sendtext():
+@pytest.mark.parametrize(
+    "closed",
+    [
+        {"TX_ENABLED": False},
+        {"TX_ANNOUNCE": False},
+        {"RX_ONLY": True},
+    ],
+)
+def test_send_channel_announcement_meshtastic_refuses_closed_policy(
+    permit_tx, monkeypatch, closed
+):
+    """The transmit primitive enforces the gates itself, not just its caller.
+
+    ``send_channel_announcement`` is a public duck-typed capability, so a second
+    caller reaching past the daemon must not be able to put a frame on the air.
+    """
+    import data.mesh_ingestor.activity as activity
+
+    for name, value in closed.items():
+        monkeypatch.setattr(permit_tx, name, value)
+    calls = []
+
+    class _Iface:
+        def sendText(self, text, channelIndex=0):
+            calls.append(text)
+
+    activity.take_packet_count()  # drain
+    MeshtasticProvider().send_channel_announcement(_Iface(), "hello mesh")
+    assert calls == []
+    assert activity.take_packet_count() == 0
+
+
+def test_send_channel_announcement_meshcore_refuses_closed_policy(
+    permit_tx, monkeypatch
+):
+    """The MeshCore primitive refuses before touching the event loop."""
+    import types as _types
+    import data.mesh_ingestor.activity as activity
+
+    monkeypatch.setattr(permit_tx, "TX_ENABLED", False)
+    iface = _MeshcoreInterface(target=None)
+    sent = []
+
+    class _Commands:
+        async def send_chan_msg(self, chan, msg, timestamp=None):  # pragma: no cover
+            sent.append((chan, msg))
+
+    iface._mc = _types.SimpleNamespace(commands=_Commands())
+    iface._loop = None  # never reached: the gate returns first
+
+    activity.take_packet_count()  # drain
+    MeshcoreProvider().send_channel_announcement(iface, "hello mesh")
+    assert sent == []
+    assert activity.take_packet_count() == 0
+
+
+def test_send_channel_announcement_meshtastic_noop_without_sendtext(permit_tx):
     """An interface lacking sendText is a no-op that counts no TX."""
     import data.mesh_ingestor.activity as activity
 
@@ -5157,7 +5309,7 @@ def test_send_channel_announcement_meshtastic_noop_without_sendtext():
     assert activity.take_packet_count() == 0
 
 
-def test_send_channel_announcement_meshcore_sends_and_counts():
+def test_send_channel_announcement_meshcore_sends_and_counts(permit_tx):
     """MeshCore schedules send_chan_msg on its loop and counts the TX (MA1)."""
     import asyncio as _asyncio
     import threading as _threading
@@ -5190,7 +5342,7 @@ def test_send_channel_announcement_meshcore_sends_and_counts():
         loop.close()
 
 
-def test_send_channel_announcement_meshcore_noop_guards():
+def test_send_channel_announcement_meshcore_noop_guards(permit_tx):
     """No-op (no TX) for a wrong iface type or a missing/closed loop or handle."""
     import asyncio as _asyncio
     import types as _types
