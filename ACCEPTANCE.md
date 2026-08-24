@@ -4002,7 +4002,8 @@ merged `packets` figure, appends the per-interval delta to its hourly
 `MAX`-per-protocol 24 h packets/hour moving average (MA4–MA5). Each ingestor then
 periodically broadcasts a one-line activity summary — numbers **dogfed from the
 target instance's own API** — on its protocol's default channel (MA6), gated by
-`RX_ONLY` (reused as the transmit gate), the target's `/version` privacy flag
+the `ANNOUNCE` opt-in (default `0`) and `RX_ONLY` (the global TX kill switch,
+which overrides it), the target's `/version` privacy flag
 (fail-closed), and a ≥ 24 h post-start delay (MA7–MA8), via an **optional**
 duck-typed provider send
 that leaves `MeshProtocol` conformance intact (MA9). Unless a check says
@@ -4087,19 +4088,19 @@ where `<N>` = the target's `GET /api/stats` `<protocol>.nodes.day` and `<M>` =
 line is truncated to the protocol's character limit. `<domain>` = the configured
 `INSTANCE_DOMAIN`.
 
-### MA-A7 — Announcement gates: RX_ONLY, privacy fail-closed, 24 h — MA7
+### MA-A7 — Announcement gates: ANNOUNCE opt-in, RX_ONLY, privacy fail-closed, 24 h — MA7
 ```bash
 ( . .venv/bin/activate && pytest -q tests/test_announce_unit.py \
     -k "gate or private or rx_only or elapsed" )
 ```
-**Expected:** pass. **No** announcement is sent when any gate fails: `RX_ONLY=1`
-(the **reused** receive-only flag — its existing MeshCore-poll TX suppression now
-also covers the announcement, so it is the sole opt-out; no separate `ENABLE_TX`
-env exists); the target `/version` reports `private_mode: true`; the `/version`
-fetch **errors or is unparseable** (fail-closed — treated as private/skip); or
-`< 24 h` have elapsed since ingestor start. With `RX_ONLY` unset (the default
-`0`), `private_mode: false`, and `≥ 24 h` elapsed, exactly one announcement per
-24 h per domain is transmitted.
+**Expected:** pass. **No** announcement is sent when any gate fails: `ANNOUNCE` is
+unset (the default `0` — the announcement is opt-in, so an ingestor deployed to
+feed a map never transmits on its own); `RX_ONLY=1` (the receive-only flag still
+forbids every ingestor TX and overrides `ANNOUNCE=1`); the target `/version`
+reports `private_mode: true`; the `/version` fetch **errors or is unparseable**
+(fail-closed — treated as private/skip); or `< 24 h` have elapsed since ingestor
+start. With `ANNOUNCE=1`, `RX_ONLY` unset, `private_mode: false`, and `≥ 24 h`
+elapsed, exactly one announcement per 24 h per domain is transmitted.
 
 ### MA-A8 — Default channel/scope + 24 h cadence — MA8
 ```bash

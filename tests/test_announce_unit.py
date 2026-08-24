@@ -276,14 +276,34 @@ def _stub_dogfeed(monkeypatch, *, private=False, numbers=(12, 50)):
 class TestAnnouncementGates:
     """Tests for :func:`announce.announcements_enabled` (SPEC MA7 a)."""
 
-    def test_gate_enabled_by_default(self, monkeypatch):
-        """Enabled when RX_ONLY is off (the default)."""
+    def test_gate_disabled_by_default(self, monkeypatch):
+        """Off by default: ANNOUNCE unset means no unsolicited TX."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", False)
+        monkeypatch.setattr(announce.config, "RX_ONLY", False)
+        assert announce.announcements_enabled() is False
+
+    def test_gate_enabled_when_opted_in(self, monkeypatch):
+        """Enabled when the operator opts in and RX_ONLY is off."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", False)
         assert announce.announcements_enabled() is True
 
     def test_gate_disabled_when_rx_only(self, monkeypatch):
-        """RX_ONLY (reused as the single transmit gate) forbids the announcement."""
+        """RX_ONLY forbids every ingestor TX and so overrides the opt-in."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", True)
+        assert announce.announcements_enabled() is False
+
+    def test_gate_disabled_when_rx_only_and_not_opted_in(self, monkeypatch):
+        """Both gates closed is still closed (no double-negative surprise)."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", False)
+        monkeypatch.setattr(announce.config, "RX_ONLY", True)
+        assert announce.announcements_enabled() is False
+
+    def test_gate_defaults_to_off_when_attribute_missing(self, monkeypatch):
+        """A config module without ``ANNOUNCE`` fails closed, not open."""
+        monkeypatch.delattr(announce.config, "ANNOUNCE", raising=False)
+        monkeypatch.setattr(announce.config, "RX_ONLY", False)
         assert announce.announcements_enabled() is False
 
 
@@ -474,6 +494,7 @@ class TestMaybeRunAnnouncements:
 
     def test_gate_noop_when_not_enabled(self, monkeypatch):
         """No cycle runs and last_announce is unchanged when RX_ONLY forbids TX."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", True)
         ran = []
         monkeypatch.setattr(
@@ -487,6 +508,7 @@ class TestMaybeRunAnnouncements:
 
     def test_cadence_noop_when_not_due(self, monkeypatch):
         """No cycle runs before the 24 h delay; last_announce is unchanged."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", False)
         ran = []
         monkeypatch.setattr(
@@ -501,6 +523,7 @@ class TestMaybeRunAnnouncements:
 
     def test_cadence_runs_cycle_and_advances_timestamp(self, monkeypatch):
         """When due, the cycle runs and last_announce advances to now."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", False)
         ran = []
         monkeypatch.setattr(
@@ -517,6 +540,7 @@ class TestMaybeRunAnnouncements:
 
     def test_cadence_defaults_now_to_wall_clock(self, monkeypatch):
         """With ``now`` omitted the current wall clock is used (gate-off path)."""
+        monkeypatch.setattr(announce.config, "ANNOUNCE", True)
         monkeypatch.setattr(announce.config, "RX_ONLY", True)
         result = announce.maybe_run_announcements(
             "P", "I", start_time=0, last_announce=7.0
