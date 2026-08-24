@@ -23,6 +23,8 @@ Demo: <https://potatomesh.net/>
 * Ingestor: the announcement's 24 h anti-spam delay is measured on a monotonic clock — it used wall clock, so on an RTC-less host a post-boot NTP step cleared it instantly by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 * Ingestor: transmit policy is stated in the log at startup without `DEBUG=1`, and each suppressed announcement names the gate that closed by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 * App: await the in-flight request before closing its HTTP client in `loadMessages`/`loadNodes` — the unawaited return let `finally` close the client mid-request by @l5yth
+* App: raise the iOS deployment target to **15.0** (from 14.0) in the Podfile, Xcode project and `AppFrameworkInfo.plist` — Flutter 3.47's `Flutter` pod requires it, and `pod install` could not resolve against the old target. **Drops support for iOS 14 devices.** by @l5yth
+* CI: the Mobile workflow matrix no longer fails fast, so an iOS failure stops hiding whether the Android build passed by @l5yth
 * Docs: README gains a **Transmitting on the mesh** section — what each flag turns on, the truth table, the literal announcement text, and what is never gated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 
 ## v0.7.4
