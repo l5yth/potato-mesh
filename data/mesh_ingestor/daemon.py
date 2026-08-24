@@ -25,6 +25,7 @@ import time
 from pubsub import pub
 
 from . import announce, config, handlers, ingestors, interfaces, queue, tx_policy
+from . import via_mqtt_probe
 from .mesh_protocol import MeshProtocol
 from .utils import _retry_dict_snapshot
 
@@ -406,6 +407,12 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
 
     try:
         node_items = state.provider.node_snapshot_items(state.iface)
+        if via_mqtt_probe.probe_enabled():
+            # ``node_snapshot_items`` is typed as an Iterable, so materialise
+            # before probing: a generator consumed by the probe would leave the
+            # upsert loop below with nothing.
+            node_items = list(node_items)
+            via_mqtt_probe.probe_snapshot(node_items)
         processed_any = False
         for node_id, node in node_items:
             processed_any = True

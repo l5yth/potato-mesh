@@ -597,6 +597,19 @@ API_TOKEN = INSTANCES[0][1] if INSTANCES else os.environ.get("API_TOKEN", "")
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 """When ``True``, enables the ingestor's energy saving mode."""
 
+VIA_MQTT_PROBE = _env_flag("VIA_MQTT_PROBE", default=False, on_invalid=False)
+"""When ``True``, logs Meshtastic ``via_mqtt`` provenance for received packets.
+
+Read-only diagnostic for issue #884 (see
+:mod:`~data.mesh_ingestor.via_mqtt_probe`).  It classifies each packet by
+whether the radio stamped RF receive metadata alongside a ``via_mqtt`` flag,
+which is the evidence needed to decide whether a packet-level ``via_mqtt``
+filter can work at all.  The probe never drops, mutates, or transmits anything.
+
+Independent of :data:`DEBUG` so it can run on a production ingestor without the
+full debug firehose.  Defaults to off, and resolves an unparseable value to off
+so a typo costs a diagnostic rather than adding log volume nobody asked for."""
+
 LORA_FREQ: float | int | str | None = _parse_lora_freq_env(os.environ.get("FREQUENCY"))
 """Frequency of the local node's configured LoRa region in MHz or raw region label.
 
@@ -630,6 +643,7 @@ __all__ = [
     "INSTANCES",
     "API_TOKEN",
     "ENERGY_SAVING",
+    "VIA_MQTT_PROBE",
     "LORA_FREQ",
     "MODEM_PRESET",
     "TRANSPORT",

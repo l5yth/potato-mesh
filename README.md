@@ -325,6 +325,7 @@ appear in the allowlist.
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
 | `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP connections, and bluetooth addresses (BLE mac). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
+| `VIA_MQTT_PROBE` | `0` | Set to `1` to log Meshtastic `via_mqtt` provenance for every received packet and node snapshot (issue #884). Read-only diagnostic: it never drops, mutates, or transmits anything, and is independent of `DEBUG` so it can run on a production ingestor. |
 | `CHANNEL_INDEX` | `0` | Which channel index to ingest from. |
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
 | `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |

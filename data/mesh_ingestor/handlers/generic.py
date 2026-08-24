@@ -25,6 +25,7 @@ import time
 from collections.abc import Mapping
 
 from .. import channels, config, queue
+from .. import via_mqtt_probe as _via_mqtt_probe
 from ..serialization import (
     _canonical_node_id,
     _coerce_int,
@@ -333,6 +334,13 @@ def store_packet_dict(packet: Mapping) -> None:
     """
 
     decoded = packet.get("decoded") or {}
+
+    # Read-only via_mqtt provenance probe (issue #884).  Placed ahead of every
+    # routing branch so it observes all packet types from a single point, and
+    # inert unless VIA_MQTT_PROBE is set.  MeshCore packets reach this function
+    # too (protocols/meshcore/handlers.py) but never carry the flag, so they
+    # classify as plain RF traffic.
+    _via_mqtt_probe.probe_packet(packet, decoded)
 
     portnum_raw = _first(decoded, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
