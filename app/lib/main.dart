@@ -1224,7 +1224,7 @@ class MeshRepository implements MeshNodeResolver {
           _messagesByDomain[key] = cached;
         }
       }
-      return _loadMessagesInternal(
+      return await _loadMessagesInternal(
         domain: domain,
         client: client,
         forceFull: !loaded,
@@ -1263,7 +1263,7 @@ class MeshRepository implements MeshNodeResolver {
     final client = _client ?? http.Client();
     final shouldClose = _client == null;
     try {
-      return _fetchNodesList(
+      return await _fetchNodesList(
         domain: domain,
         client: client,
         persist: true,
