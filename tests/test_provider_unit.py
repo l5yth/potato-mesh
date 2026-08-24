@@ -5392,3 +5392,59 @@ def test_send_channel_announcement_is_optional_MeshProtocol_member():
 
     assert isinstance(_Minimal(), MeshProtocol)
     assert not hasattr(_Minimal(), "send_channel_announcement")
+
+
+# ---------------------------------------------------------------------------
+# ReticulumProvider conformance
+# ---------------------------------------------------------------------------
+
+from data.mesh_ingestor.protocols.reticulum import (  # noqa: E402 - path setup
+    ReticulumProvider,
+    _ReticulumInterface,
+)
+
+
+def test_reticulum_provider_satisfies_protocol():
+    """ReticulumProvider must structurally satisfy the Provider Protocol."""
+    assert isinstance(ReticulumProvider(), MeshProtocol)
+
+
+def test_reticulum_provider_name():
+    """ReticulumProvider.name must be 'reticulum'."""
+    assert ReticulumProvider().name == "reticulum"
+
+
+def test_reticulum_subscribe_returns_empty_list():
+    """RNS has no pubsub topics; subscribe() must return an empty list."""
+    assert ReticulumProvider().subscribe() == []
+
+
+def test_reticulum_node_snapshot_items_non_interface():
+    """node_snapshot_items must return [] for any non-_ReticulumInterface object."""
+    assert ReticulumProvider().node_snapshot_items(object()) == []
+
+
+def test_reticulum_extract_host_node_id_uses_config(monkeypatch):
+    """extract_host_node_id surfaces the operator-supplied INGESTOR_NODE_ID."""
+    import data.mesh_ingestor.protocols.reticulum as _mod
+
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", "!aabbccdd")
+    assert ReticulumProvider().extract_host_node_id(object()) == "!aabbccdd"
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    assert ReticulumProvider().extract_host_node_id(object()) is None
+
+
+def test_reticulum_provider_lazy_registered_in_protocols_package():
+    """protocols.__getattr__ must resolve ReticulumProvider lazily."""
+    import data.mesh_ingestor.protocols as protocols_pkg
+
+    assert protocols_pkg.ReticulumProvider is ReticulumProvider
+    assert "ReticulumProvider" in protocols_pkg.__all__
+
+
+def test_reticulum_interface_close_is_idempotent():
+    """_ReticulumInterface.close() must not raise when called multiple times."""
+    iface = _ReticulumInterface(target=None)
+    iface.close()
+    iface.close()  # must not raise
+    assert iface.isConnected is False

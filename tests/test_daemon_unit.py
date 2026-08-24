@@ -936,6 +936,7 @@ def reset_protocol_config():
     [
         (None, "meshtastic"),
         ("meshcore", "meshcore"),
+        ("reticulum", "reticulum"),
     ],
 )
 def test_config_protocol_env(monkeypatch, reset_protocol_config, env_value, expected):
@@ -950,7 +951,7 @@ def test_config_protocol_env(monkeypatch, reset_protocol_config, env_value, expe
 
 def test_config_protocol_unknown_raises(monkeypatch, reset_protocol_config):
     """An unrecognised PROTOCOL value must raise ValueError at import time."""
-    monkeypatch.setenv("PROTOCOL", "reticulum")
+    monkeypatch.setenv("PROTOCOL", "loramesh")
     with pytest.raises(ValueError, match="PROTOCOL"):
         _reload_config()
 
