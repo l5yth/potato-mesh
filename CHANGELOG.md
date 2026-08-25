@@ -3,6 +3,15 @@
 
 # CHANGELOG
 
+### Fixes
+* Data/Web: **Reticulum node ids now key on the peer's identity, not on a destination hash** — a destination hash is a truncated hash over the identity and name hashes, so a peer announcing both `lxmf.delivery` and `nomadnetwork.node` appeared as two unrelated node rows; one peer is now one row (SPEC RN1)
+* Data/Web: **`user.publicKey` carries the identity's real public key**, and destination hashes move to their own `destHash` list (`nodes.dest_hash`, unioned across ingestors, stored but never served like `public_key`) (SPEC RN1/RN6)
+* Data: **the Reticulum ingestor no longer adopts the operator's `~/.reticulum`** — `RETICULUM_CONFIG_DIR` defaults to an app-owned directory and reaches `.env.example`, `docker-compose.yml`, and `data/Dockerfile` (SPEC RN3)
+* Data: new `RETICULUM_INTERFACES` allowlist bounds announce ingestion to named RNS interfaces; empty (the default) still ingests everything, so an `AutoInterface` LAN no longer has to mean the whole local Reticulum network in your dashboard (SPEC RN4)
+* Web: **the `/charts` mesh-activity figure draws the Reticulum series** — its line list was frozen to two protocols, so a reticulum-carrying mesh rendered two flat-zero lines with its real traffic invisible while the map card rendered the same payload correctly (SPEC RN2)
+* Web: `nodes.dest_hash` and the `instances.reticulum_nodes_count` added in #889 both carry a standalone `data/migrations/*.sql` companion alongside their boot-time schema guard (SPEC RN7)
+* Docs: `ACCEPTANCE.md` S-A5 / MA-A5 / MA-FA2 / F2-A1 / A4a amended — each still asserted a zero-stub, non-whitelisted `reticulum` that SPEC S6/MA5/MA-F2/F2-2 had already stopped describing; README gains a Reticulum section
+
 ### Features
 * Data/Web: Reticulum protocol support — `PROTOCOL=reticulum` selects a passive RNS announce listener that ingests `lxmf.delivery`/`nomadnetwork.node` announces as `protocol="reticulum"` nodes; the web app whitelists the protocol end-to-end (ingest + `?protocol=` filter), serves live `reticulum` stats scopes and activity-series keys, signs a live `reticulum_nodes_count` on the federation wire (the v2 canonical already carried the field, so peer signatures are unaffected), and renders reticulum nodes across the UI (icon, filter chip, mesh-activity row, federation column) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 

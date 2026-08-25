@@ -596,6 +596,77 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # the accepted MeshCore-inherited merge behaviour (CONTRACTS.md, "Reticulum
   # node id mapping").
   # ---------------------------------------------------------------------------
+  describe "#normalize_dest_hashes" do
+    it "returns nil when the record names no hash" do
+      # nil lets the upsert's conflict clause preserve whatever is stored.
+      expect(dp.normalize_dest_hashes(nil)).to be_nil
+      expect(dp.normalize_dest_hashes([])).to be_nil
+      expect(dp.normalize_dest_hashes(["", "   "])).to be_nil
+    end
+
+    it "accepts a bare string or a list" do
+      expect(JSON.parse(dp.normalize_dest_hashes("AABB"))).to eq(["aabb"])
+      expect(JSON.parse(dp.normalize_dest_hashes(%w[bbcc aabb]))).to eq(%w[aabb bbcc])
+    end
+
+    it "lowercases, de-dupes, and sorts for a stable stored array" do
+      # An unstable array would make every upsert look like a change.
+      expect(JSON.parse(dp.normalize_dest_hashes(%w[CCDD aabb ccdd AABB]))).to eq(%w[aabb ccdd])
+    end
+  end
+
+  describe "#upsert_node — dest_hash union (SPEC RN1)" do
+    include_context "with isolated db"
+
+    def reticulum_record(hashes, last_heard: now)
+      {
+        "lastHeard" => last_heard,
+        "destHash" => hashes,
+        "user" => { "longName" => "Argos", "shortName" => "beef", "publicKey" => "ab" * 64 },
+      }
+    end
+
+    it "unions stored and incoming hashes inside the write itself" do
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb bbcc]), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd aabb]), protocol: "reticulum")
+      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
+      db.close
+      expect(JSON.parse(stored)).to eq(%w[aabb bbcc ccdd])
+    end
+
+    it "preserves the stored hashes when a record names none" do
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", reticulum_record(nil), protocol: "reticulum")
+      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
+      db.close
+      expect(JSON.parse(stored)).to eq(%w[aabb])
+    end
+
+    it "re-seeds from the record when the stored value is not a JSON array" do
+      # A corrupt or hand-edited cell must never fail the whole node upsert.
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
+      ["not json at all", '{"a":1}'].each do |corrupt|
+        db.execute("UPDATE nodes SET dest_hash = ? WHERE node_id = ?", [corrupt, "!beef0001"])
+        dp.upsert_node(db, "!beef0001", reticulum_record(%w[eeff]), protocol: "reticulum")
+        expect(JSON.parse(db.get_first_value(
+          "SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"]
+        ))).to eq(%w[eeff])
+      end
+      db.close
+    end
+
+    it "leaves dest_hash NULL for protocols that carry no destination hashes" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "user" => { "longName" => "MT" } })
+      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!aabbccdd"])
+      db.close
+      expect(stored).to be_nil
+    end
+  end
+
   describe "#upsert_node — cross-protocol id collision guard" do
     include_context "with isolated db"
 

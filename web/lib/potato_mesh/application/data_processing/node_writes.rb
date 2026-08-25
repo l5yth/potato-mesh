@@ -14,6 +14,8 @@
 
 # frozen_string_literal: true
 
+require "json"
+
 module PotatoMesh
   module App
     module DataProcessing
@@ -236,6 +238,32 @@ module PotatoMesh
         true
       end
 
+      # Normalise an inbound +destHash+ payload value into a stored JSON array.
+      #
+      # Only the *incoming* value is handled here; merging it with what is
+      # already stored happens in SQL, inside the upsert's conflict clause, so
+      # the union is atomic. Doing it in Ruby would mean a read-modify-write
+      # spanning two statements, and two ingestors upserting the same node
+      # concurrently could then lose one side's hashes — exactly the guarantee
+      # this column exists to provide (SPEC RN1).
+      #
+      # Values are lowercased, de-duplicated, and sorted so the stored JSON is
+      # stable; an unstable array would make every upsert look like a change to
+      # downstream diffing.
+      #
+      # @param incoming [Object] +destHash+ from the payload: an array, a bare
+      #   string, or nil.
+      # @return [String, nil] JSON array to merge, or nil when the record names
+      #   no hashes (the conflict clause then preserves what is stored).
+      def normalize_dest_hashes(incoming)
+        values = incoming.is_a?(Array) ? incoming : [incoming]
+        normalized = values
+          .filter_map { |value| string_or_nil(value)&.downcase }
+          .uniq
+          .sort
+        normalized.empty? ? nil : JSON.generate(normalized)
+      end
+
       # Insert or update a node row from an inbound NodeInfo-style payload.
       #
       # Two-phase write. Phase one is the freshness-guarded upsert: a record
@@ -362,6 +390,32 @@ module PotatoMesh
             "COALESCE(excluded.long_name, nodes.long_name)"
           end
 
+        dest_hashes = normalize_dest_hashes(pick_alias(n, "destHash", "dest_hash"))
+        # Emitted only when the record actually names destination hashes.  The
+        # union below is dead weight for Meshtastic and MeshCore, which never
+        # carry +destHash+ — and because +db.execute+ re-prepares per call, an
+        # always-present CASE would charge every node upsert of every protocol
+        # for compiling SQL it can never take.  Same conditional-SQL shape as
+        # +long_name_conflict_sql+ above.
+        dest_hash_conflict_sql = if dest_hashes.nil?
+            # No hashes in this record: keep whatever is stored.
+            "nodes.dest_hash"
+          else
+            <<~SQL.strip
+              CASE
+                        WHEN nodes.dest_hash IS NULL THEN excluded.dest_hash
+                        WHEN NOT json_valid(nodes.dest_hash) THEN excluded.dest_hash
+                        WHEN json_type(nodes.dest_hash) <> 'array' THEN excluded.dest_hash
+                        ELSE (SELECT json_group_array(v) FROM (
+                                SELECT DISTINCT value AS v FROM (
+                                  SELECT value FROM json_each(nodes.dest_hash)
+                                  UNION ALL
+                                  SELECT value FROM json_each(excluded.dest_hash))
+                                ORDER BY v))
+                      END
+            SQL
+          end
+
         row = [
           node_id,
           node_num,
@@ -397,14 +451,15 @@ module PotatoMesh
           modem_preset,
           protocol,
           synthetic,
+          dest_hashes,
         ]
         with_busy_retry do
           db.transaction do
             db.execute(<<~SQL, row)
               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                 hops_away,snr,rssi,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic,dest_hash)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(node_id) DO UPDATE SET
                 num=COALESCE(excluded.num, nodes.num),
                 short_name=COALESCE(excluded.short_name, nodes.short_name),
@@ -413,6 +468,14 @@ module PotatoMesh
                 hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
                 role=COALESCE(excluded.role, nodes.role),
                 public_key=COALESCE(excluded.public_key, nodes.public_key),
+                -- Union stored ∪ incoming atomically, so two ingestors that
+                -- each heard a different subset of a peer's announce aspects
+                -- cannot lose one another's hashes (SPEC RN1).  A stored value
+                -- that is not a JSON array (corrupt or hand-edited) is
+                -- re-seeded from the incoming record rather than failing the
+                -- whole upsert.  Collapses to a no-op for records naming no
+                -- hashes -- see +dest_hash_conflict_sql+.
+                dest_hash=#{dest_hash_conflict_sql},
                 is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
                 rssi=COALESCE(excluded.rssi, nodes.rssi),

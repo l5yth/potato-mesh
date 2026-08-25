@@ -56,6 +56,17 @@ x-ingestor-base: &ingestor-base
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN:-http://web:41447}
     DEBUG: ${DEBUG:-0}
     PROTOCOL: ${PROTOCOL:-meshtastic}
+    # PROTOCOL=reticulum only; the default keeps the ingestor's RNS config on
+    # the mounted potatomesh_config volume rather than in the container's
+    # ephemeral home (and never in the operator's ~/.reticulum).
+    RETICULUM_CONFIG_DIR: ${RETICULUM_CONFIG_DIR:-/app/.config/potato-mesh/reticulum}
+    # NB: the default must be bare, not `""` — Compose substitutes the default
+    # as literal text, so `:-""` yields a two-character value that parses as a
+    # one-entry allowlist matching nothing (i.e. ingests no announces at all).
+    RETICULUM_INTERFACES: ${RETICULUM_INTERFACES:-}
+    # Required for PROTOCOL=reticulum and TRANSPORT=udp: without it the ingestor
+    # heartbeat never registers and the protocol's packets/hour stays at zero.
+    INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
     ENERGY_SAVING: ${ENERGY_SAVING:-0}
     TX_ENABLED: ${TX_ENABLED:-0}
     TX_ANNOUNCE: ${TX_ANNOUNCE:-0}
@@ -64,6 +75,11 @@ x-ingestor-base: &ingestor-base
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
     - potatomesh_config:/app/.config/potato-mesh
+    # The RNS stack's own config/identity (PROTOCOL=reticulum). Deliberately a
+    # separate volume nested inside the shared config mount: potatomesh_config
+    # is initialised by the web image, whose user is pinned to uid 1000, while
+    # this image's user is not — so RNS could not create its directory there.
+    - potatomesh_reticulum:/app/.config/potato-mesh/reticulum
     - potatomesh_logs:/app/logs
     - /dev:/dev
   device_cgroup_rules:
@@ -157,6 +173,8 @@ services:
       - bridge
 
 volumes:
+  potatomesh_reticulum:
+    driver: local
   potatomesh_data:
     driver: local
   potatomesh_config:

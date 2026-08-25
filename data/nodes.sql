@@ -49,7 +49,13 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- non-synthetic upsert carrying its public key).  Name-inferred paths
   -- (message touches, chat placeholders) never write it; NULL means no keyed
   -- evidence has been recorded since the column shipped (SPEC MR1).
-  last_advert_heard  INTEGER
+  last_advert_heard  INTEGER,
+  -- JSON array of protocol-native destination hashes that resolve to this
+  -- node's identity.  Reticulum peers announce one destination per aspect
+  -- (lxmf.delivery, nomadnetwork.node, …), all derived from a single identity
+  -- that keys the row; this back-references them.  NULL for protocols that
+  -- have no such indirection (#888).
+  dest_hash          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);

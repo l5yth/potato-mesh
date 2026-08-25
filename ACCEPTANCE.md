@@ -143,13 +143,17 @@ privacy override, staleness eviction).
 
 ### A4 — Protocol parity & pluggability — SPEC Invariant IV
 
-**A4a. Both protocols are first-class, neither privileged.**
+**A4a. Every protocol is first-class, none privileged.**
 ```bash
 git grep -n 'KNOWN_PROTOCOLS' -- web/lib/potato_mesh/application/routes/api.rb
 ```
-**Expected:** the whitelist is exactly `meshcore` + `meshtastic`
-(`KNOWN_PROTOCOLS = Set.new(%w[meshcore meshtastic])`); classification is
-data-driven, not a per-protocol control-flow fork.
+**Expected:** the whitelist is exactly `meshcore` + `meshtastic` + `reticulum`
+(`KNOWN_PROTOCOLS = Set.new(%w[meshcore meshtastic reticulum])`); classification
+is data-driven, not a per-protocol control-flow fork. **Amended with the
+Reticulum ingestor** (SPEC S6 as amended, #888): `reticulum` joined the
+whitelist, which is precisely what Invariant IV requires — a third protocol
+entering on the same terms as the first two, with no per-protocol fork added to
+let it in.
 
 **A4b. A protocol plugs in behind `MeshProtocol` without touching the read-side.**
 ```bash
@@ -591,19 +595,25 @@ scopes) is `0` under `PRIVATE=1`, mirroring the message-API 404 (A2a). `nodes` a
 gated). Behavior is also covered by a Ruby example
 (`bundle exec rspec spec/app_spec.rb -e "/api/stats"` exercising private mode).
 
-### S-A5 — `reticulum` forward-looking zero stub — S6
+### S-A5 — `reticulum` is a live protocol scope — S6
 ```bash
 curl -s http://127.0.0.1:41447/api/stats \
   | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["reticulum"]; \
 ME=("nodes","messages","telemetry"); WI=("hour","day","week","month"); \
-print(all(r[m][w]==0 for m in ME for w in WI))'
+print(all(isinstance(r[m][w],int) for m in ME for w in WI))'
 git grep -niE 'reticulum' -- web/lib/potato_mesh/application/queries/node_queries.rb
 ```
-**Expected:** the Python check prints `True` — `reticulum` is present with every
-count `0`. The grep shows the `reticulum` block carries an in-code comment marking
-it a **stub** (always-zero until a Reticulum ingestor exists). `reticulum` is
-**not** added to `KNOWN_PROTOCOLS` (still `meshcore` + `meshtastic`; verified by
-A4a).
+**Expected:** the Python check prints `True` — `reticulum` is present with an
+integer count in every metric × window cell. The grep shows `reticulum` as a
+`STATS_PROTOCOL_SCOPES` member counted by the same `WHERE protocol = ?` path as
+its siblings (S2 applies unchanged).
+
+**Amended with the Reticulum ingestor (#888).** This criterion previously
+asserted the opposite — that every count was a hard `0` and that `reticulum` was
+**not** in `KNOWN_PROTOCOLS`. Both were true only while `reticulum` was a
+forward-looking stub; SPEC S6 was amended when the ingestor landed, and the
+whitelist now carries `reticulum` (A4a). The stub served its purpose: the S1
+response shape extended to a live third protocol without another break.
 
 ### S-A6 — One-way federation compatibility (new reads old) — S7
 ```bash
@@ -1444,7 +1454,8 @@ remain green: **C7** (messages backward pagination — its keyset mechanism is n
 shared by six more routes, but `/api/messages` behavior is unchanged); **C4**
 (window floors — `before` only narrows, never widens); **A2 / A2a / A2c** (privacy
 & opt-out — a narrowing upper bound exposes no hidden row, and `/api/messages`
-still 404s in private mode); **A4a** (`KNOWN_PROTOCOLS` unchanged); **PL-A1 /
+still 404s in private mode); **A4a** (`KNOWN_PROTOCOLS` untouched by *this* change — it
+later gained `reticulum` with the Reticulum ingestor); **PL-A1 /
 PL-A2** and **FC-A2** (the frontend message pager and cache seed-then-delta are
 untouched — frontend `before` adoption is deferred per **BP9**); and **B1** (all
 suites). No POST/event contract changes, so **C2** and the Python suite are
@@ -4068,12 +4079,12 @@ curl -s http://127.0.0.1:41447/api/stats \
 SC=("total","meshcore","meshtastic","reticulum"); \
 print("packets_per_hour" not in d \
 and all(isinstance(d[s]["packets"]["hour"],(int,float)) for s in SC) \
-and d["reticulum"]["packets"]["hour"]==0 \
 and all(m in d["total"] for m in ("nodes","messages","telemetry","packets")))'
 ```
 **Expected:** prints `True` — each scope carries an additive `packets` metric with
-a single `hour` window (`<scope>.packets.hour`, the MA4 rate; `reticulum` a `0`
-stub), the old top-level `packets_per_hour` map is **gone**, **and** the
+a single `hour` window (`<scope>.packets.hour`, the MA4 rate; `reticulum`'s went
+**live** with the ingestor, #888, and is no longer asserted to be `0`), the old
+top-level `packets_per_hour` map is **gone**, **and** the
 pre-existing scope × metric × window tree (S1: each scope still carrying
 `nodes`/`messages`/`telemetry`) is unchanged and still present. No version bump —
 **S-A1** still passes.
@@ -4178,10 +4189,16 @@ returns the total plus one row per protocol (Meshtastic then MeshCore), each wit
 `barPct` sized to the busiest visible protocol; `renderMeshActivityCardHtml` emits the
 total, a `packets/h` unit, both protocol icons, and the row rates.
 
-### MA-FA2 — Reticulum is never rendered — MA-F2
+### MA-FA2 — Reticulum renders like any other protocol — MA-F2
 **Expected (covered by the MA-FA1 suite):** `buildMeshActivityModel` with a `reticulum`
-rate present still returns only `meshtastic`/`meshcore` rows — reticulum is absent from
-the card (forward-looking zero stub, S6).
+rate present returns a Reticulum row alongside `meshtastic`/`meshcore`, and
+`renderMeshActivityCardHtml` emits its icon and rate. The card's existing
+zero-state rule (MA-FA3) keeps an idle Reticulum row honest.
+
+**Amended with the Reticulum ingestor (#888).** This criterion previously
+asserted that reticulum was *never* rendered, which held only while it was a
+forward-looking zero stub; SPEC MA-F2 was amended when the ingestor landed.
+Rendering it identically to its siblings is what Invariant IV requires.
 
 ### MA-FA3 — Zero / absent activity unmounts the card — MA-F3
 **Expected (covered by the MA-FA1 suite):** a `0` total, all-zero protocol rates, or an
@@ -4228,10 +4245,11 @@ verified by the Ruby and JS unit suites.
                                spec/app_spec.rb -e "/api/stats/activity" )
 ```
 **Expected:** pass. `GET /api/stats/activity?window_seconds=&bucket_seconds=` returns an
-ascending array of `{ bucket_start, bucket_end, total, meshcore, meshtastic }`; each
-protocol's value is the MAX over that protocol's ingestors of their summed `packets` in
-the bucket ÷ the bucket's hour-span, and `total` is the SUM across protocols (MA4).
-`reticulum` folds into `total` with no series key. A non-positive
+ascending array of `{ bucket_start, bucket_end, total, meshcore, meshtastic, reticulum }`;
+each protocol's value is the MAX over that protocol's ingestors of their summed `packets`
+in the bucket ÷ the bucket's hour-span, and `total` is the SUM across protocols (MA4).
+**Amended with the Reticulum ingestor (#888):** `reticulum` carries its own live series
+key rather than folding into `total` unnamed (SPEC F2-2 as amended). A non-positive
 `window_seconds`/`bucket_seconds`, or a bucket count over `MAX_QUERY_LIMIT`, is a `400`;
 the window is clamped to the 28-day floor. Params are **snake_case** (no camelCase).
 
@@ -4710,7 +4728,9 @@ rows that already scored 0 in every window, so no count changes.
 ```
 **Expected:** every prior check still passes. Explicitly required to remain green:
 **S-A1** (`/api/stats` shape + `sampled:false`), **S-A4** (messages zeroed under
-`PRIVATE=1`), **S-A5** (`reticulum` zero stub), and **S-A6 / A3c** (one-way
+`PRIVATE=1`), **S-A5** (`reticulum` scope present and shaped like its siblings —
+a zero stub when this criterion was written, live since the Reticulum ingestor
+landed), and **S-A6 / A3c** (one-way
 federation stats compatibility) — the fix changes only *how* the counts are
 computed, not the payload. No POST/event contract change, so **C2** and the Python
 suite are unaffected.
@@ -4762,7 +4782,7 @@ name/description/icon/coords/`expire`/`locked_to` are updated and whose
 window floor on `rx_time` cannot be widened by `since` (C4); `?before=<unix>`
 is an inclusive upper bound that only narrows (BP1-style keyset paging;
 non-positive/non-integer values ignored as absent); `?protocol=` filters via
-the unchanged `KNOWN_PROTOCOLS` gate (A4a); a waypoint whose `expire` is in
+the shared `KNOWN_PROTOCOLS` gate (A4a; untouched by this change); a waypoint whose `expire` is in
 the past is **excluded** from results from that moment; `expire`-never rows
 are served until the 7-day window on `rx_time` drops them (no physical
 delete-at-expiry).
@@ -4889,7 +4909,8 @@ read seven — specs updated, not removed); **FC-A1/FC-A3** (the cache
 round-trips the added collection); **LV-A7** (one added entry class; the
 bodies-never-in-the-Log assertion keeps passing); **A2/A2a** (privacy —
 `/api/waypoints` joins the PRIVATE-404 surface; message behavior unchanged);
-**A4/A4a** (parity — protocol-neutral contract, `KNOWN_PROTOCOLS` unchanged);
+**A4/A4a** (parity — protocol-neutral contract, `KNOWN_PROTOCOLS` untouched by
+this change);
 **C2** (its `test_mesh.py` replay suite is unchanged and stays green; the new
 waypoint shapes are validated by `tests/test_waypoint_unit.py` plus the Ruby
 route specs, additively); the legend specs (**UX-A6, NT-A1, LC-A1**) updated
@@ -5125,4 +5146,142 @@ acceptance text is amended to say so), **A4b** (provider conformance — the gat
 inside the optional duck-typed send, so `MeshProtocol` is untouched), and **C2**
 (canonical POST shapes — `tests/` fixtures unmodified). The web app is not
 touched at all: no Ruby, JS, API, storage, SSE, or privacy path changes.
+
+## Bugfix: Reticulum loose ends — identity keying, dest-hash back-reference, interface scope (#888)
+
+The Reticulum ingestor (#890) and web tier (#889) shipped the original proposal
+from #888 rather than the conventions settled in its review. These criteria pin
+the settled conventions so the shipped behaviour cannot drift back.
+
+### RN-A1 — One identity is one node row, across every announce aspect — #888
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py )
+```
+**Expected:** pass. A Reticulum *destination* hash is a truncated hash over the
+identity hash and the name hash, so one physical peer announcing both
+`lxmf.delivery` and `nomadnetwork.node` presents two unrelated destination
+hashes. The canonical `!xxxxxxxx` node id is therefore derived from the
+**identity hash** (`_reticulum_node_id`), not from a destination hash, so both
+aspects collapse onto one row. The suite asserts this against the **real** RNS
+library (`RNS.Identity` / `RNS.Destination.hash`), not only against a fake, so a
+change in how RNS derives destination hashes cannot silently reinstate the split.
+
+### RN-A2 — `publicKey` carries a public key, `destHash` carries the hashes — #888
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "public_key or dest_hash" )
+( cd web && bundle exec rspec spec/reticulum_spec.rb )
+```
+**Expected:** pass. `user.publicKey` is the announcing identity's real public key
+(64 bytes / 128 hex), never a 16-byte destination hash — the two are different
+kinds of value and conflating them made `publicKey` meaningless for Reticulum
+rows. Destination hashes ride a dedicated `destHash` **list**, stored in the
+`nodes.dest_hash` column as a sorted JSON array, so several destinations
+back-reference the one identity that keys the row.
+
+### RN-A3 — `dest_hash` is a union, never a last-writer-wins overwrite — #888
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "normalize_dest_hashes" \
+                              spec/data_processing_spec.rb -e "dest_hash union" \
+                              spec/reticulum_spec.rb -e "unions destination hashes" )
+```
+**Expected:** pass, **with a non-zero example count** — `rspec` exits 0 when a
+`-e` filter matches nothing, so a stale filter here would make this criterion
+silently vacuous rather than failing.
+
+Two ingestors may each have heard a different subset of a peer's aspects, so the
+union is **stored ∪ incoming**. It runs **in SQL**, inside the upsert's
+`ON CONFLICT` clause, so it is atomic within the statement: doing it in Ruby
+meant a read-modify-write spanning two statements with the read outside the
+transaction, and two concurrent upserts of the same node could lose one side's
+hashes — precisely the guarantee this column exists to give. `normalize_dest_hashes`
+handles only the *incoming* value (lowercase, de-duplicate, sort — a stable array
+keeps every upsert from looking like a change). A record naming **no** hashes
+preserves what is stored, and a stored value that is not a JSON array (corrupt or
+hand-edited) is re-seeded from the incoming record rather than failing the whole
+node upsert. Protocols that never carry `destHash` skip the union clause entirely
+(see RN-R1).
+
+### RN-A4 — `dest_hash` and `public_key` stay off the read API — #888 / Invariant II
+```bash
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "never exposes" )
+git grep -n 'public_key\|dest_hash' -- web/lib/potato_mesh/application/queries/node_queries.rb
+```
+**Expected:** pass, and the grep returns **no** projection hit. `public_key` has
+never appeared in a node API projection; `dest_hash` is likewise an on-air
+identifier and follows the same rule. Both are stored for correlation and served
+to nobody.
+
+### RN-A5 — The ingestor never adopts the operator's `~/.reticulum` — #888
+```bash
+( . .venv/bin/activate && pytest -q tests/test_config_unit.py -k "ReticulumConfigDir" )
+grep -n 'RETICULUM_CONFIG_DIR' .env.example docker-compose.yml data/Dockerfile
+```
+**Expected:** pass, and all three container packaging surfaces name the variable
+(`.env.example` documents it as a commented example, the Compose and image
+defaults are live). The NixOS module is **out of scope**: `flake.nix` exposes no
+`protocol` option, so no non-default `PROTOCOL` is selectable there at all — a
+pre-existing gap that also covers `meshcore`, tracked separately. An unset
+`RETICULUM_CONFIG_DIR` resolves to an **app-owned** directory
+(`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`)
+— never `~/.reticulum`. Installing a dashboard ingestor does not imply consent to
+run the operator's transport-node configuration, including whatever
+`enable_transport` and interfaces it defines. An operator who *does* want a shared
+stack says so explicitly by setting the variable.
+
+### RN-A6 — Announce ingestion can be scoped to named interfaces — #888
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "interface" )
+```
+**Expected:** pass. An RNS stack may carry LoRa and IP interfaces at once, and
+RNS's own default config enables an `AutoInterface` (IPv6 link-local multicast) —
+so an unscoped listener ingests every announce on the operator's LAN.
+`RETICULUM_INTERFACES` restricts ingestion to announces whose path arrived on a
+matching interface, matched as a lowercased substring (e.g. `rnode`).
+**Empty is the default and ingests everything**, preserving the shipped
+behaviour; when an allowlist *is* set, an announce whose interface cannot be
+determined is rejected, and a filtered-out announce is not counted as this mesh's
+traffic (no `_mark_packet_seen`).
+
+### RN-A7 — The `/charts` figure draws every protocol the API serves — F2-2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/mesh-activity-chart.test.js )
+```
+**Expected:** pass. `query_activity_buckets` emits a live `reticulum` key in every
+bucket (F2-A1), so `renderMeshActivityChart` draws a Reticulum line and scales the
+axis to it. Before this fix `ACTIVITY_CHART_LINES` was frozen to two protocols:
+a reticulum-only mesh rendered two flat-zero lines with its real traffic invisible
+and the y-axis not scaled to it, while the map card (MA-FA2) rendered the same
+payload correctly — two renderers of one payload disagreeing.
+
+### RN-A8 — Both #889/#890 schema additions have automatic upgrade paths — #888
+```bash
+git grep -n 'reticulum_nodes_count\|dest_hash' -- web/lib/potato_mesh/application/database.rb
+ls data/migrations/20260824_add_reticulum_nodes_count.sql data/migrations/20260824_add_node_dest_hash.sql
+```
+**Expected:** both columns are added by guarded, idempotent
+`PRAGMA table_info` + `ALTER TABLE ... ADD COLUMN` blocks in
+`Database.ensure_schema_upgrades` (the path that actually runs at boot), **and** each has
+a standalone `data/migrations/*.sql` companion for out-of-band migration.
+`data/instances.sql` and `data/nodes.sql` carry the canonical shape for fresh
+databases. #889 shipped the boot guard for `reticulum_nodes_count` but skipped the
+migration file that the four preceding schema changes all shipped; that is
+restored here.
+
+### RN-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**A4/A4a** (parity — `reticulum` is on the same terms as its siblings, and A4a is
+amended to say so rather than to keep asserting a two-protocol whitelist);
+**S-A5 / MA-A5 / MA-FA2 / F2-A1** (all four amended in place — each asserted a
+zero-stub `reticulum` that SPEC S6/MA5/MA-F2/F2-2 had already stopped describing);
+**GH-A1** (stale-but-richer enrichment — the cross-protocol guard lookup is
+unchanged, still a single `SELECT protocol`, and no new skip condition is
+introduced; the `dest_hash` union rides the existing write statement, and its
+conflict clause is emitted only for records that actually carry `destHash`, so
+a Meshtastic or MeshCore upsert compiles the same SQL it always did);
+**C2** (canonical POST shapes — `tests/`
+fixtures unmodified); and **TX-A1–TX-A6** (transmit policy — the Reticulum
+provider adds no transmit site, see the MA7 note in `SPEC.md`).
 

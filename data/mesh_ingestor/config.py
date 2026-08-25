@@ -67,6 +67,7 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
+
 def _debug_log(
     message: str,
     *,
@@ -166,6 +167,7 @@ def _env_flag(name: str, *, default: bool, on_invalid: bool) -> bool:
     )
     return on_invalid
 
+
 _KNOWN_PROTOCOLS = ("meshtastic", "meshcore", "reticulum")
 
 _raw_protocol = os.environ.get("PROTOCOL", "meshtastic").strip().lower()
@@ -181,12 +183,87 @@ PROTOCOL = _raw_protocol
 Accepted values are ``meshtastic`` (default), ``meshcore``, and ``reticulum``.
 """
 
-RETICULUM_CONFIG_DIR = os.environ.get("RETICULUM_CONFIG_DIR", "").strip() or None
-"""Optional Reticulum config directory for ``PROTOCOL=reticulum``.
 
-Passed as ``configdir`` to :class:`RNS.Reticulum`; ``None`` (the default, and
-the fallback for a blank value) lets RNS use its standard user config at
-``~/.reticulum``."""
+def _resolve_reticulum_config_dir() -> str:
+    """Resolve the Reticulum config directory for ``PROTOCOL=reticulum``.
+
+    The ingestor keeps its **own**, isolated Reticulum configuration rather
+    than inheriting the operator's ``~/.reticulum``.  Adopting that directory
+    would make the dashboard silently take on whatever transport
+    configuration the operator runs there — including ``enable_transport``
+    and every interface they have defined — which is never implied by
+    installing an ingestor (#888).
+
+    Resolution order:
+
+    1. :envvar:`RETICULUM_CONFIG_DIR` when set (``~`` is expanded), so an
+       operator who *does* want to share a stack can say so explicitly.
+    2. ``$XDG_CONFIG_HOME/potato-mesh/reticulum``.
+    3. ``~/.config/potato-mesh/reticulum``.
+
+    Returns:
+        Absolute-ish path string suitable as :class:`RNS.Reticulum`'s
+        ``configdir``.  Never ``None`` and never ``~/.reticulum``.
+    """
+    explicit = os.environ.get("RETICULUM_CONFIG_DIR", "").strip()
+    if explicit:
+        return os.path.expanduser(explicit)
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(base, "potato-mesh", "reticulum")
+
+
+RETICULUM_CONFIG_DIR = _resolve_reticulum_config_dir()
+"""Reticulum config directory for ``PROTOCOL=reticulum``.
+
+Passed as ``configdir`` to :class:`RNS.Reticulum`.  Defaults to an app-owned
+directory under the user config root, never the operator's ``~/.reticulum``
+— see :func:`_resolve_reticulum_config_dir`."""
+
+
+def _parse_reticulum_interfaces(raw: str) -> tuple[str, ...]:
+    """Parse the :envvar:`RETICULUM_INTERFACES` allowlist.
+
+    Parameters:
+        raw: Comma-separated interface-name fragments, e.g.
+            ``"RNodeInterface,rnode lora"``.
+
+    Surrounding quote characters are stripped from each fragment.  A value can
+    arrive as the literal two-character string ``'""'`` — that is what a
+    ``${VAR:-""}`` default renders to in a Compose file, since Compose
+    substitutes the default as literal text rather than as shell — and it must
+    resolve to *no allowlist*.  Read naively it would instead become a
+    one-entry allowlist matching nothing, silently ingesting zero announces.
+    Every flag resolves toward its documented default, the same fail-safe rule
+    MA7 applies to the transmit flags.
+
+    Returns:
+        Tuple of lowercased, de-duplicated, non-empty fragments in a stable
+        order.  Empty when the variable is unset, blank, or quote-only.
+    """
+    fragments = set()
+    for part in raw.split(","):
+        cleaned = part.strip().strip("\"'").strip().lower()
+        if cleaned:
+            fragments.add(cleaned)
+    return tuple(sorted(fragments))
+
+
+RETICULUM_INTERFACES = _parse_reticulum_interfaces(
+    os.environ.get("RETICULUM_INTERFACES", "")
+)
+"""Case-insensitive substring allowlist of RNS interfaces to ingest from.
+
+A Reticulum stack can carry LoRa and IP interfaces at once, and an announce
+listener hears every announce reachable over *any* of them.  On a LAN with an
+``AutoInterface`` that means the whole local Reticulum network lands in the
+dashboard.  Setting :envvar:`RETICULUM_INTERFACES` restricts ingestion to
+announces whose path was received on a matching interface (matched as a
+lowercased substring of the interface's string form, e.g. ``rnode``).
+
+**Empty (the default) ingests every interface**, preserving the behaviour the
+provider shipped with (#888)."""
 
 _raw_transport = os.environ.get("TRANSPORT", "api").strip().lower()
 if _raw_transport not in ("api", "udp"):
@@ -532,6 +609,7 @@ __all__ = [
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
     "RETICULUM_CONFIG_DIR",
+    "RETICULUM_INTERFACES",
     "TX_ENABLED",
     "TX_ANNOUNCE",
     "RX_ONLY",
