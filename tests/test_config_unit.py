@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import sys
 from pathlib import Path
 
@@ -290,6 +291,102 @@ class TestProtocolValidation:
         importlib.reload(config)
 
 
+class TestComposeDefaults:
+    """No packaged default may embed a quote character.
+
+    Compose substitutes a ``${VAR:-default}`` default as **literal text**, not
+    as shell, so ``:-""`` delivers the two-character string ``""`` rather than
+    an empty value.  Any parser that treats a non-empty string as meaningful
+    then receives one bogus entry.  For ``ALLOWED_CHANNELS`` that meant a
+    one-entry channel allowlist matching no real channel, so every stock
+    Compose deployment silently dropped every message
+    (``handlers/generic.py``, ``reason="disallowed-channel"``).
+
+    The guard **discovers** compose files rather than listing them, and matches
+    *any* quoted default rather than the one spelling that caused the outage —
+    ``${VAR-""}`` (single dash), ``${VAR:-''}``, and ``${VAR:- ""}`` all deliver
+    the same literal.
+    """
+
+    #: ``${VAR:-…}`` or ``${VAR-…}`` whose default text contains a quote.
+    _QUOTED_DEFAULT = re.compile(r"""\$\{[A-Za-z_][A-Za-z0-9_]*:?-[^}]*["'][^}]*\}""")
+
+    @staticmethod
+    def _compose_files() -> list[Path]:
+        """Every compose file in the repo, wherever it lives."""
+        return sorted(
+            path
+            for path in REPO_ROOT.rglob("*compose*.y*ml")
+            if ".git" not in path.parts and "node_modules" not in path.parts
+        )
+
+    def test_discovery_finds_the_interpolating_compose_files(self):
+        """Guard the guard: a glob that matched nothing would assert nothing.
+
+        Two of the repo's compose files carry no ``${...}`` interpolation at
+        all, so a per-file check over them is structurally vacuous.  Assert that
+        at least one discovered file *does* interpolate, or this whole class is
+        theatre (the same trap RN-A3 was written against).
+        """
+        files = self._compose_files()
+        assert len(files) >= 3, f"compose discovery found only {files}"
+        interpolating = [p for p in files if "${" in p.read_text(encoding="utf-8")]
+        assert interpolating, "no discovered compose file interpolates anything"
+
+    def test_no_quoted_defaults_anywhere(self):
+        """An empty Compose default must be bare (`:-`), never quoted."""
+        offenders = {}
+        for path in self._compose_files():
+            hits = self._QUOTED_DEFAULT.findall(path.read_text(encoding="utf-8"))
+            if hits:
+                offenders[path.relative_to(REPO_ROOT).as_posix()] = hits
+        assert not offenders, (
+            f"Compose substitutes defaults as literal text, not as shell, so "
+            f"these deliver the quote characters verbatim: {offenders}"
+        )
+
+
+class TestChannelNameQuoting:
+    """Channel allowlists must not be defeated by a quoted value.
+
+    Quotes reach the ingestor from two directions: a Compose ``:-""`` default
+    (see :class:`TestComposeDefaults`) and an operator writing
+    ``ALLOWED_CHANNELS='"LongFast"'``.  Either way an unstripped quote makes the
+    entry match no real channel name.
+    """
+
+    def test_quote_only_value_means_no_allowlist(self):
+        """A quote-only value must disable the filter, not match nothing."""
+        assert config._parse_channel_names('""') == ()
+        assert config._parse_channel_names("''") == ()
+        assert config._parse_channel_names('" "') == ()
+        assert config._parse_hidden_channels('""') == ()
+
+    def test_a_name_containing_quotes_is_taken_literally(self):
+        """Quotes inside a fragment are content, and must survive parsing.
+
+        A Meshtastic channel name is arbitrary UTF-8, and the filters match it
+        casefold-**exact** against the on-air name.  Stripping quotes from the
+        configured value would make the two stop matching: an allowlist would
+        black the channel out, and a hidden-channel entry would fail *open*.
+        """
+        assert config._parse_channel_names('"LongFast"') == ('"LongFast"',)
+        assert config._parse_channel_names("Ops'") == ("Ops'",)
+        assert config._parse_channel_names("'Private'") == ("'Private'",)
+        assert config._parse_channel_names("Bob's, O'Brien's") == (
+            "Bob's",
+            "O'Brien's",
+        )
+
+    def test_unquoted_behaviour_is_unchanged(self):
+        """The established parsing — order-preserving, case-insensitive dedupe."""
+        assert config._parse_channel_names("LongFast, longfast ,MediumFast") == (
+            "LongFast",
+            "MediumFast",
+        )
+        assert config._parse_channel_names(None) == ()
+
+
 class TestReticulumConfigDir:
     """Tests for the isolated Reticulum config directory (#888)."""
 
@@ -355,10 +452,15 @@ class TestReticulumInterfaces:
         assert config._parse_reticulum_interfaces("''") == ()
         assert config._parse_reticulum_interfaces('" "') == ()
 
-    def test_strips_quotes_around_real_entries(self):
-        """Quoted entries match the same interfaces as unquoted ones."""
+    def test_fragments_with_content_are_taken_literally(self):
+        """Only quote-*only* fragments are dropped; content is never rewritten.
+
+        The same rule the channel filters need (see
+        :class:`TestChannelNameQuoting`), applied through the shared
+        :func:`config._clean_env_fragment`.
+        """
         assert config._parse_reticulum_interfaces('"rnode", serial') == (
-            "rnode",
+            '"rnode"',
             "serial",
         )
 

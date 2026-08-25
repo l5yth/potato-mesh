@@ -395,6 +395,45 @@ class TestIsAllowedChannel:
         monkeypatch.setattr(config, "ALLOWED_CHANNELS", ("LongFast",))
         assert channels.is_allowed_channel("   ") is False
 
+    def test_quoted_env_value_does_not_blackout_every_channel(self, monkeypatch):
+        """A quote-only env value must not become an allowlist matching nothing.
+
+        The packaged Compose default was ``${ALLOWED_CHANNELS:-""}``, and
+        Compose substitutes defaults as literal text — so the ingestor received
+        the two-character string ``""``.  Parsed naively that is a one-entry
+        allowlist no real channel can match, and every packet was then dropped
+        as ``disallowed-channel``: a stock containerised deployment ingested no
+        messages at all.
+        """
+        monkeypatch.setattr(
+            config, "ALLOWED_CHANNELS", config._parse_channel_names('""')
+        )
+        assert channels.is_allowed_channel("LongFast") is True
+        assert channels.is_allowed_channel("#potatomesh") is True
+
+    def test_a_name_with_a_boundary_quote_is_not_blacked_out(self, monkeypatch):
+        """A channel whose real name ends in a quote must still be ingested.
+
+        Meshtastic channel names are arbitrary UTF-8, so a boundary apostrophe
+        is legal content, not quoting.  The allowlist is matched casefold-exact
+        against the raw on-air name, so any normalisation applied to the
+        configured value and not to the on-air name silently blacks the channel
+        out — the very failure this bugfix exists to remove.
+        """
+        for name in ("Ops'", "'Private'", '"Ops"', "'s Chat"):
+            monkeypatch.setattr(
+                config, "ALLOWED_CHANNELS", config._parse_channel_names(name)
+            )
+            assert channels.is_allowed_channel(name) is True, name
+
+    def test_interior_apostrophes_are_untouched(self, monkeypatch):
+        """Names with interior apostrophes were never at risk; keep it that way."""
+        for name in ("Bob's", "O'Brien's", "Rock 'n' Roll"):
+            monkeypatch.setattr(
+                config, "ALLOWED_CHANNELS", config._parse_channel_names(name)
+            )
+            assert channels.is_allowed_channel(name) is True, name
+
 
 class TestIsHiddenChannel:
     """Tests for :func:`channels.is_hidden_channel`."""
@@ -426,6 +465,37 @@ class TestIsHiddenChannel:
 # ---------------------------------------------------------------------------
 # register_channel
 # ---------------------------------------------------------------------------
+
+
+class TestHiddenChannelQuoting:
+    """A quoted HIDDEN_CHANNELS value must not hide a channel nobody named."""
+
+    def test_quote_only_value_hides_nothing(self, monkeypatch):
+        """The literal Compose default must leave every channel visible."""
+        monkeypatch.setattr(
+            config, "HIDDEN_CHANNELS", config._parse_hidden_channels('""')
+        )
+        assert channels.is_hidden_channel("LongFast") is False
+
+    def test_a_name_with_a_boundary_quote_is_still_hidden(self, monkeypatch):
+        """HIDDEN_CHANNELS must never fail *open* (SPEC Invariant II).
+
+        Hiding is the operator's privacy control.  Normalising the configured
+        name without normalising the on-air name makes the two stop matching,
+        and the channel the operator asked to hide is published instead.
+        """
+        for name in ("Ops'", "'Private'", '"Secret"', "Secret"):
+            monkeypatch.setattr(
+                config, "HIDDEN_CHANNELS", config._parse_hidden_channels(name)
+            )
+            assert channels.is_hidden_channel(name) is True, name
+
+    def test_unrelated_channels_stay_visible(self, monkeypatch):
+        """Hiding one channel must not hide another."""
+        monkeypatch.setattr(
+            config, "HIDDEN_CHANNELS", config._parse_hidden_channels("Secret")
+        )
+        assert channels.is_hidden_channel("LongFast") is False
 
 
 class TestRegisterChannel:

@@ -383,6 +383,10 @@ Keys are snake_case as of 0.7.0 (see
 ```
 **Expected:** pass. The allow-list discards all other channels *before* the
 hidden filter; hidden channels are dropped (`data/mesh_ingestor/channels.py`).
+**Note:** this criterion tests *enforcement* only — that a configured list
+filters correctly. It said nothing about how the list is **delivered**, which is
+where a packaging bug silently blacked out every message; that path is covered
+by **CH-A1–CH-A3**.
 
 ### D3 — Opt-out marker excludes nodes from public listings
 ```bash
@@ -5284,4 +5288,71 @@ a Meshtastic or MeshCore upsert compiles the same SQL it always did);
 **C2** (canonical POST shapes — `tests/`
 fixtures unmodified); and **TX-A1–TX-A6** (transmit policy — the Reticulum
 provider adds no transmit site, see the MA7 note in `SPEC.md`).
+
+## Bugfix: quoted Compose defaults blacked out every channel (`ALLOWED_CHANNELS`)
+
+`docker-compose.yml` spelled its empty defaults `${VAR:-""}`. Compose substitutes
+a default as **literal text**, not as shell, so an unset variable reached the
+ingestor as the two-character string `""`. `_parse_channel_names` stripped only
+whitespace, so that became a **one-entry allowlist that no real channel name can
+match**, and `handlers/generic.py` then dropped every packet as
+`disallowed-channel`. A stock containerised deployment ingested no messages at
+all — silently, since the only trace needs `DEBUG=1`.
+
+Found while fixing the Reticulum packaging (#888), where the same pattern was
+copied onto `RETICULUM_INTERFACES` and would have made a Reticulum ingestor
+ingest zero announces. **D2** covered enforcement but never delivery, and **MA10**
+covers only the `TX_*` flags, so no criterion read the Compose file.
+
+### CH-A1 — No packaged Compose default embeds a quote character
+```bash
+( . .venv/bin/activate && pytest -q tests/test_config_unit.py -k "TestComposeDefaults" )
+API_TOKEN=x docker compose -f docker-compose.yml config | grep -E "ALLOWED_CHANNELS|HIDDEN_CHANNELS|MAP_ZOOM"
+```
+**Expected:** pass, and each renders as `VAR: ""` — YAML for an empty string. The
+broken form renders as `VAR: '""'`, the literal two characters; that single-quote
+is the whole tell.
+
+The guard **discovers** compose files by glob rather than listing them (the repo
+has a fourth outside the root, `data/tools/compose.udp.pi.yml`), and matches *any*
+quoted default rather than the one spelling that caused the outage: `${VAR-""}`
+(single dash), `${VAR:-''}`, `${VAR:- ""}` and `${VAR:-"" }` all deliver the same
+literal and are all caught. A companion check asserts the glob actually found an
+interpolating file, so the criterion cannot pass by matching nothing — the trap
+**RN-A3** was written against.
+
+### CH-A2 — A quote-only value disables the filter; a name that contains a quote is a name
+```bash
+( . .venv/bin/activate && pytest -q tests/test_config_unit.py -k "TestChannelNameQuoting or TestReticulumInterfaces" \
+                          && pytest -q tests/test_channels_unit.py -k "quote or boundary or interior or unrelated" )
+```
+**Expected:** pass. Defence in depth for CH-A1: if a quoted default is ever
+reintroduced, the consequence must be benign rather than a silent blackout. Both
+list-valued parsers share `_clean_env_fragment`, which drops a fragment that is
+**entirely** quote characters (so the literal `""` means *no filter* — the
+documented default) and otherwise takes the fragment **literally**.
+
+The literal reading is the load-bearing half. Channel filters match
+casefold-**exact** against the on-air name, and a Meshtastic channel name is
+arbitrary UTF-8 — so `Ops'` and `'Private'` are legal *names*, not quoted ones.
+An earlier revision of this fix stripped boundary quotes from any fragment, which
+made the configured value and the on-air value stop matching: `ALLOWED_CHANNELS`
+blacked those channels out (re-creating the very defect), and `HIDDEN_CHANNELS`
+failed **open**, publishing a channel the operator had asked to hide — a
+privacy-invariant regression (SPEC Invariant II). Both directions are now pinned.
+Unquoted parsing — order-preserving, case-insensitively de-duplicated — is
+unchanged.
+
+### CH-A3 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green: **D2**
+(enforcement — the filter logic is untouched, only the parsing of the value that
+configures it), **TX-A4** (the `TX_*` flags never used the broken form and still
+render), and **RN-A5/RN-A6** (the Reticulum packaging: its per-variable
+version of this guard was removed in favour of CH-A1, which is strictly broader —
+it covers more spellings, more files, and every variable rather than two).
+`MAP_ZOOM` is fixed with them: it was benign (`Float('""', exception: false)` is
+`nil`, so the zoom simply fell back), but it carried the same defect.
 

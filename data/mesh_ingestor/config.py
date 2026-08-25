@@ -222,6 +222,37 @@ directory under the user config root, never the operator's ``~/.reticulum``
 — see :func:`_resolve_reticulum_config_dir`."""
 
 
+def _clean_env_fragment(value: str) -> str:
+    """Trim one comma-separated environment fragment.
+
+    Whitespace is trimmed, and a fragment consisting **entirely** of quote
+    characters resolves to empty.  That narrow rule exists for one delivery
+    accident: a Compose ``${VAR:-""}`` default substitutes as **literal text**,
+    not as shell, so an unset variable arrives as the two-character string
+    ``""``.  Read as content that is one entry, and for a filter it is an entry
+    nothing can match — which silently dropped every message on a stock
+    containerised deployment.  Resolving it to empty means the filter is simply
+    off, which is the documented default.
+
+    Quotes are deliberately **not** stripped from a fragment that has other
+    content.  These fragments are matched against values the ingestor did not
+    author — a Meshtastic channel name is arbitrary UTF-8, so ``Ops'`` and
+    ``'Private'`` are legal *names*, not quoted ones.  Stripping there would
+    make the configured value and the on-air value stop matching: an allowlist
+    would black the channel out, and a hidden-channel entry would fail **open**
+    and publish a channel the operator asked to hide (SPEC Invariant II).
+
+    Parameters:
+        value: One comma-separated fragment, as read from the environment.
+
+    Returns:
+        The trimmed fragment, or ``""`` when it is blank or quote-only.
+    """
+    trimmed = value.strip()
+    # Quote-only (and quote-wrapped-whitespace) fragments carry no name.
+    return "" if not trimmed.strip("\"'").strip() else trimmed
+
+
 def _parse_reticulum_interfaces(raw: str) -> tuple[str, ...]:
     """Parse the :envvar:`RETICULUM_INTERFACES` allowlist.
 
@@ -229,25 +260,13 @@ def _parse_reticulum_interfaces(raw: str) -> tuple[str, ...]:
         raw: Comma-separated interface-name fragments, e.g.
             ``"RNodeInterface,rnode lora"``.
 
-    Surrounding quote characters are stripped from each fragment.  A value can
-    arrive as the literal two-character string ``'""'`` — that is what a
-    ``${VAR:-""}`` default renders to in a Compose file, since Compose
-    substitutes the default as literal text rather than as shell — and it must
-    resolve to *no allowlist*.  Read naively it would instead become a
-    one-entry allowlist matching nothing, silently ingesting zero announces.
-    Every flag resolves toward its documented default, the same fail-safe rule
-    MA7 applies to the transmit flags.
-
     Returns:
         Tuple of lowercased, de-duplicated, non-empty fragments in a stable
-        order.  Empty when the variable is unset, blank, or quote-only.
+        order.  Empty when the variable is unset, blank, or quote-only (see
+        :func:`_clean_env_fragment`).
     """
-    fragments = set()
-    for part in raw.split(","):
-        cleaned = part.strip().strip("\"'").strip().lower()
-        if cleaned:
-            fragments.add(cleaned)
-    return tuple(sorted(fragments))
+    fragments = {_clean_env_fragment(part).lower() for part in raw.split(",")}
+    return tuple(sorted(fragments - {""}))
 
 
 RETICULUM_INTERFACES = _parse_reticulum_interfaces(
@@ -429,9 +448,15 @@ def _parse_lora_freq_env(raw: str | None) -> float | int | None:
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
     """Normalise a comma-separated list of channel names.
 
+    A quote-only fragment disables the filter rather than becoming a one-entry
+    allowlist that no real channel matches — which dropped every message on a
+    stock Compose deployment.  Names that merely *contain* a quote are taken
+    literally, because a channel name is arbitrary UTF-8 and must match the
+    on-air name exactly (see :func:`_clean_env_fragment`).
+
     Parameters:
         raw_value: Raw environment string containing channel names separated by
-            commas. ``None`` and empty segments are ignored.
+            commas. ``None``, empty, and quote-only segments are ignored.
 
     Returns:
         A tuple of unique, non-empty channel names preserving input order while
@@ -444,7 +469,7 @@ def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
     normalized_entries: list[str] = []
     seen: set[str] = set()
     for part in raw_value.split(","):
-        name = part.strip()
+        name = _clean_env_fragment(part)
         if not name:
             continue
         key = name.casefold()

@@ -1038,12 +1038,12 @@ def test_interface_allowlist_empty_ingests_all(monkeypatch):
 class TestReticulumDeploymentSurface:
     """A knob nobody can set is a knob that does not exist.
 
-    Mirrors ``test_tx_policy_unit.TestDeploymentSurface``, but pins the
-    *rendered default* rather than only the passthrough. Compose substitutes a
-    ``${VAR:-default}`` default as **literal text**, so ``:-""`` delivers the
-    two-character string ``""`` — which for an allowlist means "one entry that
-    matches nothing", i.e. a Reticulum ingestor that silently ingests zero
-    announces. Nothing in any suite read compose defaults before this.
+    Mirrors ``test_tx_policy_unit.TestDeploymentSurface``: every packaged path
+    must be able to deliver these variables.  The ``${VAR:-""}`` literal-text
+    trap that made a Compose default mean "one entry matching nothing" is
+    guarded for the whole file by
+    ``test_config_unit.TestComposeDefaults``, so it is not repeated per
+    variable here.
     """
 
     _COMPOSE = REPO_ROOT / "docker-compose.yml"
@@ -1057,17 +1057,6 @@ class TestReticulumDeploymentSurface:
         assert re.search(
             rf"^\s*{name}:\s*\$\{{{name}", text, re.MULTILINE
         ), f"docker-compose.yml does not pass {name} through to the ingestor"
-
-    @pytest.mark.parametrize("name", ["RETICULUM_INTERFACES", "INGESTOR_NODE_ID"])
-    def test_compose_default_is_bare_not_quoted(self, name):
-        """An empty compose default must be `:-}`, never `:-""}`."""
-        text = self._COMPOSE.read_text(encoding="utf-8")
-        match = re.search(rf"^\s*{name}:\s*(\$\{{{name}[^}}]*\}})", text, re.MULTILINE)
-        assert match, f"{name} not found in docker-compose.yml"
-        assert '""' not in match.group(1), (
-            f"{name} default renders as the literal two-character string '\"\"' "
-            f"— Compose substitutes defaults as literal text, not as shell"
-        )
 
     def test_quote_only_allowlist_cannot_blackout_ingestion(self):
         """Defence in depth for the above: a quoted empty value means no allowlist."""
