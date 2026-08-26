@@ -38,9 +38,13 @@ const ACTIVITY_CHART_BUCKET_SECONDS = 2 * 3600; // 2-hour buckets
 const ACTIVITY_CHART_WINDOW_MS = ACTIVITY_CHART_WINDOW_SECONDS * 1000;
 
 /**
- * Per-protocol lines, in draw/legend order. Colours match the design (option
- * 1c): Meshtastic purple, MeshCore blue, Reticulum green — the same
- * ColorBrewer register, so no protocol reads as privileged (Invariant IV).
+ * Per-protocol lines, in draw/legend order.
+ *
+ * Each line is its protocol's own tile colour (SPEC RD3), so the page teaches
+ * **one** colour code across the node table, the meta row and this figure —
+ * before RD3 the table and the figure taught two different ones. MeshCore is
+ * the deliberate exception: its tile is `#1f2937` and near-black cannot be a
+ * line on a dark chart, so it keeps blue and the tie is 2-of-3 by design.
  *
  * Kept in step with `PROTOCOL_ROWS` in `map-activity-card.js`: both render the
  * same `/api/stats/activity` payload, whose buckets carry a live `reticulum`
@@ -50,9 +54,9 @@ const ACTIVITY_CHART_WINDOW_MS = ACTIVITY_CHART_WINDOW_SECONDS * 1000;
  * @type {ReadonlyArray<{protocol: string, label: string, color: string}>}
  */
 const ACTIVITY_CHART_LINES = Object.freeze([
-  Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', color: '#8856a7' }),
+  Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', color: '#67ea94' }),
   Object.freeze({ protocol: 'meshcore', label: 'MeshCore', color: '#3182bd' }),
-  Object.freeze({ protocol: 'reticulum', label: 'Reticulum', color: '#31a354' }),
+  Object.freeze({ protocol: 'reticulum', label: 'Reticulum', color: '#7b61ff' }),
 ]);
 
 /**

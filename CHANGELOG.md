@@ -3,6 +3,11 @@
 
 # CHANGELOG
 
+### Features
+* Web/Data: **Reticulum gets a visual identity of its own** — the placeholder tile (an outline triangle on near-black `#010101`, indistinguishable from MeshCore's at 12 px) becomes a trifoil on violet `#7b61ff`; MeshCore's tile moves off pure black to `#1f2937` so it finally agrees with its own badge; the `/charts` mesh-activity lines repoint at their tiles so the table and the figure teach one colour code; a four-step violet role ramp (`PEER`/`NODE`/`TRANSPORT`/`PROPAGATION`) joins the palettes, all clearing the 4.5:1 badge floor; a hexagon joins circle and diamond as the protocol shape channel; and the legend gains a third column (SPEC RD1–RD8)
+* Data: Reticulum node roles are derived from the announce aspect and ranked — `lxmf.propagation` joins the ingested aspects, and a node's role is the highest-ranked aspect it announced this session rather than whichever arrived last, so a peer announcing on several aspects no longer flips between roles (SPEC RD4)
+* Web: the federation table's Reticulum column renders an em dash for a zero count rather than a violet tile beside a `0` — the column is served as `|| 0` for signature canonicalisation, so during rollout nearly every federated instance would otherwise carry a tile (SPEC RD8)
+
 ### Fixes
 * Data: **`RETICULUM_INTERFACES` ingested nothing at all** wherever the ingestor shared an RNS instance — RNS keys the shared-instance socket on `instance_name`, not `configdir`, so an app-owned config dir did not stop it attaching to a running `rnsd`, and every announce then arrived over one `LocalInterface` that no per-interface allowlist could match. A scoped ingestor now seeds its own unshared config, and where it is on a shared instance anyway the allowlist fails open with a warning rather than silently filtering everything out (SPEC RN8)
 * Data: **a Reticulum announce carrying no display name overwrote the stored one** — the fallback named the destination that announced rather than the node, in a form the web upsert did not recognise as a placeholder. It is now `"Reticulum <SHORT>"`, matching the shape the upsert refuses to overwrite a real name with

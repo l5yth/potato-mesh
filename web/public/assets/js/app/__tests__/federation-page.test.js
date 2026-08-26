@@ -222,6 +222,19 @@ const fetchImpl = async () => ({
       version: '2.0.0',
       lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400),
       nodesCount: 2
+    },
+    {
+      // A peer reporting *zero* RNS nodes, which is the common case during
+      // rollout. `normalize_instance_row` serves this column as `|| 0` for
+      // signature canonicalisation (FS2), so absent and zero look identical
+      // here — both must render the dash, not a tile beside a 0 (SPEC RD8).
+      domain: 'charlie.mesh',
+      contactLink: null,
+      version: '2.0.0',
+      lastUpdateTime: Math.floor(Date.now() / 1000) - (3 * 86400),
+      nodesCount: 7,
+      meshcore_nodes_count: 7,
+      reticulum_nodes_count: 0
     }
   ]
 });
@@ -232,7 +245,7 @@ const fetchImpl = async () => ({
     assert.deepEqual(mapSetViewCalls[0], [[10, 20], 7]);
 
     const rows = tbodyEl.childNodes;
-    assert.equal(rows.length, 2);
+    assert.equal(rows.length, 3);
     const firstRowHtml = rows[0].innerHTML;
     assert.match(firstRowHtml, /alpha\.mesh/);
     assert.match(firstRowHtml, /https:\/\/chat\.alpha/);
@@ -261,6 +274,15 @@ const fetchImpl = async () => ({
     assert.match(secondRowHtml, /2\.0\.0/);
     assert.match(secondRowHtml, />2</);
     assert.match(secondRowHtml, /d ago/);
+    // A peer reporting a zero RNS count renders the dash too, not a violet
+    // tile beside a 0 — otherwise nearly every federated instance would carry
+    // one during rollout and the column would read as broken (SPEC RD8).
+    const thirdRowHtml = rows[2].innerHTML;
+    assert.match(thirdRowHtml, /instances-col--reticulum-nodes mono"><em>—<\/em></);
+    // Its MeshCore count is non-zero, so that column still renders its tile —
+    // proving the dash comes from the value, not from the row.
+    assert.match(thirdRowHtml, /instances-col--meshcore-nodes mono"><img[^>]*> 7</);
+
     // An instance without a reticulum count renders the muted dash, exactly
     // like the other per-protocol columns.
     assert.match(secondRowHtml, /instances-col--reticulum-nodes mono"><em>—<\/em></);

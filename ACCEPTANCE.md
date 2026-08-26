@@ -3776,7 +3776,7 @@ with `filter: grayscale(1); opacity: .72` and restores `filter: none` on
 ### FU-A3 — MeshCore marker is an equal-area diamond — FU3
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/node-marker.test.js )
-git grep -nE "radius \* 1\.78" -- web/public/assets/js/app/main/node-marker.js
+git grep -n "CHIP_AREA_SCALE" -- web/public/assets/js/app/main/node-marker.js
 git grep -nE "rotate\(45deg\)|border-radius: 3px" -- web/public/assets/styles/base.css
 ```
 **Expected:** the marker suite passes with `iconSize` `[16, 16]` at radius 9;
@@ -4276,13 +4276,22 @@ curve) and is omitted on failure while the live total/rows still render.
                        public/assets/js/app/__tests__/node-page.test.js \
                        public/assets/js/app/__tests__/charts-page.test.js )
 ```
-**Expected:** pass. `renderMeshActivityChart` draws a two-line (Meshtastic `#8856a7`,
-MeshCore `#3182bd`) packets/hour figure with an **"Activity (pkt/h)"** y-axis, fed by
+**Expected:** pass. `renderMeshActivityChart` draws a per-protocol packets/hour
+figure with an **"Activity (pkt/h)"** y-axis, fed by
 `fetchActivityChartBuckets` (`/api/stats/activity`, 7 d / 2 h; fails soft to `[]`).
 `renderTelemetryCharts` accepts an `insertBefore` map that places the figure
 immediately before the `environment` spec — i.e. **between** the channel-utilization
 and environmental figures — and `initializeChartsPage` wires it there. The `/charts`
 intro no longer names a single protocol (the aggregate is all-protocol).
+
+**Amended twice.** The figure originally drew **two** lines; `reticulum` became a
+third when its ingestor landed (RN-A7). It then carried Meshtastic `#8856a7` +
+MeshCore `#3182bd` — colours belonging to neither protocol's tile, so the page
+taught one colour code in the table and a different one in the figure. **SPEC RD3
+repoints each line at its own tile**, MeshCore excepted because its near-black
+`#1f2937` tile cannot be a line on a dark chart. The values live in **RD-A3**
+alone and are deliberately not repeated here, so the two cannot drift apart. Everything else here — the axis label,
+the `insertBefore` placement, the fail-soft fetch — is unchanged.
 
 ---
 
@@ -5254,7 +5263,10 @@ traffic (no `_mark_packet_seen`).
 ```
 **Expected:** pass. `query_activity_buckets` emits a live `reticulum` key in every
 bucket (F2-A1), so `renderMeshActivityChart` draws a Reticulum line and scales the
-axis to it. Before this fix `ACTIVITY_CHART_LINES` was frozen to two protocols:
+axis to it. **The line's colour is no longer `#31a354`** — SPEC RD3 superseded it
+with the tile's `#7b61ff`; this criterion covers the line *existing* and the axis
+scaling to it, RD-A3 covers its colour. Before this fix `ACTIVITY_CHART_LINES` was
+frozen to two protocols:
 a reticulum-only mesh rendered two flat-zero lines with its real traffic invisible
 and the y-axis not scaled to it, while the map card (MA-FA2) rendered the same
 payload correctly — two renderers of one payload disagreeing.
@@ -5445,4 +5457,195 @@ narrows when sharing is refused but does not change the empty-allowlist default)
 shape RV-A3 copies and whose statements it must not disturb), **RN-A1/RN-A2**
 (identity keying and `publicKey`, unchanged), and **CH-A1-CH-A3** (the Compose
 quoting fix in the same branch).
+
+## Feature: Reticulum visual identity (RNS tile, role ramp, one colour code)
+
+Acceptance for SPEC **RD1-RD8**. Two criteria (RD-A4's `TRANSPORT`, RD-A6's map
+marker) deliberately assert a **reserved slot** rather than live behaviour - the
+visual language is designed whole ahead of the data, per the feature's stated
+forward-compatible stance. They are written to say so, so a reviewer does not
+read them as covering something they do not.
+
+### RD-A1 - The Reticulum tile is the trifoil on violet - RD1
+```bash
+cat web/public/assets/img/reticulum.svg
+( cd web && node --test public/assets/js/app/__tests__/protocol-helpers.test.js )
+```
+**Expected:** the asset is a 150x150 full-bleed square filled `#7b61ff` with a
+`#FBFBFB` glyph, no `#010101` anywhere, no corner radius, no `rx`/`ry`. Four
+circles - three outer at `r=16.25` forming a **near-equilateral triangle**
+(sides 93.10 / 93.10 / 93.20, interior angles within 0.07 degrees of 60) and a
+hub at `r=21.25` - joined by three spokes.
+
+The centring is **optical, not mathematical**, and the numbers show it: the hub
+sits at the tile centre `(75, 75)` rather than at the triangle's centroid
+`(75, 88.43)`, so apex and base sit equidistant from the centre (40.3 each,
+equal air above and below) while the **spokes are deliberately unequal** - 40.3
+to the apex, 61.6 to each base vertex. A "correction" equalising the spokes would
+drop the figure low in its box and is the regression this criterion guards. `protocol-helpers.js` is
+**unchanged** by this feature - `RETICULUM_ICON_SRC`, `isReticulumProtocol` and
+the `protocolIconPrefixHtml` branch all shipped in #889, so its suite passing
+proves the slot was already cut.
+
+### RD-A2 - MeshCore's tile is `#1f2937`, matching its badge - RD2
+```bash
+grep -o 'fill="#[0-9a-fA-F]*"' web/public/assets/img/meshcore.svg | sort -u
+grep -o 'Meshcore-supported-[0-9a-f]*' README.md
+```
+**Expected:** the tile fills `#1f2937` with a `#FBFBFB` glyph; `#010101` appears
+nowhere. The README badge reads `Meshcore-supported-1f2937`, so tile and badge
+now carry the same value - they disagreed before this feature. (README spells the
+protocol `Meshcore` at the maintainer's request; the shipped UI and the other
+docs still use `MeshCore`, so grep for the README spelling here.)
+
+### RD-A3 - One colour code across table, meta row and figure - RD3 (amends F2-A3)
+```bash
+( cd web && node --test public/assets/js/app/__tests__/mesh-activity-chart.test.js )
+git grep -n "8856a7" -- web/public/assets/js/app/mesh-activity-chart.js
+```
+**Expected:** the suite passes and the grep returns **nothing**.
+`ACTIVITY_CHART_LINES` carries Meshtastic `#67ea94`, MeshCore `#3182bd`,
+Reticulum `#7b61ff`; each is the protocol's own tile colour except MeshCore,
+which keeps blue **by design** because `#1f2937` cannot be a line on a dark
+chart - the tie is 2-of-3 and RD3 says so.
+
+**Amends F2-A3**, which asserted the figure draws Meshtastic `#8856a7` and
+MeshCore `#3182bd`. Rather than restate a third set of hex values there, that
+criterion was amended to drop the colours entirely and cover the figure's
+structure; **RD-A3 alone owns the colours**, so the two cannot drift apart. It is
+the only prior criterion this feature contradicts, and the contradiction was
+chosen explicitly. **Supersedes RN2** on colour only - the Reticulum line itself
+was added there and stays.
+
+### RD-A4 - Reticulum roles are derived from the announce aspect and ranked - RD4
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "role or aspect" )
+```
+**Expected:** pass. `lxmf.propagation` is in `_ANNOUNCE_ASPECTS` alongside
+`lxmf.delivery` and `nomadnetwork.node`. An identity's role is the
+**highest-ranked aspect it has announced on during this ingestor session**:
+`PROPAGATION > TRANSPORT > NODE > PEER`.
+
+**Scope of the guarantee.** The accumulator is in-memory and per-process, and the
+web upsert writes `role=COALESCE(excluded.role, nodes.role)`, so an ingestor
+restart - or a second ingestor hearing only the lower aspect - can demote a
+stored role. Within one session the rank holds, which is what the test covers; a
+rank-aware SQL merge (the `dest_hash` treatment, RN-A3) is a tracked follow-up.
+
+The rank is load-bearing, not cosmetic: RN1 collapses a peer's aspects onto one
+row and the web upsert writes `role=COALESCE(excluded.role, nodes.role)`, so a
+direct aspect-to-role mapping would make a dual-aspect peer's role **flip on
+every announce**. A test asserts a peer announcing `lxmf.delivery` then
+`nomadnetwork.node` then `lxmf.delivery` again ends on `NODE` and never
+oscillates.
+
+**`TRANSPORT` is a reserved slot** (forward-compatible stance): no announce
+maps to it, so nothing populates it today - but it **is ranked**, between `NODE`
+and `PROPAGATION`, so a future source drops in without re-opening the ordering.
+Asserting that no aspect maps to it is part of this criterion - inferring it from our own path table would
+make it a property of the ingestor's vantage rather than of the node, and two
+ingestors would disagree, breaking CONTRACTS' sender-side determinism rule.
+
+### RD-A5 - The violet role ramp clears the 4.5:1 badge floor - RD5 / UX2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/role-helpers.test.js )
+```
+**Expected:** pass. `reticulumRoleColors` is `PEER #cabffa`, `NODE #a08bff`,
+`TRANSPORT #8b74ff`, `PROPAGATION #4a32b8`, reached through `getRoleColors`
+for `protocol === "reticulum"` (Reticulum nodes inherited the Meshtastic palette
+before this feature). A test computes each against `getContrastTextColor` and
+asserts >= 4.5:1 - measured 10.86 / 6.71 / 5.31 / 8.61.
+
+The same test asserts the tile's own `#7b61ff` falls **below the 4.5:1 floor**
+(it measures 4.39:1) and would therefore fail as a badge fill. That is why `TRANSPORT` is one step lighter
+than the tile rather than equal to it, and pinning the failing value keeps a
+future "simplify the ramp to the tile colour" change from silently breaking UX2.
+
+### RD-A6 - Hexagon is Reticulum's shape channel - RD6 (extends UX7/LC1)
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/node-marker.test.js \
+                       public/assets/js/app/__tests__/role-helpers.test.js )
+git grep -n "legend-swatch--hexagon" -- web/public/assets/styles/base.css
+git grep -n "LEGEND_SWATCH_SHAPES" -- web/public/assets/js/app/main.js
+```
+**Expected:** pass, and both greps hit. The class name is **composed** in
+`main.js` from the `LEGEND_SWATCH_SHAPES` map (marker shape → swatch modifier),
+so the literal `legend-swatch--hexagon` appears only in the stylesheet - grep for
+the map, not the composed string. The swatch is 12 px with
+`clip-path: polygon(50% 0%, 100% 27%, 100% 73%, 50% 100%, 0% 73%, 0% 27%)`,
+taken from the design rather than re-derived, and `nodeMarkerShapeForProtocol`
+returns `hexagon` for `reticulum` so the swatch keys protocol the way LC1
+requires. **FU3's equal-area rule does not bind here**: it is scoped to the map
+divIcon, and the legend swatch has always been eyeballed (11 px diamond against
+a 12 px circle).
+
+**The map branch is a reserved slot** (forward-compatible stance): a Reticulum
+announce carries no position, so `nodeMarkerShapeForProtocol("reticulum")` has no
+reachable map caller today. It is nonetheless **built correctly, not stubbed** -
+`createNodeMarker` emits a `node-marker-chip__fill--hexagon` chip sized
+`round(radius x 2.07)`, because the hexagon's clip-path removes 27% of its box
+and so needs a larger side than the diamond's 1.78 to carry the circle's optical
+weight (FU3's equal-area rule, extended rather than reused). A companion test
+asserts MeshCore's chip still emits the bare `node-marker-chip__fill` class at
+`round(radius x 1.78)` = 16 px, so FU-A3 cannot regress behind the new branch.
+
+### RD-A7 - Third legend column and README badge - RD7
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-update-counts.test.js )
+grep -o 'Reticulum-[a-z]*-[0-9a-f]*' README.md
+```
+**Expected:** pass, and the grep returns `Reticulum-supported-7b61ff`. The legend
+gains an RNS column carrying the tile, the label, a live 7-day count and the four
+role filters, inheriting UX8's pressed-state and `aria-pressed` conventions
+unchanged.
+
+The badge reads **`supported`**, not the design brief's `planned`: the brief
+chose `planned` on the premise that the ingestor did not exist and instructed
+"swap the word when `PROTOCOL=reticulum` ships", which it did in #890. The colour
+is the tile's own violet - MeshCore's badge uses `#1f2937` rather than a true
+black that would vanish against the badge row, an adjustment violet does not
+need.
+
+### RD-A8 - The scope boundary held - RD8
+```bash
+git grep -nE "areaFill|lineEndLabel|labelAtLineEnd" -- web/public/assets/js/app/mesh-activity-chart.js
+git grep -n "colorForNodeCount" -- web/public/assets/js/app/federation-page.js
+( cd web && node --test public/assets/js/app/__tests__/federation-page.test.js )
+```
+**Expected:** the first grep returns **nothing** - panel 2d (line-end labels,
+area fills, per-line weight/opacity, gridline and axis restyle) is deferred to
+its own feature and must not leak in here. The second confirms the federation map
+still colours markers by total active node count, so violet never means a bucket
+there. The JS suite confirms the Reticulum column renders an **em dash for a
+zero or absent count**, not a tile beside a `0`.
+
+**This is a behaviour change, not a preservation.** Before this feature the
+column rendered a tile beside every count including `0`, because
+`normalize_instance_row` serves `reticulum_nodes_count` as `|| 0` - required so
+a crawler re-verifying a relayed v2 record rebuilds the canonical the sender
+signed (FS2) - which made the renderer's `== null` em-dash branch unreachable for
+this column alone. RD1 turned that into a violet tile on every federated row,
+and during rollout nearly all of them report zero. Its two siblings still
+distinguish absent from zero and are deliberately untouched.
+
+### RD-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**F2-A3** (amended in place by RD-A3, not deleted - the figure still draws a
+per-protocol packets/hour chart with an "Activity (pkt/h)" axis, only the hues
+move); **RN-A7** (the Reticulum series still renders and the axis still scales to
+it - only its colour changes from `#31a354` to `#7b61ff`); **LC-A1** (swatches
+still carry the marker shape - a third shape joins `--circle` and `--diamond`
+rather than replacing them); **FU-A3** (MeshCore's equal-area map diamond is
+untouched); **UX-A5**, **UX-A6**, **NT-A1** (legend conventions - the third
+column inherits them); **MA-FA1-MA-FA4** (the map activity card is not touched by
+this feature); **S-A5 / A4a** (Reticulum's protocol-scope and whitelist status
+are unchanged - this feature is presentation only); and **RN-A1-RN-A8** (the
+Reticulum ingestor contract, except that RD4 adds a third announce aspect and a
+role field - RN-A1's identity-merge guarantee is what RD4's rank depends on); and **RV-A1-RV-A4** (the #893 review fixes
+this feature is rebased onto - RD4 adds `lxmf.propagation` to the same
+`_ANNOUNCE_ASPECTS` that RV-A1's interface scoping reads, and shares the module
+whose fallback name RV-A2 corrected).
 

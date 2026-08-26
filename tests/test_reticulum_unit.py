@@ -658,6 +658,136 @@ def test_announce_to_node_dict_id_matches_node_id_helper():
 
 
 # ---------------------------------------------------------------------------
+# Aspect-derived roles (SPEC RD4)
+# ---------------------------------------------------------------------------
+
+
+def test_propagation_is_an_ingested_aspect():
+    """lxmf.propagation joins the listened aspects so PROPAGATION has a source."""
+    assert set(_mod._ANNOUNCE_ASPECTS) == {
+        "lxmf.delivery",
+        "nomadnetwork.node",
+        "lxmf.propagation",
+    }
+
+
+def test_every_ingested_aspect_maps_to_a_role():
+    """No aspect may be listened to without a role, or nodes silently lose one."""
+    assert set(_mod._ASPECT_ROLES) == set(_mod._ANNOUNCE_ASPECTS)
+    assert _mod._ASPECT_ROLES["lxmf.delivery"] == "PEER"
+    assert _mod._ASPECT_ROLES["nomadnetwork.node"] == "NODE"
+    assert _mod._ASPECT_ROLES["lxmf.propagation"] == "PROPAGATION"
+
+
+def test_transport_is_a_reserved_slot_with_no_source():
+    """TRANSPORT ships in the UI ramp but no announce may populate it (RD4).
+
+    Deriving it from our own path table would make it a property of this
+    ingestor's vantage point rather than of the node, so two ingestors would
+    disagree — breaking the CONTRACTS sender-side determinism rule.
+    """
+    # No announce maps to it...
+    assert "TRANSPORT" not in _mod._ASPECT_ROLES.values()
+    # ...but it *is* ranked, so a future source slots in without re-opening the
+    # ordering. Ranking it -1 would put it below PEER and it would never win.
+    assert _mod._rank_role("TRANSPORT") > _mod._rank_role("NODE")
+    assert _mod._rank_role("TRANSPORT") < _mod._rank_role("PROPAGATION")
+
+
+def test_role_rank_is_ascending_and_total():
+    """Ranking orders the three sourced roles; anything else loses to all."""
+    assert _mod._rank_role("PROPAGATION") > _mod._rank_role("NODE")
+    assert _mod._rank_role("NODE") > _mod._rank_role("PEER")
+    assert _mod._rank_role("PEER") > _mod._rank_role(None)
+    assert _mod._rank_role("PEER") > _mod._rank_role("nonsense")
+
+
+def test_record_role_keeps_the_highest_seen():
+    """The accumulator is monotonic, whatever order aspects arrive in."""
+    iface = _ReticulumInterface(target=None)
+    assert iface._record_role("!beef0001", "PEER") == "PEER"
+    assert iface._record_role("!beef0001", "NODE") == "NODE"
+    # A lower-ranked aspect must not demote it.
+    assert iface._record_role("!beef0001", "PEER") == "NODE"
+    assert iface._record_role("!beef0001", None) == "NODE"
+    assert iface._record_role("!beef0001", "PROPAGATION") == "PROPAGATION"
+    assert iface._record_role("!beef0001", "NODE") == "PROPAGATION"
+    # A different identity keeps its own role.
+    assert iface._record_role("!c0ffee00", "PEER") == "PEER"
+
+
+def test_announce_to_node_dict_omits_an_absent_role():
+    """A record never asserts a role it could not determine."""
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"A", identity=_FakeIdentity(), last_heard=1
+    )
+    assert "role" not in node["user"]
+
+
+def test_received_announce_role_never_flips_between_aspects(monkeypatch):
+    """RD4's guarantee: a dual-aspect peer settles on the higher role.
+
+    RN1 collapses a peer's aspects onto one row and the web upsert writes
+    ``role=COALESCE(excluded.role, nodes.role)``, so mapping each announce
+    straight to its own role would oscillate the badge and the legend bucket.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append(node)
+    )
+    monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
+
+    identity = _FakeIdentity()
+    iface = _ReticulumInterface(target=None)
+    delivery = _ReticulumAnnounceHandler("lxmf.delivery", iface)
+    nomad = _ReticulumAnnounceHandler("nomadnetwork.node", iface)
+
+    delivery.received_announce(
+        destination_hash=_DEST_HASH, announced_identity=identity, app_data=b"A"
+    )
+    nomad.received_announce(
+        destination_hash=bytes.fromhex("11223344" + "00" * 12),
+        announced_identity=identity,
+        app_data=b"A",
+    )
+    # The peer re-announces on the *lower* aspect: the role must not regress.
+    delivery.received_announce(
+        destination_hash=_DEST_HASH, announced_identity=identity, app_data=b"A"
+    )
+
+    assert [n["user"]["role"] for n in upserts] == ["PEER", "NODE", "NODE"]
+
+
+def test_received_announce_propagation_outranks_the_others(monkeypatch):
+    """A propagation node announcing on every aspect settles on PROPAGATION."""
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append(node)
+    )
+    monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
+
+    identity = _FakeIdentity()
+    iface = _ReticulumInterface(target=None)
+    for aspect in ("lxmf.propagation", "lxmf.delivery", "nomadnetwork.node"):
+        _ReticulumAnnounceHandler(aspect, iface).received_announce(
+            destination_hash=_DEST_HASH,
+            announced_identity=identity,
+            app_data=b"A",
+        )
+
+    assert {n["user"]["role"] for n in upserts} == {"PROPAGATION"}
+    assert len(iface.nodes_snapshot()) == 1
+
+
+# ---------------------------------------------------------------------------
 # _ReticulumAnnounceHandler
 # ---------------------------------------------------------------------------
 

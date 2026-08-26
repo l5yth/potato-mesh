@@ -63,6 +63,49 @@ test('protocol shape mapping: meshcore is square, everything else circular', () 
   assert.equal(nodeMarkerShapeForProtocol(undefined), 'circle');
 });
 
+test('reticulum resolves to hexagon, case-insensitively (RD6)', () => {
+  assert.equal(nodeMarkerShapeForProtocol('reticulum'), 'hexagon');
+  assert.equal(nodeMarkerShapeForProtocol('Reticulum'), 'hexagon');
+  // A protocol nobody has heard of still falls back rather than throwing.
+  assert.equal(nodeMarkerShapeForProtocol('zigbee'), 'circle');
+});
+
+test('the reticulum chip is equal-area and shape-modified (RD6)', () => {
+  // A reserved slot: RNS announces carry no position, so nothing reaches this
+  // on the map today. Built correctly now so the shape channel is complete the
+  // moment positions exist.
+  const { L, calls } = leafletStub();
+  createNodeMarker(L, [52.5, 13.4], {
+    protocol: 'reticulum',
+    color: '#a08bff',
+    radius: 9,
+    fillOpacity: 0.8,
+  });
+  const icon = calls.find(call => call.kind === 'divIcon');
+  assert.ok(icon, 'reticulum should build a divIcon chip, not a circleMarker');
+  assert.match(icon.options.html, /node-marker-chip__fill--hexagon/);
+  // round(9 × 2.07) = 19. The hexagon's clip-path removes 27% of its box, so
+  // it needs a larger side than the diamond's 1.78 to carry the same optical
+  // weight as the circle it replaces.
+  assert.equal(icon.options.iconSize[0], 19);
+  assert.deepEqual(icon.options.iconAnchor, [9.5, 9.5]);
+});
+
+test('the meshcore chip is untouched by the hexagon (FU-A3 regression)', () => {
+  const { L, calls } = leafletStub();
+  createNodeMarker(L, [52.5, 13.4], {
+    protocol: 'meshcore',
+    color: '#7A9EBC',
+    radius: 9,
+    fillOpacity: 0.8,
+  });
+  const icon = calls.find(call => call.kind === 'divIcon');
+  // Still the bare diamond class, still round(9 × 1.78) = 16.
+  assert.doesNotMatch(icon.options.html, /--hexagon/);
+  assert.match(icon.options.html, /class="node-marker-chip__fill"/);
+  assert.equal(icon.options.iconSize[0], 16);
+});
+
 test('meshtastic nodes stay L.circleMarker with the given style', () => {
   const { L, calls } = leafletStub();
   createNodeMarker(L, [52.5, 13.4], {

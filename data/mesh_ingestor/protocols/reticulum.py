@@ -76,7 +76,21 @@ from RNS.vendor import umsgpack
 
 from .. import config, handlers
 
-_ANNOUNCE_ASPECTS: tuple[str, ...] = ("lxmf.delivery", "nomadnetwork.node")
+_ASPECT_ROLES: dict[str, str] = {
+    "lxmf.propagation": "PROPAGATION",
+    "nomadnetwork.node": "NODE",
+    "lxmf.delivery": "PEER",
+}
+"""Announce aspect to the role it implies (SPEC RD4).
+
+Reticulum has no role field: what a peer *is* can only be read from which
+destinations it announces.  ``TRANSPORT`` is deliberately absent — no announce
+exposes transport status, and deriving it from our own path table would make it
+a property of this ingestor's vantage point rather than of the node, so two
+ingestors would disagree (the CONTRACTS sender-side determinism rule).
+"""
+
+_ANNOUNCE_ASPECTS: tuple[str, ...] = tuple(_ASPECT_ROLES)
 """Destination aspects whose announces are ingested as node records."""
 
 _SHARED_INSTANCE_INTERFACE_PREFIXES: tuple[str, ...] = (
@@ -91,6 +105,39 @@ _SHARED_INSTANCE_INTERFACE_PREFIXES: tuple[str, ...] = (
 ``rnsd`` every announce arrives over that one socket, whatever interface
 actually received it, so a per-interface allowlist cannot discriminate.
 """
+
+_ROLE_RANK: tuple[str, ...] = ("PEER", "NODE", "TRANSPORT", "PROPAGATION")
+"""Roles in ascending precedence order (SPEC RD4).
+
+``TRANSPORT`` is ranked although :data:`_ASPECT_ROLES` maps nothing to it: the
+rank is the reserved slot's other half, so a future source drops in without
+re-opening the ordering.  Ranking it below ``PROPAGATION`` reflects that a
+propagation node is the more specific claim.
+
+A node's role is the **highest-ranked aspect it has announced on during this
+ingestor session**, not the most recent.  A fixed rank is load-bearing rather than cosmetic: an identity's
+aspects collapse onto one row (SPEC RN1) and the web upsert writes
+``role=COALESCE(excluded.role, nodes.role)``, so mapping each announce straight
+to its own role would make a dual-aspect peer's role flip on every announce,
+oscillating its badge and its legend bucket.
+"""
+
+
+def _rank_role(role: str | None) -> int:
+    """Return a role's precedence, or ``-1`` when it is unranked.
+
+    Parameters:
+        role: Role name, or ``None``.
+
+    Returns:
+        Index into :data:`_ROLE_RANK`; ``-1`` for ``None`` or an unknown role,
+        so anything unranked always loses to a ranked role.
+    """
+    try:
+        return _ROLE_RANK.index(role)
+    except ValueError:
+        return -1
+
 
 _MSGPACK_ARRAY_LEAD_BYTES = frozenset(range(0x90, 0xA0)) | {0xDC, 0xDD}
 """First-byte values identifying a msgpack-encoded announce ``app_data``.
@@ -389,6 +436,7 @@ def _announce_to_node_dict(
     *,
     identity: object = None,
     dest_hashes: "list[str] | tuple[str, ...] | None" = None,
+    role: str | None = None,
     hops: int | None = None,
     last_heard: int | None = None,
 ) -> dict | None:
@@ -410,6 +458,9 @@ def _announce_to_node_dict(
             and its public key populates ``user.publicKey``.
         dest_hashes: Every destination hash known for this identity, so far.
             Defaults to just *dest_hash*.
+        role: Highest-ranked role this identity has announced (SPEC RD4).
+            Omitted from the payload when falsy, so a record never asserts a
+            role it could not determine.
         hops: Hop count travelled by the announce, when known.
         last_heard: Unix seconds of announce receipt; defaults to now.
 
@@ -450,6 +501,8 @@ def _announce_to_node_dict(
             "publicKey": _identity_public_key_hex(identity),
         },
     }
+    if role:
+        node["user"]["role"] = role
     if hops is not None:
         node["hopsAway"] = hops
     return node
@@ -587,11 +640,17 @@ class _ReticulumAnnounceHandler:
             dest_hashes = self._iface._record_dest_hash(
                 node_id, _reticulum_hash_hex(destination_hash)
             )
+            # The role is the highest-ranked aspect this identity has announced
+            # on this session, not this announce's own (SPEC RD4).
+            role = self._iface._record_role(
+                node_id, _ASPECT_ROLES.get(self.aspect_filter)
+            )
             node = _announce_to_node_dict(
                 destination_hash,
                 app_data,
                 identity=identity,
                 dest_hashes=dest_hashes,
+                role=role,
                 hops=_announce_hops(destination_hash),
             )
             self._iface._update_node(node_id, node)
@@ -602,6 +661,7 @@ class _ReticulumAnnounceHandler:
                 aspect=self.aspect_filter,
                 node_id=node_id,
                 interface=interface_name,
+                role=role,
                 long_name=node["user"]["longName"],
             )
         except Exception as exc:
@@ -634,7 +694,32 @@ class _ReticulumInterface:
         self._nodes_lock = threading.Lock()
         self._nodes: dict[str, dict] = {}
         self._dest_hashes: dict[str, set[str]] = {}
+        self._roles: dict[str, str] = {}
         self.isConnected: bool = False
+
+    def _record_role(self, node_id: str, role: str | None) -> str | None:
+        """Merge *role* into the recorded role for *node_id*, keeping the highest.
+
+        Mirrors :meth:`_record_dest_hash`: one identity announces on several
+        aspects, and the node's role is the highest-ranked of them rather than
+        the most recent (SPEC RD4).  Without this a peer announcing both
+        ``lxmf.delivery`` and ``nomadnetwork.node`` would flip between ``PEER``
+        and ``NODE`` on every announce.
+
+        Parameters:
+            node_id: Canonical identity-derived ``!xxxxxxxx`` node ID.
+            role: Role implied by the aspect this announce arrived on.
+
+        Returns:
+            The highest-ranked role seen for *node_id*, or ``None`` when none
+            has been.
+        """
+        with self._nodes_lock:
+            current = self._roles.get(node_id)
+            if _rank_role(role) > _rank_role(current):
+                self._roles[node_id] = role
+                return role
+            return current
 
     def _record_dest_hash(self, node_id: str, hash_hex: str | None) -> list[str]:
         """Merge *hash_hex* into the destination-hash set for *node_id*.
@@ -823,6 +908,8 @@ class ReticulumProvider:
 __all__ = [
     "ReticulumProvider",
     "_ANNOUNCE_ASPECTS",
+    "_ASPECT_ROLES",
+    "_ROLE_RANK",
     "_ReticulumAnnounceHandler",
     "_ReticulumInterface",
     "_announce_hops",
@@ -832,6 +919,7 @@ __all__ = [
     "_identity_from_announce",
     "_identity_public_key_hex",
     "_interface_allowed",
+    "_rank_role",
     "_warn_allowlist_ignored_once",
     "_reticulum_hash_hex",
     "_reticulum_node_id",

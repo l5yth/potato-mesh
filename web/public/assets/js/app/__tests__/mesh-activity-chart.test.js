@@ -67,8 +67,11 @@ test('renderMeshActivityChart draws a per-protocol figure with the Activity axis
   assert.match(html, /Activity \(pkt\/h\)/); // y-axis label (per the note)
   assert.match(html, /Meshtastic/);
   assert.match(html, /MeshCore/);
-  assert.match(html, /#8856a7/); // meshtastic colour
-  assert.match(html, /#3182bd/); // meshcore colour
+  // Each line is its protocol's own tile colour (SPEC RD3); MeshCore is the
+  // deliberate exception, keeping blue because near-black cannot be a line.
+  assert.match(html, /#67ea94/); // meshtastic tile
+  assert.match(html, /#3182bd/); // meshcore, blue by design
+  assert.doesNotMatch(html, /#8856a7/); // the pre-RD3 purple is gone
   assert.match(html, /node-detail__chart-trend/); // a trend line path
   assert.match(html, /node-detail__chart-legend/);
 });
@@ -107,7 +110,7 @@ test('renderMeshActivityChart draws the Reticulum series (SPEC F2-2)', () => {
     NOW
   );
   assert.match(html, /Reticulum/);
-  assert.match(html, /#31a354/); // the reticulum line is drawn
+  assert.match(html, /#7b61ff/); // the reticulum line, in its tile violet
   // The y-axis must scale to the reticulum peak, not stop at the two
   // flat-zero siblings: assert on the axis tick text, not a bare substring.
   assert.match(html, /<text[^>]*>42<\/text>/);

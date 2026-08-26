@@ -21,7 +21,11 @@
  * @module main/protocol-icons
  */
 
-import { MESHTASTIC_ICON_SRC, MESHCORE_ICON_SRC } from '../protocol-helpers.js';
+import {
+  MESHTASTIC_ICON_SRC,
+  MESHCORE_ICON_SRC,
+  RETICULUM_ICON_SRC,
+} from '../protocol-helpers.js';
 
 /**
  * Build a protocol icon image element with consistent attributes.
@@ -49,6 +53,11 @@ export function buildProtocolIconImg(src, variantClass) {
 /** @returns {HTMLImageElement} Meshtastic protocol icon element. */
 export function buildMeshtasticIconImg() {
   return buildProtocolIconImg(MESHTASTIC_ICON_SRC, 'protocol-icon--meshtastic');
+}
+
+/** @returns {HTMLImageElement} Reticulum protocol icon element. */
+export function buildReticulumIconImg() {
+  return buildProtocolIconImg(RETICULUM_ICON_SRC, 'protocol-icon--reticulum');
 }
 
 /** @returns {HTMLImageElement} MeshCore protocol icon element. */

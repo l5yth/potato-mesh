@@ -30,12 +30,35 @@
 /**
  * Resolve the marker shape for a protocol.
  *
+ * Reticulum returns `hexagon` (SPEC RD6). That branch is a **reserved slot** on
+ * the map: a Reticulum announce carries no position, so no RNS node currently
+ * reaches {@link createNodeMarker}. It is implemented rather than stubbed so
+ * the shape channel is complete the moment positions exist, and because the
+ * legend swatch — which *is* live — derives its shape from this same function
+ * (SPEC LC1).
+ *
  * @param {?string} protocol Node protocol identifier.
- * @returns {'square' | 'circle'} Marker shape.
+ * @returns {'square' | 'hexagon' | 'circle'} Marker shape.
  */
 export function nodeMarkerShapeForProtocol(protocol) {
-  return String(protocol ?? '').toLowerCase() === 'meshcore' ? 'square' : 'circle';
+  const normalized = String(protocol ?? '').toLowerCase();
+  if (normalized === 'meshcore') return 'square';
+  if (normalized === 'reticulum') return 'hexagon';
+  return 'circle';
 }
+
+/**
+ * Equal-area chip side length, as a multiple of the circle marker's radius.
+ *
+ * A raw `2 × radius` box out-weighs the circle it replaces, so each shape is
+ * scaled to ≈ the circle's `πr²` footprint (SPEC FU3). The rotated square keeps
+ * its full box area, hence `√π ≈ 1.78`; the hexagon's clip-path removes four
+ * corner triangles totalling 27 % of the box, so it needs `√(π / 0.73) ≈ 2.07`
+ * to land on the same optical weight.
+ *
+ * @type {Readonly<Record<string, number>>}
+ */
+const CHIP_AREA_SCALE = Object.freeze({ square: 1.78, hexagon: 2.07 });
 
 /**
  * Create the Leaflet marker for a node.
@@ -61,7 +84,8 @@ export function nodeMarkerShapeForProtocol(protocol) {
  */
 export function createNodeMarker(L, latlng, options) {
   const { protocol, color, radius, fillOpacity, pane } = options;
-  if (nodeMarkerShapeForProtocol(protocol) === 'circle') {
+  const shape = nodeMarkerShapeForProtocol(protocol);
+  if (shape === 'circle') {
     return L.circleMarker(latlng, {
       radius,
       color: '#000',
@@ -78,11 +102,17 @@ export function createNodeMarker(L, latlng, options) {
   // rotation is CSS-only, so the divIcon box stays `size × size` and the anchor
   // is unchanged; the rotated diagonal (~22.6 px) shows via the chip's
   // `overflow: visible`.
-  const size = Math.round(radius * 1.78);
+  // `circle` returned above, so the shape is necessarily a keyed chip here —
+  // no fallback, which would be an unreachable branch.
+  const size = Math.round(radius * CHIP_AREA_SCALE[shape]);
+  // The base `__fill` class carries the diamond; a modifier swaps in another
+  // shape, so MeshCore's chip is byte-identical to what it rendered before the
+  // hexagon existed (FU-A3 / UX-A5 stay green).
+  const shapeClass = shape === 'square' ? '' : ` node-marker-chip__fill--${shape}`;
   const icon = L.divIcon({
     className: 'node-marker-chip',
     html:
-      `<span class="node-marker-chip__fill" style="background:${color};opacity:${fillOpacity};` +
+      `<span class="node-marker-chip__fill${shapeClass}" style="background:${color};opacity:${fillOpacity};` +
       `width:${size}px;height:${size}px;"></span>`,
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],

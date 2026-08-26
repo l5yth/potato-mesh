@@ -11,10 +11,10 @@
 [![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
 [![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
-[![MeshCore](https://img.shields.io/badge/MeshCore-supported-1f2937)](https://meshcore.io)
-[![Reticulum](https://img.shields.io/badge/Reticulum-supported-1f2937)](https://reticulum.network)
+[![Meshcore](https://img.shields.io/badge/Meshcore-supported-1f2937)](https://meshcore.io)
+[![Reticulum](https://img.shields.io/badge/Reticulum-supported-7b61ff)](https://reticulum.network)
 
-A federated, Meshtastic, MeshCore & Reticulum node dashboard for your local community.
+A federated Meshtastic, Meshcore, and Reticulum node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
 
 * Web dashboard with chat window and map view showing nodes, positions, neighbors,
@@ -24,10 +24,10 @@ _No MQTT clutter, just local LoRa aether._
   * Allows searching and filtering for nodes in map and table view.
   * Federated: _automatically_ froms a federation with other communities running
     Potato Mesh!
-  * Supports Meshtastic, MeshCore, and Reticulum
+  * Supports Meshtastic, Meshcore, and Reticulum
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
   * Supports multiple ingestors per instance.
-  * Supports Meshtastic, MeshCore, and Reticulum
+  * Supports Meshtastic, Meshcore, and Reticulum
 * Matrix bridge that posts Meshtastic messages to a defined matrix channel (no
   radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
@@ -96,8 +96,8 @@ The web app can be configured with environment variables (defaults shown):
 | `SITE_NAME` | `"PotatoMesh Demo"` | Title and header displayed in the UI. |
 | `MESHTASTIC_PRESET` | `"#LongFast"` | Meshtastic radio preset shown in the join strip, meta description, and federation directory (e.g. `MediumFast`). |
 | `MESHTASTIC_FREQ` | `"915MHz"` | Meshtastic frequency shown alongside the preset. |
-| `MESHCORE_PRESET` | _unset_ | MeshCore radio preset for the join strip; the MeshCore line is hidden until both `MESHCORE_*` values are set. |
-| `MESHCORE_FREQ` | _unset_ | MeshCore frequency for the join strip. |
+| `MESHCORE_PRESET` | _unset_ | Meshcore radio preset for the join strip; the Meshcore line is hidden until both `MESHCORE_*` values are set. |
+| `MESHCORE_FREQ` | _unset_ | Meshcore frequency for the join strip. |
 | `CHANNEL` | `"#LongFast"` | **Deprecated** — legacy alias still honoured as the fallback for `MESHTASTIC_PRESET`. |
 | `FREQUENCY` | `"915MHz"` | **Deprecated** — legacy alias still honoured as the fallback for `MESHTASTIC_FREQ`. |
 | `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
@@ -117,9 +117,9 @@ The web app can be configured with environment variables (defaults shown):
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat on the transports that cannot auto-detect "self": UDP transport and `PROTOCOL=reticulum`. Without it the heartbeat never registers and that protocol's packets/hour stats stay at zero. |
 | `RETICULUM_CONFIG_DIR` | `~/.config/potato-mesh/reticulum` | RNS config directory for `PROTOCOL=reticulum`. App-owned by default (honours `XDG_CONFIG_HOME`) — the ingestor never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. |
 | `RETICULUM_INTERFACES` | _unset_ | Comma-separated, case-insensitive **substring** allowlist of RNS interface names (e.g. `rnode`) to ingest announces from. Empty ingests every interface. See [Reticulum](#reticulum). |
-| `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | **Requires `TX_ENABLED=1`** (polling other nodes is a transmission). Seconds between MeshCore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h — when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
-| `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between MeshCore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
-| `TX_ENABLED` | `0` | Master switch for **everything the ingestor puts on the air**. Off by default — the ingestor is a listener. Set to `1` to allow transmitting; this is what enables MeshCore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+| `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | **Requires `TX_ENABLED=1`** (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h — when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
+| `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
+| `TX_ENABLED` | `0` | Master switch for **everything the ingestor puts on the air**. Off by default — the ingestor is a listener. Set to `1` to allow transmitting; this is what enables Meshcore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `TX_ANNOUNCE` | `0` | Set to `1` (**with** `TX_ENABLED=1`) to broadcast a one-line activity summary on the default channel — at most once per 24 h, never in the first 24 h after start. Off by default: it is unsolicited automated traffic on a channel people read. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
@@ -318,7 +318,7 @@ community's decision — not a default we get to make for you.
 
 | Variable | Default | What turning it on means |
 | --- | --- | --- |
-| `TX_ENABLED` | `0` | The ingestor may transmit. On its own this enables **MeshCore on-air telemetry polling**: round-robin requests to other nodes for their battery/sensor readings, at most one request per `MESHCORE_TELEMETRY_POLL_SECONDS` (default 300 s) and at most once per 24 h per node. This is how other nodes' telemetry reaches your dashboard. Meshtastic ingestion needs no transmission at all. |
+| `TX_ENABLED` | `0` | The ingestor may transmit. On its own this enables **Meshcore on-air telemetry polling**: round-robin requests to other nodes for their battery/sensor readings, at most one request per `MESHCORE_TELEMETRY_POLL_SECONDS` (default 300 s) and at most once per 24 h per node. This is how other nodes' telemetry reaches your dashboard. Meshtastic ingestion needs no transmission at all. |
 | `TX_ANNOUNCE` | `0` | **Requires `TX_ENABLED=1`.** Broadcasts one line on your default channel, at most once every 24 h, and never in the first 24 h after the ingestor starts. |
 
 The announcement looks like this:
@@ -356,9 +356,9 @@ log at startup, without needing `DEBUG=1`:
 If you set a flag and nothing happens, that line tells you what the ingestor
 actually resolved — including a flag that never reached the container.
 
-### MeshCore
+### Meshcore
 
-Set `PROTOCOL=meshcore` to ingest from a MeshCore companion-firmware node
+Set `PROTOCOL=meshcore` to ingest from a Meshcore companion-firmware node
 instead (serial, TCP, or BLE via the same `CONNECTION` formats). Alongside
 contacts and messages, the ingestor captures RF metrics: per-message SNR and
 hop counts, per-channel-message RSSI and repeater path (decoded from the
@@ -378,8 +378,13 @@ the radio's local roster rotates.
 
 Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. This is a
 **passive announce listener**: it registers announce handlers for the
-`lxmf.delivery` and `nomadnetwork.node` destination aspects and files every
-announce it hears as a node. It never transmits and sends no message or poll — so it works with `TX_ENABLED=0` (the default).
+`lxmf.delivery`, `nomadnetwork.node` and `lxmf.propagation` destination aspects
+and files every announce it hears as a node. Which aspects a peer announces on
+is the only signal Reticulum gives about what it *is*, so the node's role is
+derived from them and ranked — a propagation node outranks a nomadnet node,
+which outranks a plain LXMF peer — rather than taken from whichever announce
+arrived last. It never transmits and sends no message or poll — so it works with
+`TX_ENABLED=0` (the default).
 
 Announces carry no SNR, battery, or position, so those columns render as dashes
 and Reticulum nodes stay off the map. One peer is one node row: the canonical
