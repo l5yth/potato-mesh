@@ -88,6 +88,41 @@ test('updateLegendProtocolCounts sets per-protocol counts when elements are pres
   }
 });
 
+test('updateLegendProtocolCounts sets the reticulum count too (RD7)', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcEl = { textContent: '' };
+    const mtEl = { textContent: '' };
+    const rtEl = { textContent: '' };
+    testUtils._setProtocolCountElements(mcEl, mtEl, rtEl);
+
+    testUtils.updateLegendProtocolCounts({
+      meshcore: { week: 2 },
+      meshtastic: { week: 1 },
+      reticulum: { week: 7 },
+    });
+
+    assert.equal(rtEl.textContent, ' (7)', 'reticulum count should be 7');
+    assert.equal(mcEl.textContent, ' (2)');
+    assert.equal(mtEl.textContent, ' (1)');
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateLegendProtocolCounts zeroes an absent reticulum scope (RD7)', () => {
+  // An instance with no RNS ingestor still renders the column honestly.
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const rtEl = { textContent: '' };
+    testUtils._setProtocolCountElements(null, null, rtEl);
+    testUtils.updateLegendProtocolCounts({ meshtastic: { week: 4 } });
+    assert.equal(rtEl.textContent, ' (0)');
+  } finally {
+    cleanup();
+  }
+});
+
 test('updateLegendProtocolCounts handles missing per-protocol data gracefully', () => {
   const { testUtils, cleanup } = setupApp();
   try {
@@ -322,6 +357,49 @@ test('applyProtocolVisibility hides meshcore column when meshcore week is 0', ()
 
     assert.equal(mcCol.style.display, 'none', 'meshcore column should be hidden');
     assert.equal(mtCol.style.display, '', 'meshtastic column should remain visible');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility hides the reticulum column when its week is 0 (RD7)', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcCol = { style: { display: '' } };
+    const mtCol = { style: { display: '' } };
+    const rtCol = { style: { display: '' } };
+    testUtils._setProtocolColElements(mcCol, mtCol, rtCol);
+
+    testUtils.applyProtocolVisibility({
+      meshcore: { week: 10 },
+      meshtastic: { week: 20 },
+      reticulum: { week: 0 },
+    });
+
+    assert.equal(rtCol.style.display, 'none', 'reticulum column should be hidden');
+    assert.equal(mcCol.style.display, '');
+    assert.equal(mtCol.style.display, '');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility shows the reticulum column when it has activity (RD7)', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcCol = { style: { display: 'none' } };
+    const mtCol = { style: { display: '' } };
+    const rtCol = { style: { display: 'none' } };
+    testUtils._setProtocolColElements(mcCol, mtCol, rtCol);
+
+    testUtils.applyProtocolVisibility({
+      meshcore: { week: 0 },
+      meshtastic: { week: 20 },
+      reticulum: { week: 3 },
+    });
+
+    assert.equal(rtCol.style.display, '', 'reticulum column should be shown');
+    assert.equal(mcCol.style.display, 'none', 'meshcore stays hidden at zero');
   } finally {
     cleanup();
   }

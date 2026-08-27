@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { isMeshcoreProtocol } from './protocol-helpers.js';
+import { isMeshcoreProtocol, isReticulumProtocol } from './protocol-helpers.js';
 
 /**
  * Mapping of numeric Meshtastic role identifiers to their canonical names.
@@ -81,6 +81,30 @@ export const meshcoreRoleColors = Object.freeze({
   ROOM_SERVER: '#7A9EBC',
   SENSOR: '#40749E',
   COMPANION: '#164A88',
+});
+
+/**
+ * Reticulum role colour palette — a four-step violet ramp, light to dark,
+ * tying the role badges to the protocol's `#7b61ff` tile (SPEC RD5).
+ *
+ * Measured against {@link getContrastTextColor}, every step clears the UX2
+ * 4.5:1 badge floor: PEER 10.86, NODE 6.71, TRANSPORT 5.31, PROPAGATION 8.61.
+ * The tile's own `#7b61ff` measures **4.39:1** and would fail, which is why
+ * `TRANSPORT` is one step lighter than the tile rather than equal to it.
+ *
+ * `TRANSPORT` is a **reserved slot**: no Reticulum announce exposes transport
+ * status, so nothing populates it today (SPEC RD4). It ships with the ramp so
+ * the palette is complete the moment a source exists — deriving it from our own
+ * path table would make it a property of this ingestor's vantage point rather
+ * than of the node.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const reticulumRoleColors = Object.freeze({
+  PEER: '#cabffa',
+  NODE: '#a08bff',
+  TRANSPORT: '#8b74ff',
+  PROPAGATION: '#4a32b8',
 });
 
 /** Dark text candidate for light badge backgrounds (WCAG pick, SPEC UX2). */
@@ -163,13 +187,16 @@ export function getRoleTextColor(role, protocol = null) {
  *
  * Defaults to {@link roleColors} (Meshtastic) for absent or unrecognised
  * protocol values so existing callers are unaffected when MeshCore ingest
- * is not yet active.
+ * is not yet active. Reticulum resolves to {@link reticulumRoleColors} (SPEC
+ * RD5); before that ramp existed, Reticulum nodes inherited this default.
  *
  * @param {string|null|undefined} protocol Protocol string from the API.
  * @returns {Readonly<Record<string, string>>} Role colour map.
  */
 export function getRoleColors(protocol) {
-  return isMeshcoreProtocol(protocol) ? meshcoreRoleColors : roleColors;
+  if (isMeshcoreProtocol(protocol)) return meshcoreRoleColors;
+  if (isReticulumProtocol(protocol)) return reticulumRoleColors;
+  return roleColors;
 }
 
 /**
@@ -203,6 +230,28 @@ export const meshcoreRoleRenderOrder = Object.freeze({
   ROOM_SERVER: 7,
   SENSOR: 9,
   COMPANION: 12,
+});
+
+/**
+ * Reticulum marker stacking order (SPEC RD5/RD6).
+ *
+ * Interleaved with the Meshtastic scale like MeshCore's, so a mixed map stacks
+ * by significance rather than by protocol: the more infrastructural a node is,
+ * the higher it draws. Mirrors the role ramp's own ordering
+ * (`PEER < NODE < TRANSPORT < PROPAGATION`).
+ *
+ * A **reserved slot**, like the hexagon marker it stacks: Reticulum announces
+ * carry no position, so nothing reaches this table yet. Without it every RNS
+ * role would fall through to `0` and draw beneath every Meshtastic node —
+ * `CLIENT_HIDDEN` included — the moment positions existed.
+ *
+ * @type {Readonly<Record<string, number>>}
+ */
+export const reticulumRoleRenderOrder = Object.freeze({
+  PEER: 6,
+  NODE: 9,
+  TRANSPORT: 11,
+  PROPAGATION: 12,
 });
 
 /**
@@ -260,7 +309,8 @@ export function getRoleKey(role) {
  * Determine the colour assigned to a role for legend badges.
  *
  * Pass the node's ``protocol`` field to select the correct palette: MeshCore
- * roles are looked up in {@link meshcoreRoleColors}; everything else falls
+ * roles are looked up in {@link meshcoreRoleColors}, Reticulum roles in
+ * {@link reticulumRoleColors}; everything else falls
  * back to the Meshtastic {@link roleColors} palette.
  *
  * @param {*} role Raw role value.
@@ -278,7 +328,8 @@ export function getRoleColor(role, protocol = null) {
  *
  * MeshCore nodes use {@link meshcoreRoleRenderOrder} for roles that differ
  * from Meshtastic; everything else falls back to
- * {@link meshtasticRoleRenderOrder}.
+ * {@link meshtasticRoleRenderOrder}. Reticulum resolves through
+ * {@link reticulumRoleRenderOrder} on the same fall-through rule.
  *
  * @param {*} role Raw role value.
  * @param {string|null|undefined} [protocol] Protocol string from the API.
@@ -289,6 +340,10 @@ export function getRoleRenderPriority(role, protocol = null) {
   if (isMeshcoreProtocol(protocol)) {
     const mc = meshcoreRoleRenderOrder[key];
     if (typeof mc === 'number') return mc;
+  }
+  if (isReticulumProtocol(protocol)) {
+    const rt = reticulumRoleRenderOrder[key];
+    if (typeof rt === 'number') return rt;
   }
   const priority = meshtasticRoleRenderOrder[key];
   return typeof priority === 'number' ? priority : 0;

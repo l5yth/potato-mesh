@@ -2163,6 +2163,16 @@ button.legend-item[aria-pressed="true"] {
   transform: rotate(45deg);
 }
 
+/* Reticulum — the hexagon chip at legend size (SPEC RD6). Geometry is the
+   design's own clip-path rather than a re-derivation. The border cannot follow
+   a clip-path, so it is dropped here and the shape carries itself; at 12px the
+   silhouette reads as clearly as the bordered circle beside it. */
+.legend-swatch--hexagon {
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(50% 0%, 100% 27%, 100% 73%, 50% 100%, 0% 73%, 0% 27%);
+}
+
 .protocol-icon {
   display: inline-block;
   vertical-align: middle;
@@ -3060,6 +3070,16 @@ button.legend-item[aria-pressed="true"] {
   border: 1px solid rgba(0, 0, 0, 0.7);
   border-radius: 3px;
   transform: rotate(45deg);
+}
+
+/* Reticulum map chip (SPEC RD6) — a reserved slot: RNS announces carry no
+   position, so nothing reaches this rule yet. It overrides the diamond rather
+   than restructuring it, so MeshCore's chip is untouched (FU-A3). */
+.node-marker-chip__fill--hexagon {
+  border: none;
+  border-radius: 0;
+  transform: none;
+  clip-path: polygon(50% 0%, 100% 27%, 100% 73%, 50% 100%, 0% 73%, 0% 27%);
 }
 
 /* Legend line-style key (UX7, D-014). */

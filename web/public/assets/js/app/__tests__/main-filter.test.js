@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { withApp } from './main-app-test-helpers.js';
+import { reticulumRoleColors } from '../role-helpers.js';
 
 // ---------------------------------------------------------------------------
 // makeRoleFilterKey
@@ -303,6 +304,30 @@ test('buildMeshcoreIconImg references meshcore.svg and carries the meshcore clas
   });
 });
 
+test('buildReticulumIconImg references reticulum.svg and carries its class (RD7)', () => {
+  withApp((t) => {
+    const img = t.buildReticulumIconImg();
+    assert.ok(img.getAttribute('src').includes('reticulum.svg'));
+    assert.ok(img.className.includes('protocol-icon--reticulum'));
+    assert.equal(img.getAttribute('aria-hidden'), 'true');
+    // Same attribute set as its siblings, so the legend header renders
+    // identically whichever protocol builds it.
+    assert.equal(img.getAttribute('alt'), '');
+    assert.equal(img.getAttribute('width'), '12');
+  });
+});
+
+test('all three protocol icons resolve to distinct assets (RD7)', () => {
+  withApp((t) => {
+    const srcs = [
+      t.buildMeshtasticIconImg(),
+      t.buildMeshcoreIconImg(),
+      t.buildReticulumIconImg(),
+    ].map(img => img.getAttribute('src'));
+    assert.equal(new Set(srcs).size, 3);
+  });
+});
+
 test('buildMeshtasticIconImg and buildMeshcoreIconImg return different src values', () => {
   withApp((t) => {
     const mt = t.buildMeshtasticIconImg();
@@ -405,6 +430,36 @@ test('buildRoleButtons sets aria-pressed to true initially (all visible)', () =>
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     assert.ok(btn, 'button should be in legendRoleButtons');
     assert.equal(btn.getAttribute('aria-pressed'), 'true');
+  });
+});
+
+test('buildRoleButtons keys the swatch shape by protocol (RD6 / LC1)', () => {
+  withApp((t) => {
+    // The swatch is the map marker at legend size, so protocol is keyed by the
+    // same channel in both places. Reticulum is the third shape.
+    const shapeFor = protocol => {
+      t.legendRoleButtons.clear();
+      const col = document.createElement('div');
+      t.buildRoleButtons(col, { A: '#ffffff' }, protocol);
+      return t.legendRoleButtons.get(`${protocol}:A`).childNodes[0].className;
+    };
+    assert.match(shapeFor('reticulum'), /legend-swatch--hexagon/);
+    assert.match(shapeFor('meshcore'), /legend-swatch--diamond/);
+    assert.match(shapeFor('meshtastic'), /legend-swatch--circle/);
+  });
+});
+
+test('buildRoleButtons renders the whole reticulum ramp, TRANSPORT included (RD5/RD7)', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, reticulumRoleColors, 'reticulum');
+    for (const role of ['PEER', 'NODE', 'TRANSPORT', 'PROPAGATION']) {
+      const btn = t.legendRoleButtons.get(`reticulum:${role}`);
+      assert.ok(btn, `${role} should have a filter button`);
+      assert.equal(btn.getAttribute('aria-pressed'), 'true');
+      assert.equal(btn.dataset.protocol, 'reticulum');
+    }
   });
 });
 

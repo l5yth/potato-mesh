@@ -522,8 +522,16 @@ export async function initializeFederationPage(options = {}) {
       const mcNodesText = mcNodesVal == null ? '<em>—</em>' : `${meshcoreIconHtml()} ${escapeHtml(String(mcNodesVal))}`;
       const mtNodesVal = toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount);
       const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
+      // Reticulum alone treats 0 as "nothing to show" (SPEC RD8). Its two
+      // siblings can distinguish absent from zero, but `normalize_instance_row`
+      // serves `reticulum_nodes_count` as `|| 0` so a crawler re-verifying a
+      // relayed v2 record rebuilds the canonical the sender signed (FS2) — so on
+      // this column the two are indistinguishable, and every federated instance
+      // would otherwise show a violet tile beside a 0. During rollout nearly all
+      // of them are exactly that, which would make the column read as broken
+      // rather than as new.
       const rtNodesVal = toFiniteNumber(instance.reticulum_nodes_count ?? instance.reticulumNodesCount);
-      const rtNodesText = rtNodesVal == null ? '<em>—</em>' : `${reticulumIconHtml()} ${escapeHtml(String(rtNodesVal))}`;
+      const rtNodesText = !rtNodesVal ? '<em>—</em>' : `${reticulumIconHtml()} ${escapeHtml(String(rtNodesVal))}`;
 
       // Cell order mirrors `_instances_table.erb`'s traveler-first header
       // order (SPEC UX9/UX12): where + settings + alive lead; coordinates

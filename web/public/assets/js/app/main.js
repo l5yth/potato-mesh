@@ -121,6 +121,7 @@ import {
   getRoleRenderPriority,
   getRoleTextColor,
   meshcoreRoleColors,
+  reticulumRoleColors,
   normalizeRole,
   roleColors,
 } from './role-helpers.js';
@@ -202,6 +203,7 @@ import {
   buildMeshcoreIconImg,
   buildMeshtasticIconImg,
   buildProtocolIconImg,
+  buildReticulumIconImg,
 } from './main/protocol-icons.js';
 import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
@@ -244,6 +246,22 @@ import {
   waypointGlyph,
   waypointKey,
 } from './main/waypoint-layer.js';
+
+
+/**
+ * Map marker shape → legend swatch modifier (SPEC LC1).
+ *
+ * The swatch is the map marker at legend size, so protocol is keyed by the same
+ * channel in both places. Total over `nodeMarkerShapeForProtocol`'s three
+ * returns, so no fallback is needed — one would be an unreachable branch.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const LEGEND_SWATCH_SHAPES = Object.freeze({
+  square: 'diamond',
+  hexagon: 'hexagon',
+  circle: 'circle',
+});
 
 /**
  * Build the node-table row's two timestamp cells ("last seen" and
@@ -1753,6 +1771,8 @@ export function initializeApp(config) {
   let meshtasticCountEl = null;
   let meshcoreColEl = null;
   let meshtasticColEl = null;
+  let reticulumCountEl = null;
+  let reticulumColEl = null;
   let meshActivityCard = null;
   let legendToggleButton = null;
   let legendVisible = true;
@@ -1956,7 +1976,7 @@ export function initializeApp(config) {
   function updateMetaProtocolToggleUI() {
     /** @type {Array<{btn: HTMLElement|null, protocol: string, name: string}>} */
     const toggles = [
-      { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'MeshCore' },
+      { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'Meshcore' },
       { btn: protocolToggleMeshtastic, protocol: 'meshtastic', name: 'Meshtastic' },
       { btn: protocolToggleReticulum, protocol: 'reticulum', name: 'Reticulum' },
     ];
@@ -1998,7 +2018,7 @@ export function initializeApp(config) {
    *
    * @param {HTMLElement} colEl Column container element.
    * @param {Record<string,string>} palette Role→colour map to render.
-   * @param {'meshtastic'|'meshcore'} protocol Protocol token for this column.
+   * @param {'meshtastic'|'meshcore'|'reticulum'} protocol Protocol token for this column.
    * @returns {void}
    */
   function buildRoleButtons(colEl, palette, protocol) {
@@ -2015,8 +2035,9 @@ export function initializeApp(config) {
       const swatch = document.createElement('span');
       // The swatch is the marker at legend size (Legend & Chat Fix): shape keys
       // protocol exactly as the map does — a rotated diamond for MeshCore
-      // (`nodeMarkerShapeForProtocol` → 'square'), a circle for everything else.
-      const swatchShape = nodeMarkerShapeForProtocol(protocol) === 'square' ? 'diamond' : 'circle';
+      // (`nodeMarkerShapeForProtocol` → 'square'), a hexagon for Reticulum
+      // (SPEC RD6), a circle for everything else.
+      const swatchShape = LEGEND_SWATCH_SHAPES[nodeMarkerShapeForProtocol(protocol)];
       swatch.className = `legend-swatch legend-swatch--${swatchShape}`;
       item.appendChild(swatch);
       swatch.style.background = color;
@@ -2078,21 +2099,21 @@ export function initializeApp(config) {
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
       // --- MeshCore column (left) ---
-      // Both columns top-align (audit follow-up d): bottom-aligning the shorter
-      // MeshCore column dropped its header below Meshtastic's, reading as a
-      // layout bug. Top baselines put the two protocol titles on one line.
+      // Every column top-aligns (audit follow-up d): bottom-aligning the
+      // shorter MeshCore column dropped its header below Meshtastic's, reading
+      // as a layout bug. Top baselines put the protocol titles on one line.
       const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
       meshcoreColEl = meshcoreCol;
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
       const meshcoreColTitle = document.createElement('span');
-      meshcoreColTitle.textContent = 'MeshCore';
+      meshcoreColTitle.textContent = 'Meshcore';
       meshcoreColHeader.appendChild(meshcoreColTitle);
       meshcoreCountEl = document.createElement('span');
       meshcoreCountEl.className = 'legend-protocol-count';
       meshcoreColHeader.appendChild(meshcoreCountEl);
 
-      // --- Meshtastic column (right) ---
+      // --- Meshtastic column (middle) ---
       const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
       meshtasticColEl = meshtasticCol;
       const meshtasticColHeader = L.DomUtil.create('div', 'legend-column-header', meshtasticCol);
@@ -2104,9 +2125,22 @@ export function initializeApp(config) {
       meshtasticCountEl.className = 'legend-protocol-count';
       meshtasticColHeader.appendChild(meshtasticCountEl);
 
+      // --- Reticulum column (rightmost) ---
+      const reticulumCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      reticulumColEl = reticulumCol;
+      const reticulumColHeader = L.DomUtil.create('div', 'legend-column-header', reticulumCol);
+      reticulumColHeader.appendChild(buildReticulumIconImg());
+      const reticulumColTitle = document.createElement('span');
+      reticulumColTitle.textContent = 'Reticulum';
+      reticulumColHeader.appendChild(reticulumColTitle);
+      reticulumCountEl = document.createElement('span');
+      reticulumCountEl.className = 'legend-protocol-count';
+      reticulumColHeader.appendChild(reticulumCountEl);
+
       legendRoleButtons.clear();
       buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
       buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
+      buildRoleButtons(reticulumCol, reticulumRoleColors, 'reticulum');
 
       // --- Meshtastic column: line toggles at bottom ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
@@ -5674,13 +5708,15 @@ export function initializeApp(config) {
   /**
    * Update legend column headers with per-protocol active node counts (7 days).
    *
-   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats Stats from /api/stats.
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number},
+   *   reticulum?: {week: number}}} stats Stats from /api/stats.
    * @returns {void}
    */
   function updateLegendProtocolCounts(stats) {
-    if (!meshcoreCountEl && !meshtasticCountEl) return;
+    if (!meshcoreCountEl && !meshtasticCountEl && !reticulumCountEl) return;
     if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${stats?.meshcore?.week ?? 0})`;
     if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${stats?.meshtastic?.week ?? 0})`;
+    if (reticulumCountEl) reticulumCountEl.textContent = ` (${stats?.reticulum?.week ?? 0})`;
   }
 
   /**
@@ -5737,6 +5773,7 @@ export function initializeApp(config) {
     // Hide legend columns for protocols with no activity in the past 7 days.
     if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
     if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
+    if (reticulumColEl) reticulumColEl.style.display = reticulumWeek === 0 ? 'none' : '';
 
     // Show a protocol's toggle button only when that protocol has weekly
     // activity and at least one other protocol does too — filtering is
@@ -5813,6 +5850,7 @@ export function initializeApp(config) {
       buildProtocolIconImg,
       buildMeshtasticIconImg,
       buildMeshcoreIconImg,
+      buildReticulumIconImg,
       buildRoleButtons,
       updateLegendRoleFiltersUI,
       legendClickHandler,
@@ -5867,14 +5905,16 @@ export function initializeApp(config) {
         relativeTimeTicker.stop();
       },
       /** Inject mock count span elements for legend protocol count tests. */
-      _setProtocolCountElements(mc, mt) {
+      _setProtocolCountElements(mc, mt, rt = null) {
         meshcoreCountEl = mc;
         meshtasticCountEl = mt;
+        reticulumCountEl = rt;
       },
       /** Inject mock column elements for protocol visibility tests. */
-      _setProtocolColElements(mc, mt) {
+      _setProtocolColElements(mc, mt, rt = null) {
         meshcoreColEl = mc;
         meshtasticColEl = mt;
+        reticulumColEl = rt;
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,

@@ -31,6 +31,29 @@ The Reticulum provider (`PROTOCOL=reticulum`, `data/mesh_ingestor/protocols/reti
 - `user.shortName` = the first 4 hex chars of the node id (MeshCore convention); `user.longName` = the display name decoded from announce `app_data`, falling back to a placeholder naming the *node* — `"Reticulum <SHORT>"`, the protocol label plus the upper-cased last four hex of the canonical id, which is the exact form the web upsert recognises as a placeholder and therefore refuses to overwrite a real name with.
 - **One peer is one node row.** Because the id keys on the identity rather than on a destination, a peer announcing both `lxmf.delivery` and `nomadnetwork.node` merges onto a single row carrying both hashes in `destHash`. (Superseded #890's original mapping, which keyed on the destination hash and therefore split one peer into two unrelated rows — SPEC RN1.)
 
+**Roles.**  Reticulum carries no role field, so what a peer *is* is read from
+which destinations it announces: `lxmf.propagation` -> `PROPAGATION`,
+`nomadnetwork.node` -> `NODE`, `lxmf.delivery` -> `PEER`. Because one identity's
+aspects collapse onto a single row, a node's `user.role` is the
+**highest-ranked aspect it has announced on during this ingestor session**
+(`PROPAGATION > TRANSPORT > NODE > PEER`), never the most recent -- the web upsert writes
+`role=COALESCE(excluded.role, nodes.role)`, so a per-announce mapping would make
+a dual-aspect peer's role flip on every announce. The field is omitted entirely
+when no aspect has been heard, so a record never asserts a role it could not
+determine.
+
+**Known limitation.** The accumulator is in-memory and per-process, and the web
+upsert writes `role=COALESCE(excluded.role, nodes.role)`, so an ingestor restart
+-- or a second ingestor that hears only the lower aspect -- can *demote* a stored
+role. Within one session the rank holds. A rank-aware SQL merge (the treatment
+`dest_hash` already gets) is a tracked follow-up; a new protocol should not copy
+the in-memory accumulator as though it were durable.
+
+**`TRANSPORT` is never emitted**: no announce exposes transport
+status, and inferring it from the ingestor's own path table would make it a
+property of our vantage point rather than of the node, so two ingestors would
+disagree -- the sender-side determinism rule above (SPEC RD4).
+
 **Interface scope.** An RNS stack can carry LoRa and IP interfaces at once, and an announce listener hears every announce reachable over any of them — with RNS's default `AutoInterface` (IPv6 link-local multicast) that is the entire local Reticulum network. `RETICULUM_INTERFACES` is a comma-separated, case-insensitive **substring** allowlist of interface names (e.g. `rnode`) matched against the interface the announce's path arrived on; **empty is the default and ingests everything**. A filtered-out announce is not counted as this mesh's traffic. Reticulum exposes no protocol-level "this peer is on LoRa" marker, so the interface a path arrived on is the only available proxy (SPEC RN4).
 
 **Config isolation.** `RETICULUM_CONFIG_DIR` defaults to an app-owned directory (`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`) and never to RNS's user default `~/.reticulum`: installing a dashboard ingestor does not imply consent to run the operator's transport-node configuration (SPEC RN3).
@@ -69,7 +92,7 @@ remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
 - `isFavorite` (bool)
 - `destHash` (array of hex strings | string | absent) — protocol-native destination hashes that resolve to this node's identity, for protocols whose identities front several destinations (today: Reticulum's announce aspects; see "Reticulum node id mapping" above). A bare string is accepted as a one-element list. The web upsert **unions** it with the stored value rather than overwriting, so an ingestor that heard only one aspect never drops hashes another ingestor recorded. Stored in `nodes.dest_hash` as a sorted JSON array and, like `user.publicKey`, served on no read API.
 - `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `publicKey`, `isUnmessagable`)
-  - `role` (optional string) — omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`) and MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`)
+  - `role` (optional string) — omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`), MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`), and Reticulum role names (`PEER`, `NODE`, `PROPAGATION`; `TRANSPORT` is reserved and never emitted — see "Roles" above, which also covers how Reticulum derives and ranks it)
 - `deviceMetrics` (mapping; e.g. `batteryLevel`, `voltage`, `channelUtilization`, `airUtilTx`, `uptimeSeconds`)
 - `position` (mapping; `latitude`, `longitude`, `altitude`, `time`, `locationSource`, `precisionBits`, optional nested `raw`)
 - Optional radio metadata: `lora_freq`, `modem_preset`

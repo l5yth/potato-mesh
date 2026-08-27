@@ -28,11 +28,34 @@ import {
   getContrastTextColor,
   meshcoreRoleColors,
   meshcoreRoleRenderOrder,
+  reticulumRoleColors,
+  reticulumRoleRenderOrder,
   meshtasticRoleRenderOrder,
   roleColors,
   normalizeRole,
   translateRoleId,
 } from '../role-helpers.js';
+
+/**
+ * WCAG 2.x contrast ratio between two hex colours.
+ *
+ * Reimplemented here because `role-helpers.js` keeps `contrastRatio` private
+ * and exports only the pass/fail pick, {@link getContrastTextColor}.
+ *
+ * @param {string} a First hex colour.
+ * @param {string} b Second hex colour.
+ * @returns {number} Contrast ratio, 1-21.
+ */
+function contrastRatio(a, b) {
+  const luminance = hex => {
+    const channels = [1, 3, 5]
+      .map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(c => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
 
 test('translateRoleId maps numeric inputs and leaves unknowns unchanged', () => {
   assert.equal(translateRoleId(0), 'CLIENT');
@@ -117,7 +140,51 @@ test('getRoleColors returns MeshCore palette for meshcore protocol', () => {
 });
 
 test('getRoleColors returns Meshtastic palette for unknown protocols', () => {
-  assert.equal(getRoleColors('reticulum'), roleColors);
+  // 'reticulum' used to land here; it has its own ramp since SPEC RD5, so this
+  // guards the genuine fallback rather than a protocol that now has a palette.
+  assert.equal(getRoleColors('zigbee'), roleColors);
+  assert.equal(getRoleColors(undefined), roleColors);
+});
+
+test('reticulum roles stack above the fall-through floor (RD5/RD6)', () => {
+  // Without a Reticulum branch every RNS role returns 0 and draws beneath
+  // every Meshtastic node, CLIENT_HIDDEN (1) included.
+  for (const role of Object.keys(reticulumRoleColors)) {
+    assert.ok(getRoleRenderPriority(role, 'reticulum') > 1, role);
+  }
+  // Ordered by how infrastructural the node is, mirroring the ramp.
+  const order = ['PEER', 'NODE', 'TRANSPORT', 'PROPAGATION'].map(r =>
+    getRoleRenderPriority(r, 'reticulum'),
+  );
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  assert.deepEqual(Object.keys(reticulumRoleRenderOrder), Object.keys(reticulumRoleColors));
+});
+
+test('getRoleColors returns the violet ramp for reticulum (RD5)', () => {
+  assert.equal(getRoleColors('reticulum'), reticulumRoleColors);
+  assert.deepEqual(Object.keys(reticulumRoleColors), [
+    'PEER',
+    'NODE',
+    'TRANSPORT',
+    'PROPAGATION',
+  ]);
+});
+
+test('every reticulum role badge clears the 4.5:1 floor (RD5 / UX2)', () => {
+  // The ramp is tied to the #7b61ff tile, so each step has to be checked
+  // against the text colour the badge will actually use.
+  for (const [role, fill] of Object.entries(reticulumRoleColors)) {
+    const ratio = contrastRatio(getContrastTextColor(fill), fill);
+    assert.ok(ratio >= 4.5, `${role} ${fill} scored ${ratio.toFixed(2)}, below 4.5:1`);
+  }
+});
+
+test('the tile colour itself fails as a badge fill, which is why the ramp differs (RD5)', () => {
+  // #7b61ff measures 4.39:1 — pinning the failure keeps a future "just use the
+  // tile colour" simplification from silently breaking UX2.
+  const tile = '#7b61ff';
+  assert.ok(contrastRatio(getContrastTextColor(tile), tile) < 4.5);
+  assert.notEqual(reticulumRoleColors.TRANSPORT, tile);
 });
 
 test('getRoleColor uses meshcore palette when protocol is meshcore', () => {
