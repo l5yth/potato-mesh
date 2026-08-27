@@ -39,13 +39,20 @@ const ACTIVITY_CHART_WINDOW_MS = ACTIVITY_CHART_WINDOW_SECONDS * 1000;
 
 /**
  * Per-protocol lines, in draw/legend order. Colours match the design (option
- * 1c): Meshtastic purple, MeshCore blue.
+ * 1c): Meshtastic purple, MeshCore blue, Reticulum green — the same
+ * ColorBrewer register, so no protocol reads as privileged (Invariant IV).
+ *
+ * Kept in step with `PROTOCOL_ROWS` in `map-activity-card.js`: both render the
+ * same `/api/stats/activity` payload, whose buckets carry a live `reticulum`
+ * key (SPEC F2-2 as amended). A protocol missing here is silently dropped from
+ * the figure while still counting toward `total`.
  *
  * @type {ReadonlyArray<{protocol: string, label: string, color: string}>}
  */
 const ACTIVITY_CHART_LINES = Object.freeze([
   Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', color: '#8856a7' }),
   Object.freeze({ protocol: 'meshcore', label: 'MeshCore', color: '#3182bd' }),
+  Object.freeze({ protocol: 'reticulum', label: 'Reticulum', color: '#31a354' }),
 ]);
 
 /**
@@ -76,7 +83,7 @@ export async function fetchActivityChartBuckets({ fetchImpl = fetch } = {}) {
  * Build a `{timestamp, value}` point list for one protocol from the buckets.
  *
  * @param {Array<Object>} buckets Bucket objects from the activity endpoint.
- * @param {string} protocol Protocol key (`meshtastic` / `meshcore`).
+ * @param {string} protocol Protocol key (`meshtastic` / `meshcore` / `reticulum`).
  * @returns {Array<{timestamp: number, value: number}>} Chart points (ms).
  */
 function pointsForProtocol(buckets, protocol) {

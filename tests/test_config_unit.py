@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import sys
 from pathlib import Path
 
@@ -288,6 +289,180 @@ class TestProtocolValidation:
         # Restore to valid value so subsequent tests work
         monkeypatch.setenv("PROTOCOL", "meshtastic")
         importlib.reload(config)
+
+
+class TestComposeDefaults:
+    """No packaged default may embed a quote character.
+
+    Compose substitutes a ``${VAR:-default}`` default as **literal text**, not
+    as shell, so ``:-""`` delivers the two-character string ``""`` rather than
+    an empty value.  Any parser that treats a non-empty string as meaningful
+    then receives one bogus entry.  For ``ALLOWED_CHANNELS`` that meant a
+    one-entry channel allowlist matching no real channel, so every stock
+    Compose deployment silently dropped every message
+    (``handlers/generic.py``, ``reason="disallowed-channel"``).
+
+    The guard **discovers** compose files rather than listing them, and matches
+    *any* quoted default rather than the one spelling that caused the outage —
+    ``${VAR-""}`` (single dash), ``${VAR:-''}``, and ``${VAR:- ""}`` all deliver
+    the same literal.
+    """
+
+    #: ``${VAR:-…}`` or ``${VAR-…}`` whose default text contains a quote.
+    _QUOTED_DEFAULT = re.compile(r"""\$\{[A-Za-z_][A-Za-z0-9_]*:?-[^}]*["'][^}]*\}""")
+
+    @staticmethod
+    def _compose_files() -> list[Path]:
+        """Every compose file in the repo, wherever it lives."""
+        return sorted(
+            path
+            for path in REPO_ROOT.rglob("*compose*.y*ml")
+            if ".git" not in path.parts and "node_modules" not in path.parts
+        )
+
+    def test_discovery_finds_the_interpolating_compose_files(self):
+        """Guard the guard: a glob that matched nothing would assert nothing.
+
+        Two of the repo's compose files carry no ``${...}`` interpolation at
+        all, so a per-file check over them is structurally vacuous.  Assert that
+        at least one discovered file *does* interpolate, or this whole class is
+        theatre (the same trap RN-A3 was written against).
+        """
+        files = self._compose_files()
+        assert len(files) >= 3, f"compose discovery found only {files}"
+        interpolating = [p for p in files if "${" in p.read_text(encoding="utf-8")]
+        assert interpolating, "no discovered compose file interpolates anything"
+
+    def test_no_quoted_defaults_anywhere(self):
+        """An empty Compose default must be bare (`:-`), never quoted."""
+        offenders = {}
+        for path in self._compose_files():
+            hits = self._QUOTED_DEFAULT.findall(path.read_text(encoding="utf-8"))
+            if hits:
+                offenders[path.relative_to(REPO_ROOT).as_posix()] = hits
+        assert not offenders, (
+            f"Compose substitutes defaults as literal text, not as shell, so "
+            f"these deliver the quote characters verbatim: {offenders}"
+        )
+
+
+class TestChannelNameQuoting:
+    """Channel allowlists must not be defeated by a quoted value.
+
+    Quotes reach the ingestor from two directions: a Compose ``:-""`` default
+    (see :class:`TestComposeDefaults`) and an operator writing
+    ``ALLOWED_CHANNELS='"LongFast"'``.  Either way an unstripped quote makes the
+    entry match no real channel name.
+    """
+
+    def test_quote_only_value_means_no_allowlist(self):
+        """A quote-only value must disable the filter, not match nothing."""
+        assert config._parse_channel_names('""') == ()
+        assert config._parse_channel_names("''") == ()
+        assert config._parse_channel_names('" "') == ()
+        assert config._parse_hidden_channels('""') == ()
+
+    def test_a_name_containing_quotes_is_taken_literally(self):
+        """Quotes inside a fragment are content, and must survive parsing.
+
+        A Meshtastic channel name is arbitrary UTF-8, and the filters match it
+        casefold-**exact** against the on-air name.  Stripping quotes from the
+        configured value would make the two stop matching: an allowlist would
+        black the channel out, and a hidden-channel entry would fail *open*.
+        """
+        assert config._parse_channel_names('"LongFast"') == ('"LongFast"',)
+        assert config._parse_channel_names("Ops'") == ("Ops'",)
+        assert config._parse_channel_names("'Private'") == ("'Private'",)
+        assert config._parse_channel_names("Bob's, O'Brien's") == (
+            "Bob's",
+            "O'Brien's",
+        )
+
+    def test_unquoted_behaviour_is_unchanged(self):
+        """The established parsing — order-preserving, case-insensitive dedupe."""
+        assert config._parse_channel_names("LongFast, longfast ,MediumFast") == (
+            "LongFast",
+            "MediumFast",
+        )
+        assert config._parse_channel_names(None) == ()
+
+
+class TestReticulumConfigDir:
+    """Tests for the isolated Reticulum config directory (#888)."""
+
+    def test_explicit_env_wins_and_expands_tilde(self, monkeypatch):
+        """An operator naming a directory gets exactly that directory."""
+        monkeypatch.setenv("RETICULUM_CONFIG_DIR", "~/shared/rns")
+        monkeypatch.setenv("HOME", "/home/operator")
+        assert config._resolve_reticulum_config_dir() == "/home/operator/shared/rns"
+
+    def test_defaults_under_xdg_config_home(self, monkeypatch):
+        """Without an explicit value, XDG_CONFIG_HOME roots an app-owned dir."""
+        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/cfg")
+        assert config._resolve_reticulum_config_dir() == "/cfg/potato-mesh/reticulum"
+
+    def test_defaults_under_home_config_without_xdg(self, monkeypatch):
+        """With no XDG root either, the default lands under ~/.config."""
+        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", "/home/operator")
+        resolved = config._resolve_reticulum_config_dir()
+        assert resolved == "/home/operator/.config/potato-mesh/reticulum"
+
+    def test_never_resolves_to_the_operator_reticulum(self, monkeypatch):
+        """The dashboard never adopts the operator's own RNS stack (#888)."""
+        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", "/home/operator")
+        assert not config._resolve_reticulum_config_dir().endswith("/.reticulum")
+
+    def test_blank_env_falls_back_to_the_default(self, monkeypatch):
+        """A blank value is treated as unset, not as the current directory."""
+        monkeypatch.setenv("RETICULUM_CONFIG_DIR", "   ")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "/cfg")
+        assert config._resolve_reticulum_config_dir() == "/cfg/potato-mesh/reticulum"
+
+
+class TestReticulumInterfaces:
+    """Tests for the RETICULUM_INTERFACES ingest allowlist (#888)."""
+
+    def test_empty_by_default(self):
+        """An unset or blank allowlist admits every interface."""
+        assert config._parse_reticulum_interfaces("") == ()
+        assert config._parse_reticulum_interfaces("   ") == ()
+        assert config._parse_reticulum_interfaces(",, ,") == ()
+
+    def test_splits_lowercases_dedupes_and_sorts(self):
+        """Entries are normalised so matching is case-insensitive and stable."""
+        assert config._parse_reticulum_interfaces("RNode, serial ,rnode") == (
+            "rnode",
+            "serial",
+        )
+
+    def test_quote_only_value_resolves_to_no_allowlist(self):
+        """A literal '\"\"' must mean *no* allowlist, not one matching nothing.
+
+        Compose substitutes a ``${VAR:-""}`` default as literal text, so the
+        ingestor can receive the two-character string ``""``.  Read naively
+        that becomes a one-entry allowlist that matches no interface, and the
+        listener silently ingests zero announces.
+        """
+        assert config._parse_reticulum_interfaces('""') == ()
+        assert config._parse_reticulum_interfaces("''") == ()
+        assert config._parse_reticulum_interfaces('" "') == ()
+
+    def test_fragments_with_content_are_taken_literally(self):
+        """Only quote-*only* fragments are dropped; content is never rewritten.
+
+        The same rule the channel filters need (see
+        :class:`TestChannelNameQuoting`), applied through the shared
+        :func:`config._clean_env_fragment`.
+        """
+        assert config._parse_reticulum_interfaces('"rnode", serial') == (
+            '"rnode"',
+            "serial",
+        )
 
 
 # ---------------------------------------------------------------------------

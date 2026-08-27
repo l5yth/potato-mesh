@@ -18,9 +18,10 @@ require_relative "spec_helper"
 
 # Reticulum protocol support (#888).  Mirrors the MeshCore coverage in
 # protocol_spec.rb with fixtures shaped like the Python Reticulum ingestor's
-# announce-derived node payloads: id = "!" + first 4 bytes of the destination
-# hash, user.publicKey = the full 32-hex destination hash, no SNR/RSSI, no
-# user.role, no position, no deviceMetrics, hopsAway omitted when unknown.
+# announce-derived node payloads: id = "!" + first 4 bytes of the *identity*
+# hash, user.publicKey = the identity's real public key, destHash = the list of
+# destination hashes that resolve to that identity, no SNR/RSSI, no user.role,
+# no position, no deviceMetrics, hopsAway omitted when unknown.
 RSpec.describe "Reticulum protocol support" do
   let(:app) { Sinatra::Application }
   let(:api_token) { "test-token" }
@@ -35,20 +36,25 @@ RSpec.describe "Reticulum protocol support" do
   RETICULUM_INGESTOR_ID = "!feedf00d".freeze
   RETICULUM_NODE_ID = "!a1b2c3d4".freeze
   RETICULUM_DEST_HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90".freeze
+  # A second destination (the peer's other announce aspect) resolving to the
+  # same identity, and therefore to the same node row.
+  RETICULUM_DEST_HASH2 = "00ff11ee22dd33cc44bb55aa66997788".freeze
+  RETICULUM_PUBLIC_KEY = ("ab" * 64).freeze
   RETICULUM_NODE_ID2 = "!0badcafe".freeze
   MESHTASTIC_PEER_ID = "!12ab34cd".freeze
 
   # Announce-derived node fixture, exactly the shape the Reticulum ingestor
   # POSTs (no snr/rssi/position/deviceMetrics/user.role).
-  def reticulum_node_fixture(last_heard:, hops_away: 2)
+  def reticulum_node_fixture(last_heard:, hops_away: 2, dest_hashes: [RETICULUM_DEST_HASH])
     node = {
       "user" => {
         "longName" => "Argos Station",
         "shortName" => "a1b2",
-        "publicKey" => RETICULUM_DEST_HASH,
+        "publicKey" => RETICULUM_PUBLIC_KEY,
       },
       "lastHeard" => last_heard,
       "protocol" => "reticulum",
+      "destHash" => dest_hashes,
     }
     node["hopsAway"] = hops_away if hops_away
     node
@@ -153,9 +159,77 @@ RSpec.describe "Reticulum protocol support" do
         expect(row["protocol"]).to eq("reticulum")
         expect(row["long_name"]).to eq("Argos Station")
         expect(row["short_name"]).to eq("a1b2")
-        expect(row["public_key"]).to eq(RETICULUM_DEST_HASH)
+        # publicKey carries the identity's real key, never a destination hash
+        # (a destination hash is a truncated hash over the identity and name
+        # hashes, not a key) — #888.
+        expect(row["public_key"]).to eq(RETICULUM_PUBLIC_KEY)
+        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH])
         expect(row["hops_away"]).to eq(2)
       end
+    end
+
+    it "unions destination hashes across a peer's announce aspects" do
+      register_reticulum_ingestor
+      # First aspect (lxmf.delivery) heard on its own...
+      post_reticulum_nodes
+      # ...then the second (nomadnetwork.node), which the ingestor posts with
+      # both hashes.  Two rows must never appear: one identity, one node.
+      post(
+        "/api/nodes",
+        {
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+          RETICULUM_NODE_ID => reticulum_node_fixture(
+            last_heard: now,
+            dest_hashes: [RETICULUM_DEST_HASH2],
+          ),
+        }.to_json,
+        auth_headers,
+      )
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value(
+          "SELECT COUNT(*) FROM nodes WHERE protocol = 'reticulum'",
+        )
+        expect(count).to eq(1)
+        row = db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID])
+        # A record naming only the second hash must not drop the first: two
+        # ingestors can each have heard a different subset of a peer's aspects.
+        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH2, RETICULUM_DEST_HASH].sort)
+      end
+    end
+
+    it "keeps the stored destination hashes when a record names none" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+      post(
+        "/api/nodes",
+        {
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+          RETICULUM_NODE_ID => reticulum_node_fixture(last_heard: now, dest_hashes: nil),
+        }.to_json,
+        auth_headers,
+      )
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID])
+        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH])
+      end
+    end
+
+    it "never exposes destination hashes or public keys on the read API" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+
+      get "/api/nodes?protocol=reticulum"
+      payload = JSON.parse(last_response.body)
+      expect(payload.length).to eq(1)
+      # `public_key` has never been in a node projection; `dest_hash` is an
+      # on-air identifier and follows the same rule (Invariant II).
+      expect(payload.first).not_to have_key("dest_hash")
+      expect(payload.first).not_to have_key("destHash")
+      expect(payload.first).not_to have_key("public_key")
     end
 
     it "stores no fabricated radio/telemetry/position values" do

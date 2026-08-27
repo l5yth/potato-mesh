@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import importlib
 import inspect
+import re
 import sys
 import time
 import types
@@ -47,8 +49,35 @@ from data.mesh_ingestor.protocols.reticulum import (  # noqa: E402 - path setup
 _DEST_HASH = bytes.fromhex("aabbccdd" + "00" * 12)
 """A full 16-byte Reticulum destination hash used across tests."""
 
+_IDENTITY_HASH = bytes.fromhex("beef0001" + "11" * 12)
+"""A full 16-byte Reticulum identity hash used across tests."""
 
-def _fake_rns(*, existing_instance=None, hops=128):
+_PUBLIC_KEY = bytes.fromhex("ab" * 64)
+"""A 64-byte Reticulum identity public key used across tests."""
+
+
+class _FakeIdentity:
+    """Stand-in for :class:`RNS.Identity` exposing the members the provider reads."""
+
+    def __init__(
+        self, hash_bytes: bytes = _IDENTITY_HASH, public_key: object = _PUBLIC_KEY
+    ):
+        """Bind the fake to an identity hash and public key."""
+        self.hash = hash_bytes
+        self._public_key = public_key
+
+    def get_public_key(self) -> object:
+        """Return the identity's public key (bytes for a real identity)."""
+        return self._public_key
+
+
+def _fake_rns(
+    *,
+    existing_instance=None,
+    hops=128,
+    interface="RNodeInterface[RNode LoRa]",
+    recalled=None,
+):
     """Build a fake ``RNS`` module namespace for provider tests.
 
     Returns:
@@ -70,8 +99,12 @@ def _fake_rns(*, existing_instance=None, hops=128):
         register_announce_handler=lambda h: state["registered"].append(h),
         deregister_announce_handler=lambda h: state["deregistered"].append(h),
         hops_to=lambda _dh: hops,
+        next_hop_interface=lambda _dh: interface,
     )
-    fake = types.SimpleNamespace(Reticulum=FakeReticulum, Transport=transport)
+    identity = types.SimpleNamespace(recall=lambda _dh: recalled)
+    fake = types.SimpleNamespace(
+        Reticulum=FakeReticulum, Transport=transport, Identity=identity
+    )
     return fake, state
 
 
@@ -81,13 +114,13 @@ def _fake_rns(*, existing_instance=None, hops=128):
 
 
 def test_reticulum_node_id_from_bytes():
-    """The node ID is the first four bytes of the destination hash."""
-    assert _reticulum_node_id(_DEST_HASH) == "!aabbccdd"
+    """The node ID is the first four bytes of the identity hash."""
+    assert _reticulum_node_id(_IDENTITY_HASH) == "!beef0001"
 
 
 def test_reticulum_node_id_from_hex_string():
-    """A hex-string destination hash is accepted and lowercased."""
-    assert _reticulum_node_id("AABBCCDD" + "00" * 12) == "!aabbccdd"
+    """A hex-string identity hash is accepted and lowercased."""
+    assert _reticulum_node_id("BEEF0001" + "11" * 12) == "!beef0001"
 
 
 def test_reticulum_node_id_none_on_short_or_invalid():
@@ -139,6 +172,18 @@ def test_decode_display_name_msgpack_str_element():
     """A msgpack array whose first element is already a str is accepted."""
     app_data = umsgpack.packb(["StrName", None])
     assert _decode_display_name(app_data) == "StrName"
+
+
+def test_decode_display_name_msgpack_empty_array():
+    """A msgpack array with no elements yields None."""
+    assert _decode_display_name(umsgpack.packb([])) is None
+
+
+def test_decode_display_name_msgpack_non_array():
+    """A msgpack payload that unpacks to a non-array yields None."""
+    # 0x9? is the fixarray lead range, so craft a lead byte in range whose
+    # unpacked value is not a list.
+    assert _decode_display_name(umsgpack.packb({"a": 1})) is None
 
 
 def test_decode_display_name_msgpack_none_element():
@@ -209,52 +254,407 @@ def test_announce_hops_none_for_non_bytes():
 
 
 # ---------------------------------------------------------------------------
+# _identity_from_announce / _identity_public_key_hex
+# ---------------------------------------------------------------------------
+
+
+def test_identity_from_announce_prefers_the_callback_identity(monkeypatch):
+    """The identity RNS hands the handler is used without a recall round trip."""
+    fake, _state = _fake_rns(recalled=_FakeIdentity(b"\x99" * 16))
+    monkeypatch.setattr(_mod, "RNS", fake)
+    identity = _FakeIdentity()
+    assert _mod._identity_from_announce(identity, _DEST_HASH) is identity
+
+
+def test_identity_from_announce_recalls_when_absent_or_hashless(monkeypatch):
+    """A missing or hash-less callback identity falls back to recall()."""
+    recalled = _FakeIdentity()
+    fake, _state = _fake_rns(recalled=recalled)
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._identity_from_announce(None, _DEST_HASH) is recalled
+    # An object with no usable `hash` is treated as absent.
+    assert _mod._identity_from_announce(object(), _DEST_HASH) is recalled
+
+
+def test_identity_from_announce_none_when_recall_yields_nothing(monkeypatch):
+    """recall() returning None or a hash-less object yields None."""
+    fake, _state = _fake_rns(recalled=None)
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._identity_from_announce(None, _DEST_HASH) is None
+    fake.Identity.recall = lambda _dh: object()
+    assert _mod._identity_from_announce(None, _DEST_HASH) is None
+
+
+def test_identity_from_announce_none_for_non_bytes_hash():
+    """A non-bytes destination hash never reaches the transport."""
+    assert _mod._identity_from_announce(None, "aabb") is None
+    assert _mod._identity_from_announce(None, None) is None
+
+
+def test_identity_from_announce_swallows_recall_errors(monkeypatch):
+    """A raising recall() yields None rather than killing the receive path."""
+    fake, _state = _fake_rns()
+    fake.Identity.recall = lambda _dh: (_ for _ in ()).throw(RuntimeError("boom"))
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._identity_from_announce(None, _DEST_HASH) is None
+
+
+def test_identity_public_key_hex_variants():
+    """Bytes keys hex-encode, str keys normalise, anything else yields None."""
+    assert _mod._identity_public_key_hex(None) is None
+    assert _mod._identity_public_key_hex(_FakeIdentity()) == _PUBLIC_KEY.hex()
+    assert _mod._identity_public_key_hex(_FakeIdentity(public_key="AABB")) == "aabb"
+    assert _mod._identity_public_key_hex(_FakeIdentity(public_key="  ")) is None
+    assert _mod._identity_public_key_hex(_FakeIdentity(public_key=1234)) is None
+
+
+def test_identity_public_key_hex_swallows_errors():
+    """An identity whose key accessor raises yields None."""
+
+    class _Broken:
+        hash = _IDENTITY_HASH
+
+        def get_public_key(self):
+            raise RuntimeError("locked")
+
+    assert _mod._identity_public_key_hex(_Broken()) is None
+
+
+# ---------------------------------------------------------------------------
+# _announce_interface_name / _interface_allowed
+# ---------------------------------------------------------------------------
+
+
+def test_announce_interface_name_returns_the_path_interface(monkeypatch):
+    """The interface an announce's path arrived on is reported by name."""
+    fake, _state = _fake_rns(interface="RNodeInterface[RNode LoRa]")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._announce_interface_name(_DEST_HASH) == "RNodeInterface[RNode LoRa]"
+
+
+def test_announce_interface_name_none_for_non_bytes_or_unknown(monkeypatch):
+    """A non-bytes hash, or an unknown path, yields None."""
+    fake, _state = _fake_rns(interface=None)
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._announce_interface_name("aabb") is None
+    assert _mod._announce_interface_name(_DEST_HASH) is None
+
+
+def test_announce_interface_name_swallows_errors(monkeypatch):
+    """Transport errors and unstringable interfaces both yield None."""
+    fake, _state = _fake_rns()
+    fake.Transport.next_hop_interface = lambda _dh: (_ for _ in ()).throw(
+        RuntimeError("boom")
+    )
+    monkeypatch.setattr(_mod, "RNS", fake)
+    assert _mod._announce_interface_name(_DEST_HASH) is None
+
+    class _Unstringable:
+        def __str__(self):
+            raise RuntimeError("no name")
+
+    fake.Transport.next_hop_interface = lambda _dh: _Unstringable()
+    assert _mod._announce_interface_name(_DEST_HASH) is None
+
+
+def test_interface_allowed_matches_case_insensitive_substrings(monkeypatch):
+    """Allowlist entries match as lowercased substrings of the interface name."""
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode", "serial"))
+    assert _mod._interface_allowed("RNodeInterface[RNode LoRa]") is True
+    assert _mod._interface_allowed("SerialInterface[radio0]") is True
+    assert _mod._interface_allowed("TCPClientInterface[hub]") is False
+
+
+def test_interface_allowed_rejects_unknown_interface_when_allowlisted(monkeypatch):
+    """An unverifiable interface is not among the named ones, so it is rejected."""
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    assert _mod._interface_allowed(None) is False
+    assert _mod._interface_allowed("") is False
+
+
+# ---------------------------------------------------------------------------
+# Review regressions: shared-instance blackout and identity-derived fallback
+# ---------------------------------------------------------------------------
+
+
+def test_interface_allowlist_fails_open_on_the_shared_instance_socket(monkeypatch):
+    """An allowlist must never black out when it cannot discriminate.
+
+    RNS derives the shared-instance socket from ``instance_name``, not from
+    ``configdir``, so an ingestor with its own config dir still attaches to a
+    running ``rnsd`` as a ``LocalClientInterface``.  Every announce then
+    arrives on one local socket named ``LocalInterface[rns/default]``, and a
+    per-interface allowlist can no longer tell them apart.  Rejecting them all
+    turns the README's own ``RETICULUM_INTERFACES=rnode`` example into a silent
+    total blackout.
+    """
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    # Derived from the real RNS classes, not hardcoded: if RNS renames these the
+    # fail-open would die silently and a literal fixture would still pass.
+    from RNS.Interfaces import LocalInterface
+
+    stub = types.SimpleNamespace(socket_path="\0rns/default")
+    client = LocalInterface.LocalClientInterface.__str__(stub)
+    server = LocalInterface.LocalServerInterface.__str__(stub)
+    assert _mod._interface_allowed(client) is True
+    assert _mod._interface_allowed(server) is True
+    # A real, nameable interface is still filtered normally.
+    assert _mod._interface_allowed("TCPClientInterface[hub]") is False
+    assert _mod._interface_allowed("RNodeInterface[RNode LoRa]") is True
+
+
+def test_fail_open_warns_once_so_the_widening_is_never_silent(monkeypatch):
+    """Fail-open widens what the operator asked for, so it must be audible.
+
+    This is the upgrade path: a deployment whose config dir already exists is
+    never seeded, stays attached to its ``rnsd``, and would otherwise silently
+    ingest every announce on the LAN under an allowlist that reads as honoured.
+    """
+    monkeypatch.setattr(_mod, "_allowlist_ignored_warned", False)
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    warnings = []
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda msg, **kw: (
+            warnings.append(msg) if kw.get("severity") == "warn" else None
+        ),
+    )
+
+    assert _mod._interface_allowed("LocalInterface[rns/default]") is True
+    assert len(warnings) == 1
+    assert "cannot be honoured" in warnings[0]
+    # Once per process — this sits on the per-announce path.
+    _mod._interface_allowed("LocalInterface[rns/default]")
+    assert len(warnings) == 1
+
+
+def test_seeded_config_enables_no_interface_the_allowlist_cannot_match(
+    monkeypatch, tmp_path
+):
+    """Seeding a stock AutoInterface would relocate the blackout, not fix it.
+
+    ``AutoInterface[Default Interface]`` matches no sensible allowlist, so a
+    freshly seeded scoped stack would connect and ingest nothing — the same
+    outcome as the bug this seeding exists to fix.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    warnings = []
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda msg, **kw: (
+            warnings.append(msg) if kw.get("severity") == "warn" else None
+        ),
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+    text = (tmp_path / "config").read_text()
+    # Nothing enabled: every interface line in the template is commented out.
+    enabled = [
+        l for l in text.splitlines() if "enabled" in l and not l.strip().startswith("#")
+    ]
+    assert enabled == []
+    assert not _mod._interface_allowed("AutoInterface[Default Interface]")
+    # Starting with nothing enabled is only acceptable if it is announced.
+    assert any("nothing will be ingested" in w for w in warnings)
+
+
+def test_connect_refuses_to_share_an_external_stack_when_scoped(monkeypatch, tmp_path):
+    """With an allowlist set, the ingestor runs its own stack (SPEC RN4).
+
+    Sharing an external ``rnsd`` makes the allowlist unanswerable, so the
+    seeded config turns sharing off.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    assert "share_instance = No" in (tmp_path / "config").read_text()
+
+
+def test_connect_leaves_sharing_alone_without_an_allowlist(monkeypatch, tmp_path):
+    """No allowlist means no reason to refuse a shared stack."""
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ())
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    config_path = tmp_path / "config"
+    if config_path.exists():
+        assert "share_instance = No" not in config_path.read_text()
+
+
+def test_connect_never_overwrites_an_operator_config(monkeypatch, tmp_path):
+    """A config the operator wrote is theirs; only an absent one is seeded."""
+    fake, _state = _fake_rns()
+    (tmp_path / "config").write_text(
+        "# operator's own\n[reticulum]\n  share_instance = Yes\n"
+    )
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    assert (tmp_path / "config").read_text().startswith("# operator's own")
+
+
+def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
+    """The placeholder must equal what the web upsert builds, byte for byte.
+
+    Ruby composes it from ``protocol_display_label`` plus the **upper-cased**
+    canonical short id and compares with ``==``.  A digits-only id like
+    ``!beef0001`` matches either way, so a fixture built from one hides a case
+    mismatch that breaks ~85% of the id space — which is exactly how the first
+    attempt at this fix passed its own test while still clobbering names.
+    """
+    for node_id, expected in (
+        ("!beef0001", "Reticulum 0001"),  # digits only - matches even lower-cased
+        ("!c0ffee00", "Reticulum EE00"),
+        ("!beefcafe", "Reticulum CAFE"),
+        ("!deadbeef", "Reticulum BEEF"),
+        ("!0000000a", "Reticulum 000A"),
+    ):
+        identity = _FakeIdentity(bytes.fromhex(node_id[1:] + "11" * 12))
+        node = _announce_to_node_dict(_DEST_HASH, None, identity=identity, last_heard=1)
+        assert node["user"]["longName"] == expected, node_id
+
+
+def test_fallback_name_is_identity_derived_and_generic():
+    """A nameless announce must not clobber a stored display name.
+
+    The row is keyed on the identity (SPEC RN1), so a per-aspect destination
+    hash prefix names the wrong thing — and a bare 8-hex string is not the
+    ``"<Label> <short_id>"`` shape the web upsert recognises as a placeholder,
+    so it overwrites a real name instead of yielding to it.
+    """
+    node = _announce_to_node_dict(
+        _DEST_HASH, None, identity=_FakeIdentity(), last_heard=1
+    )
+    # !beef0001 -> canonical short_id "0001" (last four hex), label "Reticulum".
+    assert node["user"]["longName"] == "Reticulum 0001"
+
+
+# ---------------------------------------------------------------------------
 # _announce_to_node_dict
 # ---------------------------------------------------------------------------
 
 
 def test_announce_to_node_dict_basic_fields():
     """The node dict carries lastHeard, protocol, and the derived user block."""
-    node = _announce_to_node_dict(_DEST_HASH, b"Alice", hops=2, last_heard=1700000000)
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"Alice", identity=_FakeIdentity(), hops=2, last_heard=1700000000
+    )
     assert node["lastHeard"] == 1700000000
     assert node["protocol"] == "reticulum"
     assert node["hopsAway"] == 2
+    assert node["destHash"] == [_DEST_HASH.hex()]
     assert node["user"]["longName"] == "Alice"
-    assert node["user"]["shortName"] == "aabb"
-    assert node["user"]["publicKey"] == _DEST_HASH.hex()
+    # The short name follows the identity-derived node id, not the destination.
+    assert node["user"]["shortName"] == "beef"
+    # publicKey is the identity's real key, never a destination hash (#888).
+    assert node["user"]["publicKey"] == _PUBLIC_KEY.hex()
+    assert node["user"]["publicKey"] != _DEST_HASH.hex()
 
 
-def test_announce_to_node_dict_long_name_falls_back_to_hash_prefix():
-    """Undecodable app_data falls back to the 8-hex hash prefix."""
-    node = _announce_to_node_dict(_DEST_HASH, b"\xff\xfe", last_heard=1)
-    assert node["user"]["longName"] == "aabbccdd"
+def test_announce_to_node_dict_merges_every_aspect_onto_one_row():
+    """Both destination aspects of one identity share a node id and destHash list."""
+    other = bytes.fromhex("11223344" + "00" * 12)
+    node = _announce_to_node_dict(
+        _DEST_HASH,
+        b"Alice",
+        identity=_FakeIdentity(),
+        dest_hashes=[_DEST_HASH.hex(), other.hex()],
+        last_heard=1,
+    )
+    assert node["destHash"] == sorted([_DEST_HASH.hex(), other.hex()])
+
+
+def test_announce_to_node_dict_dest_hash_list_is_sorted_and_deduped():
+    """Repeated destination hashes collapse and the list is stably ordered."""
+    node = _announce_to_node_dict(
+        _DEST_HASH,
+        None,
+        identity=_FakeIdentity(),
+        dest_hashes=["ff" * 16, _DEST_HASH.hex(), _DEST_HASH.hex(), None, ""],
+        last_heard=1,
+    )
+    assert node["destHash"] == sorted([_DEST_HASH.hex(), "ff" * 16])
+
+
+def test_announce_to_node_dict_public_key_none_when_unreadable():
+    """An identity whose key cannot be read still yields a node row."""
+
+    class _Broken(_FakeIdentity):
+        def get_public_key(self):
+            raise RuntimeError("no key")
+
+    node = _announce_to_node_dict(_DEST_HASH, b"A", identity=_Broken(), last_heard=1)
+    assert node["user"]["publicKey"] is None
+
+
+def test_announce_to_node_dict_long_name_falls_back_to_the_node_placeholder():
+    """Undecodable app_data falls back to a placeholder naming the *node*.
+
+    Not the destination: the row is keyed on the identity (SPEC RN1), and the
+    web upsert only yields to the "<Label> <short id>" form it recognises.
+    """
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
+    )
+    assert node["user"]["longName"] == "Reticulum 0001"
+
+
+def test_announce_to_node_dict_long_name_is_the_same_without_a_dest_hash():
+    """The placeholder does not depend on any destination hash at all."""
+    node = _announce_to_node_dict(
+        None, None, identity=_FakeIdentity(), dest_hashes=[], last_heard=1
+    )
+    assert node["user"]["longName"] == "Reticulum 0001"
+    assert node["destHash"] == []
 
 
 def test_announce_to_node_dict_omits_hops_when_unknown():
     """hopsAway is absent (not None) when the hop count is unknown."""
-    node = _announce_to_node_dict(_DEST_HASH, b"Alice", hops=None, last_heard=1)
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"Alice", identity=_FakeIdentity(), hops=None, last_heard=1
+    )
     assert "hopsAway" not in node
 
 
 def test_announce_to_node_dict_defaults_last_heard_to_now():
     """Without an explicit receipt time, lastHeard is the wall clock."""
     before = int(time.time())
-    node = _announce_to_node_dict(_DEST_HASH, b"Alice")
+    node = _announce_to_node_dict(_DEST_HASH, b"Alice", identity=_FakeIdentity())
     after = int(time.time())
     assert before <= node["lastHeard"] <= after
 
 
-def test_announce_to_node_dict_none_for_invalid_hash():
-    """An unmappable destination hash yields None instead of a node dict."""
-    assert _announce_to_node_dict(b"\xaa", b"Alice") is None
-    assert _announce_to_node_dict(None, b"Alice") is None
+def test_announce_to_node_dict_none_without_identity():
+    """An announce with no resolvable identity yields None, not a node dict."""
+    assert _announce_to_node_dict(_DEST_HASH, b"Alice") is None
+    assert _announce_to_node_dict(_DEST_HASH, b"Alice", identity=object()) is None
+    assert (
+        _announce_to_node_dict(_DEST_HASH, b"Alice", identity=_FakeIdentity(b"\xaa"))
+        is None
+    )
 
 
 def test_announce_to_node_dict_id_matches_node_id_helper():
     """The snapshot key derivation and the payload stay consistent."""
-    node = _announce_to_node_dict(_DEST_HASH, None, last_heard=1)
-    node_id = _reticulum_node_id(_DEST_HASH)
-    assert node["user"]["publicKey"].startswith(node_id.lstrip("!"))
+    node = _announce_to_node_dict(
+        _DEST_HASH, None, identity=_FakeIdentity(), last_heard=1
+    )
+    assert node["user"]["shortName"] == _reticulum_node_id(_IDENTITY_HASH)[1:5]
 
 
 # ---------------------------------------------------------------------------
@@ -292,17 +692,123 @@ def test_received_announce_upserts_node(monkeypatch):
     iface = _ReticulumInterface(target=None)
     handler = _ReticulumAnnounceHandler("lxmf.delivery", iface)
     handler.received_announce(
-        destination_hash=_DEST_HASH, announced_identity=object(), app_data=b"Alice"
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"Alice",
     )
 
     assert seen["count"] == 1
     assert len(upserts) == 1
     node_id, node = upserts[0]
-    assert node_id == "!aabbccdd"
+    assert node_id == "!beef0001"
     assert node["protocol"] == "reticulum"
     assert node["user"]["longName"] == "Alice"
+    assert node["destHash"] == [_DEST_HASH.hex()]
     assert node["hopsAway"] == 1
     assert iface.nodes_snapshot() == [(node_id, node)]
+
+
+def test_received_announce_merges_both_aspects_into_one_node(monkeypatch):
+    """Both aspects of one identity upsert a single node row (#888)."""
+    fake, _state = _fake_rns(hops=1)
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append((nid, node))
+    )
+    monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
+
+    identity = _FakeIdentity()
+    nomad_hash = bytes.fromhex("11223344" + "00" * 12)
+    iface = _ReticulumInterface(target=None)
+    _ReticulumAnnounceHandler("lxmf.delivery", iface).received_announce(
+        destination_hash=_DEST_HASH, announced_identity=identity, app_data=b"Alice"
+    )
+    _ReticulumAnnounceHandler("nomadnetwork.node", iface).received_announce(
+        destination_hash=nomad_hash, announced_identity=identity, app_data=b"Alice"
+    )
+
+    assert [nid for nid, _ in upserts] == ["!beef0001", "!beef0001"]
+    # The second announce carries both destination hashes, not just its own.
+    assert upserts[-1][1]["destHash"] == sorted([_DEST_HASH.hex(), nomad_hash.hex()])
+    assert len(iface.nodes_snapshot()) == 1
+
+
+def test_received_announce_recalls_identity_when_callback_omits_it(monkeypatch):
+    """A handler invoked without an identity falls back to RNS.Identity.recall."""
+    fake, _state = _fake_rns(hops=1, recalled=_FakeIdentity())
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append((nid, node))
+    )
+    monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
+
+    handler = _ReticulumAnnounceHandler(
+        "lxmf.delivery", _ReticulumInterface(target=None)
+    )
+    handler.received_announce(
+        destination_hash=_DEST_HASH, announced_identity=None, app_data=b"Alice"
+    )
+    assert [nid for nid, _ in upserts] == ["!beef0001"]
+
+
+def test_received_announce_skips_non_allowlisted_interface(monkeypatch):
+    """With an allowlist set, an off-list interface is not ingested (#888)."""
+    fake, _state = _fake_rns(interface="AutoInterface[Default Interface]")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    seen = {"count": 0}
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append((nid, node))
+    )
+    monkeypatch.setattr(
+        _mod.handlers,
+        "_mark_packet_seen",
+        lambda: seen.__setitem__("count", seen["count"] + 1),
+    )
+
+    iface = _ReticulumInterface(target=None)
+    _ReticulumAnnounceHandler("lxmf.delivery", iface).received_announce(
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"Alice",
+    )
+
+    assert upserts == []
+    assert iface.nodes_snapshot() == []
+    # A filtered-out announce is not this mesh's traffic, so it is not counted.
+    assert seen["count"] == 0
+
+
+def test_received_announce_ingests_allowlisted_interface(monkeypatch):
+    """An interface matching the allowlist is ingested normally."""
+    fake, _state = _fake_rns(interface="RNodeInterface[RNode LoRa]")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    upserts: list = []
+    monkeypatch.setattr(
+        _mod.handlers, "upsert_node", lambda nid, node: upserts.append((nid, node))
+    )
+    monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
+
+    _ReticulumAnnounceHandler(
+        "lxmf.delivery", _ReticulumInterface(target=None)
+    ).received_announce(
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"Alice",
+    )
+    assert [nid for nid, _ in upserts] == ["!beef0001"]
 
 
 def test_received_announce_counts_frame_even_when_unmappable(monkeypatch):
@@ -347,9 +853,9 @@ def test_received_announce_swallows_handler_errors(monkeypatch):
 
     iface = _ReticulumInterface(target=None)
     handler = _ReticulumAnnounceHandler("lxmf.delivery", iface)
-    # Must not raise.
+    # Must not raise: the identity resolves, so the failing upsert is reached.
     handler.received_announce(
-        destination_hash=_DEST_HASH, announced_identity=None, app_data=b"X"
+        destination_hash=_DEST_HASH, announced_identity=_FakeIdentity(), app_data=b"X"
     )
 
 
@@ -364,10 +870,14 @@ def test_received_announce_latest_announce_wins_in_snapshot(monkeypatch):
     iface = _ReticulumInterface(target=None)
     handler = _ReticulumAnnounceHandler("lxmf.delivery", iface)
     handler.received_announce(
-        destination_hash=_DEST_HASH, announced_identity=None, app_data=b"Old"
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"Old",
     )
     handler.received_announce(
-        destination_hash=_DEST_HASH, announced_identity=None, app_data=b"New"
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"New",
     )
 
     snapshot = iface.nodes_snapshot()
@@ -401,21 +911,25 @@ def test_connect_reuses_running_instance(monkeypatch):
     existing = object()
     fake, state = _fake_rns(existing_instance=existing)
     monkeypatch.setattr(_mod, "RNS", fake)
-    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
+    monkeypatch.setattr(
+        _mod.config, "RETICULUM_CONFIG_DIR", "/cfg/potato-mesh/reticulum"
+    )
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     iface, resolved, _ = ReticulumProvider().connect(active_candidate=None)
 
     assert state["created"] == []
     assert iface._rns is existing
-    assert resolved == "reticulum://~/.reticulum"
+    assert resolved == "reticulum:///cfg/potato-mesh/reticulum"
 
 
 def test_connect_registers_announce_handlers_per_aspect(monkeypatch):
     """One announce handler per aspect is registered with RNS.Transport."""
     fake, state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)
-    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
+    monkeypatch.setattr(
+        _mod.config, "RETICULUM_CONFIG_DIR", "/cfg/potato-mesh/reticulum"
+    )
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     iface, _, _ = ReticulumProvider().connect(active_candidate=None)
@@ -488,7 +1002,9 @@ def test_close_deregisters_announce_handlers(monkeypatch):
     """close() deregisters every announce handler and marks disconnected."""
     fake, state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)
-    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
+    monkeypatch.setattr(
+        _mod.config, "RETICULUM_CONFIG_DIR", "/cfg/potato-mesh/reticulum"
+    )
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     iface, _, _ = ReticulumProvider().connect(active_candidate=None)
@@ -533,19 +1049,40 @@ def test_node_snapshot_items_returns_heard_announces(monkeypatch):
     iface = _ReticulumInterface(target=None)
     handler = _ReticulumAnnounceHandler("lxmf.delivery", iface)
     other_hash = bytes.fromhex("11223344" + "00" * 12)
+    other_identity = _FakeIdentity(bytes.fromhex("c0ffee00" + "22" * 12))
     handler.received_announce(
-        destination_hash=_DEST_HASH, announced_identity=None, app_data=b"Alice"
+        destination_hash=_DEST_HASH,
+        announced_identity=_FakeIdentity(),
+        app_data=b"Alice",
     )
     handler.received_announce(
-        destination_hash=other_hash, announced_identity=None, app_data=None
+        destination_hash=other_hash, announced_identity=other_identity, app_data=None
     )
 
     items = ReticulumProvider().node_snapshot_items(iface)
     as_dict = dict(items)
-    assert set(as_dict) == {"!aabbccdd", "!11223344"}
-    assert as_dict["!aabbccdd"]["user"]["longName"] == "Alice"
-    # Name-less announce falls back to the hash prefix.
-    assert as_dict["!11223344"]["user"]["longName"] == "11223344"
+    assert set(as_dict) == {"!beef0001", "!c0ffee00"}
+    assert as_dict["!beef0001"]["user"]["longName"] == "Alice"
+    # Name-less announce falls back to a placeholder built from its own node
+    # id, so it can never carry another destination's hex.
+    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum EE00"
+
+
+def test_update_node_ignores_a_falsy_node_id():
+    """A falsy node id is never recorded in the snapshot."""
+    iface = _ReticulumInterface(target=None)
+    iface._update_node(None, {"protocol": "reticulum"})
+    iface._update_node("", {"protocol": "reticulum"})
+    assert iface.nodes_snapshot() == []
+
+
+def test_record_dest_hash_ignores_falsy_hashes():
+    """A missing destination hash records the node without polluting the set."""
+    iface = _ReticulumInterface(target=None)
+    assert iface._record_dest_hash("!beef0001", None) == []
+    assert iface._record_dest_hash("!beef0001", "aabb") == ["aabb"]
+    # Re-recording the same hash is idempotent.
+    assert iface._record_dest_hash("!beef0001", "aabb") == ["aabb"]
 
 
 def test_node_snapshot_items_empty_before_any_announce():
@@ -590,3 +1127,145 @@ def test_daemon_main_selects_reticulum_provider(monkeypatch):
     monkeypatch.setattr(ReticulumProvider, "subscribe", _tracking_subscribe)
     daemon.main()
     assert subscribed == ["ReticulumProvider"]
+
+
+# ---------------------------------------------------------------------------
+# Contract guards against the real RNS library (#888)
+#
+# The tests above exercise the provider through a fake RNS namespace.  These
+# pin the *mapping itself* to the library's real Identity/Destination maths,
+# so a change in how RNS derives destination hashes cannot silently reinstate
+# the split-row bug these guards were written for.
+# ---------------------------------------------------------------------------
+
+
+def _identity_pair():
+    """Return (identity, lxmf_dest_hash, nomad_dest_hash) from real RNS."""
+    import RNS
+
+    idn = RNS.Identity()
+    return (
+        idn,
+        RNS.Destination.hash(idn, "lxmf", "delivery"),
+        RNS.Destination.hash(idn, "nomadnetwork", "node"),
+    )
+
+
+def test_aspects_merge_onto_one_identity_row(monkeypatch):
+    """RT-A1: both aspects of one identity collapse onto a single node row."""
+    idn, lxmf, nomad = _identity_pair()
+    a = _mod._announce_to_node_dict(lxmf, b"Kelly", identity=idn)
+    b = _mod._announce_to_node_dict(nomad, b"Kelly", identity=idn)
+    expected = "!" + idn.hash.hex()[:8]
+    assert _mod._reticulum_node_id(idn.hash) == expected
+    # Same identity, different destinations -> one row, and the payloads agree.
+    assert a["user"]["shortName"] == b["user"]["shortName"] == expected[1:5]
+    assert a["user"]["publicKey"] == b["user"]["publicKey"]
+
+
+def test_public_key_is_the_identity_public_key():
+    """RT-A2: user.publicKey carries the identity key, not a destination hash."""
+    idn, lxmf, _ = _identity_pair()
+    node = _mod._announce_to_node_dict(lxmf, b"Kelly", identity=idn)
+    assert node["user"]["publicKey"] == idn.get_public_key().hex()
+
+
+def test_dest_hash_is_a_list_of_destination_hashes():
+    """RT-A3: destination hashes ride their own field as a list."""
+    idn, lxmf, nomad = _identity_pair()
+    node = _mod._announce_to_node_dict(
+        lxmf, b"Kelly", identity=idn, dest_hashes=[lxmf.hex(), nomad.hex()]
+    )
+    assert node["destHash"] == sorted([lxmf.hex(), nomad.hex()])
+
+
+def test_config_dir_never_defaults_to_the_operator_reticulum(monkeypatch):
+    """RT-A4: an unset RETICULUM_CONFIG_DIR never resolves to ~/.reticulum."""
+    monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("HOME", "/home/operator")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    reloaded = importlib.reload(config)
+    try:
+        assert reloaded.RETICULUM_CONFIG_DIR is not None
+        assert not str(reloaded.RETICULUM_CONFIG_DIR).endswith("/.reticulum")
+        assert "potato-mesh" in str(reloaded.RETICULUM_CONFIG_DIR)
+    finally:
+        importlib.reload(config)
+
+
+def test_interface_allowlist_filters_announces(monkeypatch):
+    """RT-A5: with an allowlist set, off-list interfaces are not ingested."""
+    monkeypatch.setattr(config, "RETICULUM_INTERFACES", ("rnode",), raising=False)
+    assert _mod._interface_allowed("AutoInterface[Default Interface]") is False
+    assert _mod._interface_allowed("RNodeInterface[RNode LoRa]") is True
+
+
+def test_interface_allowlist_empty_ingests_all(monkeypatch):
+    """RT-A5: an empty allowlist (the default) ingests every interface."""
+    monkeypatch.setattr(config, "RETICULUM_INTERFACES", (), raising=False)
+    assert _mod._interface_allowed("AutoInterface[Default Interface]") is True
+    assert _mod._interface_allowed(None) is True
+
+
+# ---------------------------------------------------------------------------
+# Packaging surface (SPEC RN3 / MA10)
+# ---------------------------------------------------------------------------
+
+
+class TestReticulumDeploymentSurface:
+    """A knob nobody can set is a knob that does not exist.
+
+    Mirrors ``test_tx_policy_unit.TestDeploymentSurface``: every packaged path
+    must be able to deliver these variables.  The ``${VAR:-""}`` literal-text
+    trap that made a Compose default mean "one entry matching nothing" is
+    guarded for the whole file by
+    ``test_config_unit.TestComposeDefaults``, so it is not repeated per
+    variable here.
+    """
+
+    _COMPOSE = REPO_ROOT / "docker-compose.yml"
+
+    @pytest.mark.parametrize(
+        "name", ["RETICULUM_CONFIG_DIR", "RETICULUM_INTERFACES", "INGESTOR_NODE_ID"]
+    )
+    def test_compose_passes_the_variable_through(self, name):
+        """The base compose file maps the variable from the host env."""
+        text = self._COMPOSE.read_text(encoding="utf-8")
+        assert re.search(
+            rf"^\s*{name}:\s*\$\{{{name}", text, re.MULTILINE
+        ), f"docker-compose.yml does not pass {name} through to the ingestor"
+
+    def test_quote_only_allowlist_cannot_blackout_ingestion(self):
+        """Defence in depth for the above: a quoted empty value means no allowlist."""
+        assert config._parse_reticulum_interfaces('""') == ()
+
+    def test_image_declares_the_reticulum_defaults(self):
+        """Both image stages declare the variables, so the knob exists there too."""
+        text = (REPO_ROOT / "data" / "Dockerfile").read_text(encoding="utf-8")
+        for name in ("RETICULUM_CONFIG_DIR", "RETICULUM_INTERFACES"):
+            assert (
+                text.count(f"{name}=") == 2
+            ), f"{name} missing from a Dockerfile stage"
+
+    def test_reticulum_config_dir_is_not_the_shared_config_volume_root(self):
+        """The RNS config gets its own volume, not the web-initialised shared one.
+
+        ``potatomesh_config`` is seeded by the web image, whose user is pinned to
+        uid 1000; this image's user is not, so RNS could not create a directory
+        in that volume's root.
+        """
+        text = self._COMPOSE.read_text(encoding="utf-8")
+        assert "potatomesh_reticulum:/app/.config/potato-mesh/reticulum" in text
+        assert re.search(r"^\s{2}potatomesh_reticulum:", text, re.MULTILINE)
+
+    def test_env_example_documents_the_variables(self):
+        """The copy-this-to-.env template mentions each variable."""
+        text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+        for name in (
+            "RETICULUM_CONFIG_DIR",
+            "RETICULUM_INTERFACES",
+            "INGESTOR_NODE_ID",
+        ):
+            assert re.search(
+                rf"^#\s*{name}=", text, re.MULTILINE
+            ), f"{name} is not documented in .env.example"

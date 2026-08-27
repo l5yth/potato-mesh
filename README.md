@@ -12,8 +12,9 @@
 
 [![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
 [![MeshCore](https://img.shields.io/badge/MeshCore-supported-1f2937)](https://meshcore.io)
+[![Reticulum](https://img.shields.io/badge/Reticulum-supported-1f2937)](https://reticulum.network)
 
-A federated, Meshtastic & Meshcore node dashboard for your local community.
+A federated, Meshtastic, MeshCore & Reticulum node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
 
 * Web dashboard with chat window and map view showing nodes, positions, neighbors,
@@ -23,10 +24,10 @@ _No MQTT clutter, just local LoRa aether._
   * Allows searching and filtering for nodes in map and table view.
   * Federated: _automatically_ froms a federation with other communities running
     Potato Mesh!
-  * Supports Meshtastic and Meshcore
+  * Supports Meshtastic, MeshCore, and Reticulum
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
   * Supports multiple ingestors per instance.
-  * Supports Meshtastic and Meshcore
+  * Supports Meshtastic, MeshCore, and Reticulum
 * Matrix bridge that posts Meshtastic messages to a defined matrix channel (no
   radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
@@ -113,7 +114,9 @@ The web app can be configured with environment variables (defaults shown):
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast` — the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key — only the per-channel hash of *(name, key)* distinguishes them. |
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat in UDP transport (which cannot auto-detect "self"). |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat on the transports that cannot auto-detect "self": UDP transport and `PROTOCOL=reticulum`. Without it the heartbeat never registers and that protocol's packets/hour stats stay at zero. |
+| `RETICULUM_CONFIG_DIR` | `~/.config/potato-mesh/reticulum` | RNS config directory for `PROTOCOL=reticulum`. App-owned by default (honours `XDG_CONFIG_HOME`) — the ingestor never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. |
+| `RETICULUM_INTERFACES` | _unset_ | Comma-separated, case-insensitive **substring** allowlist of RNS interface names (e.g. `rnode`) to ingest announces from. Empty ingests every interface. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | **Requires `TX_ENABLED=1`** (polling other nodes is a transmission). Seconds between MeshCore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h — when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between MeshCore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
 | `TX_ENABLED` | `0` | Master switch for **everything the ingestor puts on the air**. Off by default — the ingestor is a listener. Set to `1` to allow transmitting; this is what enables MeshCore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
@@ -370,6 +373,86 @@ not already set, preserves all other auto-add settings, persists on the
 device, and never evicts favourites. Older firmware without the command is
 left untouched. Evicted contacts remain in the dashboard's database — only
 the radio's local roster rotates.
+
+### Reticulum
+
+Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. This is a
+**passive announce listener**: it registers announce handlers for the
+`lxmf.delivery` and `nomadnetwork.node` destination aspects and files every
+announce it hears as a node. It never transmits and sends no message or poll — so it works with `TX_ENABLED=0` (the default).
+
+Announces carry no SNR, battery, or position, so those columns render as dashes
+and Reticulum nodes stay off the map. One peer is one node row: the canonical
+`!xxxxxxxx` id derives from the peer's **identity hash**, so a peer announcing on
+several destination aspects merges into a single row rather than appearing once
+per aspect.
+
+**Set `INGESTOR_NODE_ID`.** Reticulum has no handshake revealing "our" node id.
+Without it the ingestor heartbeat never registers and the Reticulum
+packets/hour figure stays at zero even while announces are being ingested. The
+ingestor warns about this at startup.
+
+**Two things worth configuring:**
+
+`RETICULUM_CONFIG_DIR` defaults to an app-owned directory
+(`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`)
+rather than RNS's user default `~/.reticulum`. Installing a dashboard ingestor
+should not silently adopt the transport-node configuration you run for yourself
+— including whatever `enable_transport` and interfaces it defines. Point the
+variable at your own directory if sharing a stack is what you want.
+
+**What the config dir starts with**, and it differs by whether you scoped it.
+
+*Without* `RETICULUM_INTERFACES`, RNS writes its own stock config, whose only
+interface is a link-local IPv6 `AutoInterface`. That hears the Reticulum peers on
+your LAN — the "ingests everything" default above — and the packaged `ingestor`
+service runs `network_mode: host`, so it behaves the same in Docker as on bare
+metal. (The opt-in `ingestor-bridge` profile is not on the host network and hears
+nothing there.)
+
+*With* `RETICULUM_INTERFACES` set, the ingestor seeds the file itself, with
+`share_instance = No` and **no interface enabled**. Both parts are deliberate.
+Sharing is off because an allowlist can only be honoured on its own RNS stack:
+attached to a shared `rnsd`, every announce arrives over a single
+`LocalInterface` and the allowlist cannot tell them apart. And no interface is
+enabled because a stock `AutoInterface` is named `AutoInterface[Default
+Interface]`, which matches no sensible allowlist — the listener would connect and
+ingest nothing. **So a freshly scoped ingestor hears nothing until you add the
+interfaces you named**; it warns about exactly that at startup, and the seeded
+file carries a commented `RNodeInterface` example to copy.
+
+Two consequences worth stating plainly. **A scoped ingestor does not inherit your
+`rnsd`'s interfaces**, so any radio you want it to hear has to be configured in
+its own file. And **an `AutoInterface` never reaches a LoRa radio** in any network
+mode — that always needs an `RNodeInterface` pointing at the device, or a
+`TCPClientInterface` pointing at a hub.
+
+Edit the `config` file on the `potatomesh_reticulum` volume (Linux images;
+`--no-deps` stops it starting the web stack too):
+
+```bash
+docker compose run --rm --no-deps --entrypoint sh ingestor \
+  -c 'vi /app/.config/potato-mesh/reticulum/config'
+```
+
+An existing config is never overwritten, so if you would rather share the stack,
+write the file yourself and the ingestor leaves it alone. The allowlist then
+cannot be honoured, so it admits every announce rather than none — and warns once
+that it is doing so.
+
+`RETICULUM_INTERFACES` bounds what gets ingested. An RNS stack can carry LoRa
+and IP interfaces at once, and RNS's stock config enables an `AutoInterface`
+(IPv6 link-local multicast) — so an unscoped listener files **every announce on
+your LAN**, not just your LoRa peers. Setting e.g. `RETICULUM_INTERFACES=rnode`
+restricts ingestion to announces whose path arrived on a matching interface.
+Leaving it empty ingests everything, which is the default. Reticulum exposes no
+"this peer is on LoRa" marker, so the interface a path arrived on is the only
+signal available.
+
+Note that the RNS stack itself is not silent at the interface layer even though
+the ingestor is: an `AutoInterface` multicasts peer discovery, and a config with
+`enable_transport` set relays other nodes' traffic. That is Reticulum's own
+behaviour, governed by the config directory above.
 
 ### Passive UDP transport
 

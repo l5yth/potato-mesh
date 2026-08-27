@@ -165,6 +165,19 @@ module PotatoMesh
           # snapshot while a retired identity stays permanently stale.
           unless node_columns.include?("last_advert_heard")
             db.execute("ALTER TABLE nodes ADD COLUMN last_advert_heard INTEGER")
+            node_columns << "last_advert_heard"
+          end
+
+          # Destination-hash back-reference (SPEC RN1): JSON array of the
+          # protocol-native destination hashes resolving to this node's
+          # identity.  Reticulum peers announce one destination per aspect, all
+          # derived from the single identity that keys the row.  NULL for
+          # protocols with no such indirection.  Added last so a database
+          # migrated from any prior version ends up with the same column order
+          # as a fresh one built from +data/nodes.sql+.
+          unless node_columns.include?("dest_hash")
+            db.execute("ALTER TABLE nodes ADD COLUMN dest_hash TEXT")
+            node_columns << "dest_hash"
           end
 
           if node_columns.include?("long_name")

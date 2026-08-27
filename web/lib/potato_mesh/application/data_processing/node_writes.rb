@@ -14,6 +14,8 @@
 
 # frozen_string_literal: true
 
+require "json"
+
 module PotatoMesh
   module App
     module DataProcessing
@@ -236,6 +238,32 @@ module PotatoMesh
         true
       end
 
+      # Normalise an inbound +destHash+ payload value into a stored JSON array.
+      #
+      # Only the *incoming* value is handled here; merging it with what is
+      # already stored happens in SQL, inside the upsert's conflict clause, so
+      # the union is atomic. Doing it in Ruby would mean a read-modify-write
+      # spanning two statements, and two ingestors upserting the same node
+      # concurrently could then lose one side's hashes — exactly the guarantee
+      # this column exists to provide (SPEC RN1).
+      #
+      # Values are lowercased, de-duplicated, and sorted so the stored JSON is
+      # stable; an unstable array would make every upsert look like a change to
+      # downstream diffing.
+      #
+      # @param incoming [Object] +destHash+ from the payload: an array, a bare
+      #   string, or nil.
+      # @return [String, nil] JSON array to merge, or nil when the record names
+      #   no hashes (the conflict clause then preserves what is stored).
+      def normalize_dest_hashes(incoming)
+        values = incoming.is_a?(Array) ? incoming : [incoming]
+        normalized = values
+          .filter_map { |value| string_or_nil(value)&.downcase }
+          .uniq
+          .sort
+        normalized.empty? ? nil : JSON.generate(normalized)
+      end
+
       # Insert or update a node row from an inbound NodeInfo-style payload.
       #
       # Two-phase write. Phase one is the freshness-guarded upsert: a record
@@ -362,6 +390,8 @@ module PotatoMesh
             "COALESCE(excluded.long_name, nodes.long_name)"
           end
 
+        dest_hashes = normalize_dest_hashes(pick_alias(n, "destHash", "dest_hash"))
+
         row = [
           node_id,
           node_num,
@@ -397,14 +427,15 @@ module PotatoMesh
           modem_preset,
           protocol,
           synthetic,
+          dest_hashes,
         ]
         with_busy_retry do
           db.transaction do
             db.execute(<<~SQL, row)
               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                 hops_away,snr,rssi,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic,dest_hash)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(node_id) DO UPDATE SET
                 num=COALESCE(excluded.num, nodes.num),
                 short_name=COALESCE(excluded.short_name, nodes.short_name),
@@ -458,6 +489,37 @@ module PotatoMesh
                   public_key=COALESCE(public_key, ?),
                   is_unmessagable=COALESCE(is_unmessagable, ?)
                 WHERE node_id = ?
+              SQL
+            end
+
+            # Destination-hash union (SPEC RN1).  Deliberately a separate,
+            # unguarded statement rather than a column in the upsert above, for
+            # the same reason as the keyed-evidence stamp below: that
+            # statement's freshness guard skips any record older than the
+            # stored +last_heard+, so a second ingestor posting an older
+            # announce that carries a hash the first never heard would have its
+            # whole update — and therefore that hash — dropped. The union is
+            # what makes the column correct across ingestors, so it must not
+            # depend on which of them happened to hear the newest announce.
+            # Guarded columns are untouched here, so a stale record still
+            # cannot regress +last_heard+.
+            # Synthetic chat placeholders never touch a real row's data — the
+            # upsert's own guard says so, and this statement sits outside it,
+            # so it repeats the condition rather than inheriting it.
+            if dest_hashes && synthetic.zero?
+              db.execute(<<~SQL, [dest_hashes, node_id])
+                UPDATE nodes SET dest_hash = CASE
+                  WHEN dest_hash IS NULL THEN ?1
+                  WHEN NOT json_valid(dest_hash) THEN ?1
+                  WHEN json_type(dest_hash) <> 'array' THEN ?1
+                  ELSE (SELECT json_group_array(v) FROM (
+                          SELECT DISTINCT value AS v FROM (
+                            SELECT value FROM json_each(dest_hash)
+                            UNION ALL
+                            SELECT value FROM json_each(?1))
+                          ORDER BY v))
+                END
+                WHERE node_id = ?2
               SQL
             end
 

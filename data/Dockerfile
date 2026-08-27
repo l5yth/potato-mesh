@@ -61,6 +61,10 @@ COPY data /app/data
 RUN addgroup -S potatomesh && \
     adduser -S potatomesh -G potatomesh && \
     adduser potatomesh dialout && \
+    # Pre-create the Reticulum config dir *before* the chown: a fresh named
+    # volume mounted here is seeded from the image, inheriting this ownership.
+    # Without it RNS would have to mkdir into a volume root it may not own.
+    mkdir -p /app/.config/potato-mesh/reticulum && \
     chown -R potatomesh:potatomesh /app
 
 USER potatomesh
@@ -69,6 +73,10 @@ ENV CONNECTION=/dev/ttyACM0 \
     CHANNEL_INDEX=0 \
     DEBUG=0 \
     PROTOCOL=meshtastic \
+    XDG_CONFIG_HOME=/app/.config \
+    RETICULUM_CONFIG_DIR=/app/.config/potato-mesh/reticulum \
+    RETICULUM_INTERFACES="" \
+    INGESTOR_NODE_ID="" \
     TRANSPORT=api \
     PRIMARY_CHANNEL_ONLY=0 \
     PRIMARY_CHANNEL_KEY=AQ== \
@@ -105,6 +113,10 @@ ENV CONNECTION=/dev/ttyACM0 \
     CHANNEL_INDEX=0 \
     DEBUG=0 \
     PROTOCOL=meshtastic \
+    XDG_CONFIG_HOME=/app/.config \
+    RETICULUM_CONFIG_DIR=/app/.config/potato-mesh/reticulum \
+    RETICULUM_INTERFACES="" \
+    INGESTOR_NODE_ID="" \
     TRANSPORT=api \
     PRIMARY_CHANNEL_ONLY=0 \
     PRIMARY_CHANNEL_KEY=AQ== \

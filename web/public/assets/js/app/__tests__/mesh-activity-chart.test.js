@@ -93,3 +93,22 @@ test('renderMeshActivityChart still renders when the whole series is zero', () =
   assert.match(html, /<h4>Mesh activity<\/h4>/);
   assert.match(html, /node-detail__chart-trend/);
 });
+
+test('renderMeshActivityChart draws the Reticulum series (SPEC F2-2)', () => {
+  // `query_activity_buckets` emits a live `reticulum` key in every bucket
+  // (SPEC F2-2 as amended by #888).  A reticulum-only mesh must therefore
+  // scale the axis and draw a line rather than render two flat-zero series.
+  const startSec = Math.floor(NOW / 1000) - 2 * TWO_HOURS;
+  const html = renderMeshActivityChart(
+    [
+      { bucket_start: startSec, bucket_end: startSec + TWO_HOURS, total: 30, meshtastic: 0, meshcore: 0, reticulum: 30 },
+      { bucket_start: startSec + TWO_HOURS, bucket_end: startSec + 2 * TWO_HOURS, total: 42, meshtastic: 0, meshcore: 0, reticulum: 42 },
+    ],
+    NOW
+  );
+  assert.match(html, /Reticulum/);
+  assert.match(html, /#31a354/); // the reticulum line is drawn
+  // The y-axis must scale to the reticulum peak, not stop at the two
+  // flat-zero siblings: assert on the axis tick text, not a bare substring.
+  assert.match(html, /<text[^>]*>42<\/text>/);
+});

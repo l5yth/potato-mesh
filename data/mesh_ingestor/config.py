@@ -67,6 +67,7 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
+
 def _debug_log(
     message: str,
     *,
@@ -166,6 +167,7 @@ def _env_flag(name: str, *, default: bool, on_invalid: bool) -> bool:
     )
     return on_invalid
 
+
 _KNOWN_PROTOCOLS = ("meshtastic", "meshcore", "reticulum")
 
 _raw_protocol = os.environ.get("PROTOCOL", "meshtastic").strip().lower()
@@ -181,12 +183,106 @@ PROTOCOL = _raw_protocol
 Accepted values are ``meshtastic`` (default), ``meshcore``, and ``reticulum``.
 """
 
-RETICULUM_CONFIG_DIR = os.environ.get("RETICULUM_CONFIG_DIR", "").strip() or None
-"""Optional Reticulum config directory for ``PROTOCOL=reticulum``.
 
-Passed as ``configdir`` to :class:`RNS.Reticulum`; ``None`` (the default, and
-the fallback for a blank value) lets RNS use its standard user config at
-``~/.reticulum``."""
+def _resolve_reticulum_config_dir() -> str:
+    """Resolve the Reticulum config directory for ``PROTOCOL=reticulum``.
+
+    The ingestor keeps its **own**, isolated Reticulum configuration rather
+    than inheriting the operator's ``~/.reticulum``.  Adopting that directory
+    would make the dashboard silently take on whatever transport
+    configuration the operator runs there — including ``enable_transport``
+    and every interface they have defined — which is never implied by
+    installing an ingestor (#888).
+
+    Resolution order:
+
+    1. :envvar:`RETICULUM_CONFIG_DIR` when set (``~`` is expanded), so an
+       operator who *does* want to share a stack can say so explicitly.
+    2. ``$XDG_CONFIG_HOME/potato-mesh/reticulum``.
+    3. ``~/.config/potato-mesh/reticulum``.
+
+    Returns:
+        Absolute-ish path string suitable as :class:`RNS.Reticulum`'s
+        ``configdir``.  Never ``None`` and never ``~/.reticulum``.
+    """
+    explicit = os.environ.get("RETICULUM_CONFIG_DIR", "").strip()
+    if explicit:
+        return os.path.expanduser(explicit)
+    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(base, "potato-mesh", "reticulum")
+
+
+RETICULUM_CONFIG_DIR = _resolve_reticulum_config_dir()
+"""Reticulum config directory for ``PROTOCOL=reticulum``.
+
+Passed as ``configdir`` to :class:`RNS.Reticulum`.  Defaults to an app-owned
+directory under the user config root, never the operator's ``~/.reticulum``
+— see :func:`_resolve_reticulum_config_dir`."""
+
+
+def _clean_env_fragment(value: str) -> str:
+    """Trim one comma-separated environment fragment.
+
+    Whitespace is trimmed, and a fragment consisting **entirely** of quote
+    characters resolves to empty.  That narrow rule exists for one delivery
+    accident: a Compose ``${VAR:-""}`` default substitutes as **literal text**,
+    not as shell, so an unset variable arrives as the two-character string
+    ``""``.  Read as content that is one entry, and for a filter it is an entry
+    nothing can match — which silently dropped every message on a stock
+    containerised deployment.  Resolving it to empty means the filter is simply
+    off, which is the documented default.
+
+    Quotes are deliberately **not** stripped from a fragment that has other
+    content.  These fragments are matched against values the ingestor did not
+    author — a Meshtastic channel name is arbitrary UTF-8, so ``Ops'`` and
+    ``'Private'`` are legal *names*, not quoted ones.  Stripping there would
+    make the configured value and the on-air value stop matching: an allowlist
+    would black the channel out, and a hidden-channel entry would fail **open**
+    and publish a channel the operator asked to hide (SPEC Invariant II).
+
+    Parameters:
+        value: One comma-separated fragment, as read from the environment.
+
+    Returns:
+        The trimmed fragment, or ``""`` when it is blank or quote-only.
+    """
+    trimmed = value.strip()
+    # Quote-only (and quote-wrapped-whitespace) fragments carry no name.
+    return "" if not trimmed.strip("\"'").strip() else trimmed
+
+
+def _parse_reticulum_interfaces(raw: str) -> tuple[str, ...]:
+    """Parse the :envvar:`RETICULUM_INTERFACES` allowlist.
+
+    Parameters:
+        raw: Comma-separated interface-name fragments, e.g.
+            ``"RNodeInterface,rnode lora"``.
+
+    Returns:
+        Tuple of lowercased, de-duplicated, non-empty fragments in a stable
+        order.  Empty when the variable is unset, blank, or quote-only (see
+        :func:`_clean_env_fragment`).
+    """
+    fragments = {_clean_env_fragment(part).lower() for part in raw.split(",")}
+    return tuple(sorted(fragments - {""}))
+
+
+RETICULUM_INTERFACES = _parse_reticulum_interfaces(
+    os.environ.get("RETICULUM_INTERFACES", "")
+)
+"""Case-insensitive substring allowlist of RNS interfaces to ingest from.
+
+A Reticulum stack can carry LoRa and IP interfaces at once, and an announce
+listener hears every announce reachable over *any* of them.  On a LAN with an
+``AutoInterface`` that means the whole local Reticulum network lands in the
+dashboard.  Setting :envvar:`RETICULUM_INTERFACES` restricts ingestion to
+announces whose path was received on a matching interface (matched as a
+lowercased substring of the interface's string form, e.g. ``rnode``).
+
+**Empty (the default) ingests every interface**, preserving the behaviour the
+provider shipped with (#888)."""
 
 _raw_transport = os.environ.get("TRANSPORT", "api").strip().lower()
 if _raw_transport not in ("api", "udp"):
@@ -352,9 +448,15 @@ def _parse_lora_freq_env(raw: str | None) -> float | int | None:
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
     """Normalise a comma-separated list of channel names.
 
+    A quote-only fragment disables the filter rather than becoming a one-entry
+    allowlist that no real channel matches — which dropped every message on a
+    stock Compose deployment.  Names that merely *contain* a quote are taken
+    literally, because a channel name is arbitrary UTF-8 and must match the
+    on-air name exactly (see :func:`_clean_env_fragment`).
+
     Parameters:
         raw_value: Raw environment string containing channel names separated by
-            commas. ``None`` and empty segments are ignored.
+            commas. ``None``, empty, and quote-only segments are ignored.
 
     Returns:
         A tuple of unique, non-empty channel names preserving input order while
@@ -367,7 +469,7 @@ def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
     normalized_entries: list[str] = []
     seen: set[str] = set()
     for part in raw_value.split(","):
-        name = part.strip()
+        name = _clean_env_fragment(part)
         if not name:
             continue
         key = name.casefold()
@@ -532,6 +634,7 @@ __all__ = [
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
     "RETICULUM_CONFIG_DIR",
+    "RETICULUM_INTERFACES",
     "TX_ENABLED",
     "TX_ANNOUNCE",
     "RX_ONLY",
