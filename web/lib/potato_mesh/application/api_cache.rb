@@ -83,7 +83,7 @@ module PotatoMesh
           end
 
           value = yield
-          etag = Digest::MD5.hexdigest(value)
+          etag = Digest::SHA256.hexdigest(value)
 
           @mutex.synchronize do
             evict_oldest_if_full
