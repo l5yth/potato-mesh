@@ -57,7 +57,7 @@ test('buildMeshActivityModel sums visible protocols and sizes bars to the busies
   const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), null);
   assert.equal(model.visible, true);
   assert.equal(model.total, 120);
-  assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic', 'MeshCore']);
+  assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic', 'Meshcore']);
   assert.equal(model.rows[0].barPct, 100);
   assert.equal(model.rows[1].barPct, Math.round((44 / 76) * 100));
   assert.equal(model.spark, null); // no series supplied

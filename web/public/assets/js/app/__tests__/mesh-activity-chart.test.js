@@ -66,8 +66,8 @@ test('renderMeshActivityChart draws a per-protocol figure with the Activity axis
   assert.match(html, /<h4>Mesh activity<\/h4>/);
   assert.match(html, /Activity \(pkt\/h\)/); // y-axis label (per the note)
   assert.match(html, /Meshtastic/);
-  assert.match(html, /MeshCore/);
-  // Each line is its protocol's own tile colour (SPEC RD3); MeshCore is the
+  assert.match(html, /Meshcore/);
+  // Each line is its protocol's own tile colour (SPEC RD3); Meshcore is the
   // deliberate exception, keeping blue because near-black cannot be a line.
   assert.match(html, /#67ea94/); // meshtastic tile
   assert.match(html, /#3182bd/); // meshcore, blue by design

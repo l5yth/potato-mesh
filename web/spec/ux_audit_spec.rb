@@ -151,7 +151,7 @@ RSpec.describe "UX audit remediation markup" do
       allow(PotatoMesh::Config).to receive(:meshcore_preset).and_return("EU/UK Narrow")
       allow(PotatoMesh::Config).to receive(:meshcore_freq).and_return("869MHz")
       html = body_of("/")
-      expect(html).to include("MeshCore")
+      expect(html).to include("Meshcore")
       expect(html).to include("EU/UK Narrow")
       expect(html).to include("869MHz")
     end

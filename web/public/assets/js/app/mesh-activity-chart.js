@@ -42,7 +42,7 @@ const ACTIVITY_CHART_WINDOW_MS = ACTIVITY_CHART_WINDOW_SECONDS * 1000;
  *
  * Each line is its protocol's own tile colour (SPEC RD3), so the page teaches
  * **one** colour code across the node table, the meta row and this figure —
- * before RD3 the table and the figure taught two different ones. MeshCore is
+ * before RD3 the table and the figure taught two different ones. Meshcore is
  * the deliberate exception: its tile is `#1f2937` and near-black cannot be a
  * line on a dark chart, so it keeps blue and the tie is 2-of-3 by design.
  *
@@ -55,7 +55,7 @@ const ACTIVITY_CHART_WINDOW_MS = ACTIVITY_CHART_WINDOW_SECONDS * 1000;
  */
 const ACTIVITY_CHART_LINES = Object.freeze([
   Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', color: '#67ea94' }),
-  Object.freeze({ protocol: 'meshcore', label: 'MeshCore', color: '#3182bd' }),
+  Object.freeze({ protocol: 'meshcore', label: 'Meshcore', color: '#3182bd' }),
   Object.freeze({ protocol: 'reticulum', label: 'Reticulum', color: '#7b61ff' }),
 ]);
 

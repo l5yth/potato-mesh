@@ -1976,7 +1976,7 @@ export function initializeApp(config) {
   function updateMetaProtocolToggleUI() {
     /** @type {Array<{btn: HTMLElement|null, protocol: string, name: string}>} */
     const toggles = [
-      { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'MeshCore' },
+      { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'Meshcore' },
       { btn: protocolToggleMeshtastic, protocol: 'meshtastic', name: 'Meshtastic' },
       { btn: protocolToggleReticulum, protocol: 'reticulum', name: 'Reticulum' },
     ];
@@ -2107,7 +2107,7 @@ export function initializeApp(config) {
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
       const meshcoreColTitle = document.createElement('span');
-      meshcoreColTitle.textContent = 'MeshCore';
+      meshcoreColTitle.textContent = 'Meshcore';
       meshcoreColHeader.appendChild(meshcoreColTitle);
       meshcoreCountEl = document.createElement('span');
       meshcoreCountEl.className = 'legend-protocol-count';

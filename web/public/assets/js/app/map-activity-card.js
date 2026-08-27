@@ -56,7 +56,7 @@ import { MESHTASTIC_ICON_SRC, MESHCORE_ICON_SRC, RETICULUM_ICON_SRC } from './pr
  */
 const PROTOCOL_ROWS = Object.freeze([
   Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', iconSrc: MESHTASTIC_ICON_SRC }),
-  Object.freeze({ protocol: 'meshcore', label: 'MeshCore', iconSrc: MESHCORE_ICON_SRC }),
+  Object.freeze({ protocol: 'meshcore', label: 'Meshcore', iconSrc: MESHCORE_ICON_SRC }),
   Object.freeze({ protocol: 'reticulum', label: 'Reticulum', iconSrc: RETICULUM_ICON_SRC }),
 ]);
 

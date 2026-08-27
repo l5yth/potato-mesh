@@ -280,14 +280,12 @@ appear in the allowlist.
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat on the transports that cannot auto-detect "self": UDP transport and `PROTOCOL=reticulum`. Without it the heartbeat never registers and that protocol's packets/hour stats stay at zero. |
-| `RETICULUM_CONFIG_DIR` | `~/.config/potato-mesh/reticulum` | RNS config directory for `PROTOCOL=reticulum`. App-owned by default (honours `XDG_CONFIG_HOME`): the ingestor never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. |
-| `RETICULUM_INTERFACES` | _unset_ | Comma-separated, case-insensitive substring allowlist of RNS interface names (e.g. `rnode`) to ingest announces from. Empty ingests every interface. See [Reticulum](#reticulum). |
+| `RETICULUM_CONFIG_DIR` | `$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum` | Which Reticulum config the ingestor uses, and so where it looks for available interfaces. App-owned by default: it never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. See [Reticulum](#reticulum). |
+| `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest announces from: name your local LoRa interface, e.g. `RNode` or `BerlinMesh`. Comma-separated and matched as a case-insensitive substring of the interface name. Empty ingests every interface. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
 | `TX_ENABLED` | `0` | Master switch for everything the ingestor puts on the air Off by default: the ingestor is a listener. Set to `1` to allow transmitting; this is what enables Meshcore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `TX_ANNOUNCE` | `0` | Set to `1` (with `TX_ENABLED=1`) to broadcast a one-line activity summary on the default channel: at most once per 24 h, never in the first 24 h after start. Off by default: it is unsolicited automated traffic on a channel people read. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
-| `RETICULUM_CONFIG_DIR` | `$XDG_CONFIG_HOME/potato-mesh/reticulum` | Tells the ingestor which Reticulum config to use and where to look for available interfaces. |
-| `RETICULUM_INTERFACES` | _unset_ | Set it to your local LoRa interface, e.g., `RNode` or `BerlimMesh`. You name it. |
 
 ### Transmitting on the mesh
 
