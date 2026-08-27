@@ -373,6 +373,178 @@ def test_interface_allowed_rejects_unknown_interface_when_allowlisted(monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# Review regressions: shared-instance blackout and identity-derived fallback
+# ---------------------------------------------------------------------------
+
+
+def test_interface_allowlist_fails_open_on_the_shared_instance_socket(monkeypatch):
+    """An allowlist must never black out when it cannot discriminate.
+
+    RNS derives the shared-instance socket from ``instance_name``, not from
+    ``configdir``, so an ingestor with its own config dir still attaches to a
+    running ``rnsd`` as a ``LocalClientInterface``.  Every announce then
+    arrives on one local socket named ``LocalInterface[rns/default]``, and a
+    per-interface allowlist can no longer tell them apart.  Rejecting them all
+    turns the README's own ``RETICULUM_INTERFACES=rnode`` example into a silent
+    total blackout.
+    """
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    # Derived from the real RNS classes, not hardcoded: if RNS renames these the
+    # fail-open would die silently and a literal fixture would still pass.
+    from RNS.Interfaces import LocalInterface
+
+    stub = types.SimpleNamespace(socket_path="\0rns/default")
+    client = LocalInterface.LocalClientInterface.__str__(stub)
+    server = LocalInterface.LocalServerInterface.__str__(stub)
+    assert _mod._interface_allowed(client) is True
+    assert _mod._interface_allowed(server) is True
+    # A real, nameable interface is still filtered normally.
+    assert _mod._interface_allowed("TCPClientInterface[hub]") is False
+    assert _mod._interface_allowed("RNodeInterface[RNode LoRa]") is True
+
+
+def test_fail_open_warns_once_so_the_widening_is_never_silent(monkeypatch):
+    """Fail-open widens what the operator asked for, so it must be audible.
+
+    This is the upgrade path: a deployment whose config dir already exists is
+    never seeded, stays attached to its ``rnsd``, and would otherwise silently
+    ingest every announce on the LAN under an allowlist that reads as honoured.
+    """
+    monkeypatch.setattr(_mod, "_allowlist_ignored_warned", False)
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    warnings = []
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda msg, **kw: (
+            warnings.append(msg) if kw.get("severity") == "warn" else None
+        ),
+    )
+
+    assert _mod._interface_allowed("LocalInterface[rns/default]") is True
+    assert len(warnings) == 1
+    assert "cannot be honoured" in warnings[0]
+    # Once per process — this sits on the per-announce path.
+    _mod._interface_allowed("LocalInterface[rns/default]")
+    assert len(warnings) == 1
+
+
+def test_seeded_config_enables_no_interface_the_allowlist_cannot_match(
+    monkeypatch, tmp_path
+):
+    """Seeding a stock AutoInterface would relocate the blackout, not fix it.
+
+    ``AutoInterface[Default Interface]`` matches no sensible allowlist, so a
+    freshly seeded scoped stack would connect and ingest nothing — the same
+    outcome as the bug this seeding exists to fix.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    warnings = []
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda msg, **kw: (
+            warnings.append(msg) if kw.get("severity") == "warn" else None
+        ),
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+    text = (tmp_path / "config").read_text()
+    # Nothing enabled: every interface line in the template is commented out.
+    enabled = [
+        l for l in text.splitlines() if "enabled" in l and not l.strip().startswith("#")
+    ]
+    assert enabled == []
+    assert not _mod._interface_allowed("AutoInterface[Default Interface]")
+    # Starting with nothing enabled is only acceptable if it is announced.
+    assert any("nothing will be ingested" in w for w in warnings)
+
+
+def test_connect_refuses_to_share_an_external_stack_when_scoped(monkeypatch, tmp_path):
+    """With an allowlist set, the ingestor runs its own stack (SPEC RN4).
+
+    Sharing an external ``rnsd`` makes the allowlist unanswerable, so the
+    seeded config turns sharing off.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    assert "share_instance = No" in (tmp_path / "config").read_text()
+
+
+def test_connect_leaves_sharing_alone_without_an_allowlist(monkeypatch, tmp_path):
+    """No allowlist means no reason to refuse a shared stack."""
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ())
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    config_path = tmp_path / "config"
+    if config_path.exists():
+        assert "share_instance = No" not in config_path.read_text()
+
+
+def test_connect_never_overwrites_an_operator_config(monkeypatch, tmp_path):
+    """A config the operator wrote is theirs; only an absent one is seeded."""
+    fake, _state = _fake_rns()
+    (tmp_path / "config").write_text(
+        "# operator's own\n[reticulum]\n  share_instance = Yes\n"
+    )
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ("rnode",))
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+    assert (tmp_path / "config").read_text().startswith("# operator's own")
+
+
+def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
+    """The placeholder must equal what the web upsert builds, byte for byte.
+
+    Ruby composes it from ``protocol_display_label`` plus the **upper-cased**
+    canonical short id and compares with ``==``.  A digits-only id like
+    ``!beef0001`` matches either way, so a fixture built from one hides a case
+    mismatch that breaks ~85% of the id space — which is exactly how the first
+    attempt at this fix passed its own test while still clobbering names.
+    """
+    for node_id, expected in (
+        ("!beef0001", "Reticulum 0001"),  # digits only - matches even lower-cased
+        ("!c0ffee00", "Reticulum EE00"),
+        ("!beefcafe", "Reticulum CAFE"),
+        ("!deadbeef", "Reticulum BEEF"),
+        ("!0000000a", "Reticulum 000A"),
+    ):
+        identity = _FakeIdentity(bytes.fromhex(node_id[1:] + "11" * 12))
+        node = _announce_to_node_dict(_DEST_HASH, None, identity=identity, last_heard=1)
+        assert node["user"]["longName"] == expected, node_id
+
+
+def test_fallback_name_is_identity_derived_and_generic():
+    """A nameless announce must not clobber a stored display name.
+
+    The row is keyed on the identity (SPEC RN1), so a per-aspect destination
+    hash prefix names the wrong thing — and a bare 8-hex string is not the
+    ``"<Label> <short_id>"`` shape the web upsert recognises as a placeholder,
+    so it overwrites a real name instead of yielding to it.
+    """
+    node = _announce_to_node_dict(
+        _DEST_HASH, None, identity=_FakeIdentity(), last_heard=1
+    )
+    # !beef0001 -> canonical short_id "0001" (last four hex), label "Reticulum".
+    assert node["user"]["longName"] == "Reticulum 0001"
+
+
+# ---------------------------------------------------------------------------
 # _announce_to_node_dict
 # ---------------------------------------------------------------------------
 
@@ -430,20 +602,24 @@ def test_announce_to_node_dict_public_key_none_when_unreadable():
     assert node["user"]["publicKey"] is None
 
 
-def test_announce_to_node_dict_long_name_falls_back_to_hash_prefix():
-    """Undecodable app_data falls back to the 8-hex destination-hash prefix."""
+def test_announce_to_node_dict_long_name_falls_back_to_the_node_placeholder():
+    """Undecodable app_data falls back to a placeholder naming the *node*.
+
+    Not the destination: the row is keyed on the identity (SPEC RN1), and the
+    web upsert only yields to the "<Label> <short id>" form it recognises.
+    """
     node = _announce_to_node_dict(
         _DEST_HASH, b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
     )
-    assert node["user"]["longName"] == "aabbccdd"
+    assert node["user"]["longName"] == "Reticulum 0001"
 
 
-def test_announce_to_node_dict_long_name_falls_back_to_node_id_without_dest_hash():
-    """With no usable destination hash the node id prefix names the row."""
+def test_announce_to_node_dict_long_name_is_the_same_without_a_dest_hash():
+    """The placeholder does not depend on any destination hash at all."""
     node = _announce_to_node_dict(
         None, None, identity=_FakeIdentity(), dest_hashes=[], last_heard=1
     )
-    assert node["user"]["longName"] == "beef0001"
+    assert node["user"]["longName"] == "Reticulum 0001"
     assert node["destHash"] == []
 
 
@@ -887,8 +1063,9 @@ def test_node_snapshot_items_returns_heard_announces(monkeypatch):
     as_dict = dict(items)
     assert set(as_dict) == {"!beef0001", "!c0ffee00"}
     assert as_dict["!beef0001"]["user"]["longName"] == "Alice"
-    # Name-less announce falls back to the destination-hash prefix.
-    assert as_dict["!c0ffee00"]["user"]["longName"] == "11223344"
+    # Name-less announce falls back to a placeholder built from its own node
+    # id, so it can never carry another destination's hex.
+    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum EE00"
 
 
 def test_update_node_ignores_a_falsy_node_id():

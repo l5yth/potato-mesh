@@ -658,6 +658,66 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.close
     end
 
+    it "unions a hash carried by a STALE record (SPEC RN1)" do
+      # Two ingestors, and the second heard an older announce carrying a hash
+      # the first never saw. The upsert's freshness guard is right to skip
+      # timestamps and telemetry from a stale record, but dropping the hash
+      # breaks the cross-ingestor guarantee the union exists to provide.
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now - 600),
+                     protocol: "reticulum")
+      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
+      db.close
+      expect(JSON.parse(stored)).to eq(%w[aabb ccdd])
+    end
+
+    it "does not let a stale record regress last_heard while unioning" do
+      # The union must ride *past* the freshness guard without dragging the
+      # guarded columns with it.
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now - 600),
+                     protocol: "reticulum")
+      last_heard = db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?",
+                                      ["!beef0001"])
+      hashes = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?",
+                                  ["!beef0001"])
+      db.close
+      expect(last_heard).to eq(now)
+      expect(JSON.parse(hashes)).to include("ccdd")
+    end
+
+    it "does not let a generic fallback name overwrite a real one" do
+      # A Reticulum aspect carrying no app_data falls back to a placeholder
+      # name. It must be recognised as generic so it yields to a stored name.
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]).merge(
+        "user" => { "longName" => "Kelly Street Node", "publicKey" => "ab" * 64 },
+      ), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now + 1).merge(
+        "user" => { "longName" => "Reticulum 0001", "publicKey" => "ab" * 64 },
+      ), protocol: "reticulum")
+      stored = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", ["!beef0001"])
+      db.close
+      expect(stored).to eq("Kelly Street Node")
+    end
+
+    it "does not let a synthetic placeholder touch a real row's hashes" do
+      # The union runs outside the upsert's DO UPDATE, so it has to repeat that
+      # statement's synthetic guard rather than inherit it.
+      db = open_db
+      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
+      dp.upsert_node(db, "!beef0001", {
+        "lastHeard" => now + 1,
+        "destHash" => %w[deadbeef],
+        "user" => { "longName" => "Ghost", "synthetic" => true },
+      }, protocol: "reticulum")
+      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
+      db.close
+      expect(JSON.parse(stored)).to eq(%w[aabb])
+    end
+
     it "leaves dest_hash NULL for protocols that carry no destination hashes" do
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "user" => { "longName" => "MT" } })

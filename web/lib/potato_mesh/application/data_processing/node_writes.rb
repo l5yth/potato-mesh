@@ -391,30 +391,6 @@ module PotatoMesh
           end
 
         dest_hashes = normalize_dest_hashes(pick_alias(n, "destHash", "dest_hash"))
-        # Emitted only when the record actually names destination hashes.  The
-        # union below is dead weight for Meshtastic and MeshCore, which never
-        # carry +destHash+ — and because +db.execute+ re-prepares per call, an
-        # always-present CASE would charge every node upsert of every protocol
-        # for compiling SQL it can never take.  Same conditional-SQL shape as
-        # +long_name_conflict_sql+ above.
-        dest_hash_conflict_sql = if dest_hashes.nil?
-            # No hashes in this record: keep whatever is stored.
-            "nodes.dest_hash"
-          else
-            <<~SQL.strip
-              CASE
-                        WHEN nodes.dest_hash IS NULL THEN excluded.dest_hash
-                        WHEN NOT json_valid(nodes.dest_hash) THEN excluded.dest_hash
-                        WHEN json_type(nodes.dest_hash) <> 'array' THEN excluded.dest_hash
-                        ELSE (SELECT json_group_array(v) FROM (
-                                SELECT DISTINCT value AS v FROM (
-                                  SELECT value FROM json_each(nodes.dest_hash)
-                                  UNION ALL
-                                  SELECT value FROM json_each(excluded.dest_hash))
-                                ORDER BY v))
-                      END
-            SQL
-          end
 
         row = [
           node_id,
@@ -468,14 +444,6 @@ module PotatoMesh
                 hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
                 role=COALESCE(excluded.role, nodes.role),
                 public_key=COALESCE(excluded.public_key, nodes.public_key),
-                -- Union stored ∪ incoming atomically, so two ingestors that
-                -- each heard a different subset of a peer's announce aspects
-                -- cannot lose one another's hashes (SPEC RN1).  A stored value
-                -- that is not a JSON array (corrupt or hand-edited) is
-                -- re-seeded from the incoming record rather than failing the
-                -- whole upsert.  Collapses to a no-op for records naming no
-                -- hashes -- see +dest_hash_conflict_sql+.
-                dest_hash=#{dest_hash_conflict_sql},
                 is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
                 rssi=COALESCE(excluded.rssi, nodes.rssi),
@@ -521,6 +489,37 @@ module PotatoMesh
                   public_key=COALESCE(public_key, ?),
                   is_unmessagable=COALESCE(is_unmessagable, ?)
                 WHERE node_id = ?
+              SQL
+            end
+
+            # Destination-hash union (SPEC RN1).  Deliberately a separate,
+            # unguarded statement rather than a column in the upsert above, for
+            # the same reason as the keyed-evidence stamp below: that
+            # statement's freshness guard skips any record older than the
+            # stored +last_heard+, so a second ingestor posting an older
+            # announce that carries a hash the first never heard would have its
+            # whole update — and therefore that hash — dropped. The union is
+            # what makes the column correct across ingestors, so it must not
+            # depend on which of them happened to hear the newest announce.
+            # Guarded columns are untouched here, so a stale record still
+            # cannot regress +last_heard+.
+            # Synthetic chat placeholders never touch a real row's data — the
+            # upsert's own guard says so, and this statement sits outside it,
+            # so it repeats the condition rather than inheriting it.
+            if dest_hashes && synthetic.zero?
+              db.execute(<<~SQL, [dest_hashes, node_id])
+                UPDATE nodes SET dest_hash = CASE
+                  WHEN dest_hash IS NULL THEN ?1
+                  WHEN NOT json_valid(dest_hash) THEN ?1
+                  WHEN json_type(dest_hash) <> 'array' THEN ?1
+                  ELSE (SELECT json_group_array(v) FROM (
+                          SELECT DISTINCT value AS v FROM (
+                            SELECT value FROM json_each(dest_hash)
+                            UNION ALL
+                            SELECT value FROM json_each(?1))
+                          ORDER BY v))
+                END
+                WHERE node_id = ?2
               SQL
             end
 

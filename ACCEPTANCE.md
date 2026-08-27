@@ -5193,8 +5193,10 @@ back-reference the one identity that keys the row.
 silently vacuous rather than failing.
 
 Two ingestors may each have heard a different subset of a peer's aspects, so the
-union is **stored ∪ incoming**. It runs **in SQL**, inside the upsert's
-`ON CONFLICT` clause, so it is atomic within the statement: doing it in Ruby
+union is **stored ∪ incoming**. It runs **in SQL**, in its own forward-only
+`UPDATE` inside the upsert's transaction (moved there by RV-A3, because the
+`ON CONFLICT` clause it started in is freshness-guarded), so it is atomic:
+doing it in Ruby
 meant a read-modify-write spanning two statements with the read outside the
 transaction, and two concurrent upserts of the same node could lose one side's
 hashes — precisely the guarantee this column exists to give. `normalize_dest_hashes`
@@ -5282,9 +5284,9 @@ amended to say so rather than to keep asserting a two-protocol whitelist);
 zero-stub `reticulum` that SPEC S6/MA5/MA-F2/F2-2 had already stopped describing);
 **GH-A1** (stale-but-richer enrichment — the cross-protocol guard lookup is
 unchanged, still a single `SELECT protocol`, and no new skip condition is
-introduced; the `dest_hash` union rides the existing write statement, and its
-conflict clause is emitted only for records that actually carry `destHash`, so
-a Meshtastic or MeshCore upsert compiles the same SQL it always did);
+introduced; the `dest_hash` union is its own statement, executed only for
+records that actually carry `destHash`, so a Meshtastic or MeshCore upsert runs
+exactly the SQL it always did);
 **C2** (canonical POST shapes — `tests/`
 fixtures unmodified); and **TX-A1–TX-A6** (transmit policy — the Reticulum
 provider adds no transmit site, see the MA7 note in `SPEC.md`).
@@ -5355,4 +5357,92 @@ version of this guard was removed in favour of CH-A1, which is strictly broader 
 it covers more spellings, more files, and every variable rather than two).
 `MAP_ZOOM` is fixed with them: it was benign (`Float('""', exception: false)` is
 `nil`, so the zoom simply fell back), but it carried the same defect.
+
+## Bugfix: Reticulum review regressions (#893 review)
+
+Four defects found reviewing #893, all introduced by it. Two contradict decisions
+the same PR made (RN1, RN4); two land where the contract was silent.
+
+### RV-A1 - An interface allowlist never blacks out ingestion - RN4
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "shared_instance_socket or scoped or operator_config or sharing_alone" )
+```
+**Expected:** pass. RNS derives the shared-instance socket from `instance_name`,
+**not** from `configdir` (`Reticulum.py:419-421, 673-674`), so RN3's app-owned
+config dir does not stop the ingestor attaching to a running `rnsd`. Attached, it
+is a `LocalClientInterface` whose name is `LocalInterface[rns/default]`, every
+announce arrives on that one socket, and a per-interface allowlist cannot tell
+them apart. Before this fix `RETICULUM_INTERFACES=rnode` - the README's own
+example - rejected **every** announce and silently ingested nothing, the same
+blackout class as the `ALLOWED_CHANNELS` bug in CH-A1.
+
+Two halves, both required. The ingestor **seeds its config dir with
+`share_instance = No` when an allowlist is set**, so it runs its own stack and
+the allowlist is answerable; an operator-authored config is never overwritten.
+And `_interface_allowed` **fails open** on a shared-instance socket name, so if
+the ingestor is on one anyway the result is over-ingestion plus a warning, never
+a silent blackout.
+
+### RV-A2 - A nameless announce never overwrites a stored display name - RN1
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "identity_derived_and_generic" )
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "generic fallback name" )
+```
+**Expected:** pass. RN1 re-keyed node rows on the identity, but the `longName`
+fallback still derived from the **per-aspect destination hash** - so a second
+aspect arriving without `app_data` posted an 8-hex string naming a destination
+rather than the node. Worse, a bare hex string is not the `"<Label> <short_id>"`
+shape `generic_fallback_name?` recognises, so the web upsert treated it as a real
+name and overwrote the stored one (observed: `"Kelly Street Node"` became
+`"11223344"`).
+
+The fallback is now derived from the **identity** and emitted in the generic form
+(`"Reticulum 0001"` for `!beef0001` - the label plus the canonical short id), so
+the existing web-side guard recognises it and yields. The Ruby half already
+behaved correctly once given that shape; the defect was entirely ingestor-side.
+
+### RV-A3 - A stale record's destination hash still joins the union - RN1
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "dest_hash union" )
+```
+**Expected:** pass, with a non-zero example count. RN1 promises the union is
+**stored union incoming** so "two ingestors may each have heard a different subset
+of a peer's aspects". The union was placed inside the upsert's `DO UPDATE`, which
+carries `WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)` -
+so a record older than the stored row had its whole update skipped and its new
+hash dropped entirely.
+
+The union now runs as its own forward-only statement after the upsert, regardless
+of staleness - the same shape the keyed-evidence stamp (MR1) and the ghost-node
+identity fill (GH-A1) already use, and for the same reason. A companion check
+asserts the stale record still does **not** regress `last_heard`, so the union
+rides past the guard without dragging the guarded columns with it.
+
+### RV-A4 - The isolated config dir is documented, not just created - RN3
+```bash
+grep -n "share_instance\|RETICULUM_INTERFACES" README.md
+grep -c "potatomesh_reticulum" README.md
+```
+**Expected:** both hit. RN3 decided the config dir's *ownership* and said nothing
+about its *contents*: left to itself RNS writes its stock config, whose only
+interface is a link-local IPv6 `AutoInterface`. On bare metal that hears the LAN
+(the documented "ingests everything" default), but in a container on the default
+bridge network it reaches no LoRa radio and typically no peers - so the ingestor
+starts, connects, and hears nothing, while the README said it "needs no radio
+configuration". The README now states what the seeded config contains, what the
+container case actually hears, and how to add interfaces to the
+`potatomesh_reticulum` volume.
+
+### RV-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**RN-A3** (the union's fresh-path behaviour is unchanged; only the statement it
+rides moves), **RN-A5/RN-A6** (config-dir isolation and the allowlist - RV-A1
+narrows when sharing is refused but does not change the empty-allowlist default),
+**GH-A1** and **MR1** (the phase-two fill and the keyed-evidence stamp, whose
+shape RV-A3 copies and whose statements it must not disturb), **RN-A1/RN-A2**
+(identity keying and `publicKey`, unchanged), and **CH-A1-CH-A3** (the Compose
+quoting fix in the same branch).
 

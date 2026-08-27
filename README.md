@@ -379,8 +379,7 @@ the radio's local roster rotates.
 Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. This is a
 **passive announce listener**: it registers announce handlers for the
 `lxmf.delivery` and `nomadnetwork.node` destination aspects and files every
-announce it hears as a node. It never transmits, needs no radio configuration,
-and sends no message or poll — so it works with `TX_ENABLED=0` (the default).
+announce it hears as a node. It never transmits and sends no message or poll — so it works with `TX_ENABLED=0` (the default).
 
 Announces carry no SNR, battery, or position, so those columns render as dashes
 and Reticulum nodes stay off the map. One peer is one node row: the canonical
@@ -401,6 +400,45 @@ rather than RNS's user default `~/.reticulum`. Installing a dashboard ingestor
 should not silently adopt the transport-node configuration you run for yourself
 — including whatever `enable_transport` and interfaces it defines. Point the
 variable at your own directory if sharing a stack is what you want.
+
+**What the config dir starts with**, and it differs by whether you scoped it.
+
+*Without* `RETICULUM_INTERFACES`, RNS writes its own stock config, whose only
+interface is a link-local IPv6 `AutoInterface`. That hears the Reticulum peers on
+your LAN — the "ingests everything" default above — and the packaged `ingestor`
+service runs `network_mode: host`, so it behaves the same in Docker as on bare
+metal. (The opt-in `ingestor-bridge` profile is not on the host network and hears
+nothing there.)
+
+*With* `RETICULUM_INTERFACES` set, the ingestor seeds the file itself, with
+`share_instance = No` and **no interface enabled**. Both parts are deliberate.
+Sharing is off because an allowlist can only be honoured on its own RNS stack:
+attached to a shared `rnsd`, every announce arrives over a single
+`LocalInterface` and the allowlist cannot tell them apart. And no interface is
+enabled because a stock `AutoInterface` is named `AutoInterface[Default
+Interface]`, which matches no sensible allowlist — the listener would connect and
+ingest nothing. **So a freshly scoped ingestor hears nothing until you add the
+interfaces you named**; it warns about exactly that at startup, and the seeded
+file carries a commented `RNodeInterface` example to copy.
+
+Two consequences worth stating plainly. **A scoped ingestor does not inherit your
+`rnsd`'s interfaces**, so any radio you want it to hear has to be configured in
+its own file. And **an `AutoInterface` never reaches a LoRa radio** in any network
+mode — that always needs an `RNodeInterface` pointing at the device, or a
+`TCPClientInterface` pointing at a hub.
+
+Edit the `config` file on the `potatomesh_reticulum` volume (Linux images;
+`--no-deps` stops it starting the web stack too):
+
+```bash
+docker compose run --rm --no-deps --entrypoint sh ingestor \
+  -c 'vi /app/.config/potato-mesh/reticulum/config'
+```
+
+An existing config is never overwritten, so if you would rather share the stack,
+write the file yourself and the ingestor leaves it alone. The allowlist then
+cannot be honoured, so it admits every announce rather than none — and warns once
+that it is doing so.
 
 `RETICULUM_INTERFACES` bounds what gets ingested. An RNS stack can carry LoRa
 and IP interfaces at once, and RNS's stock config enables an `AutoInterface`

@@ -59,11 +59,15 @@ own isolated config directory rather than adopting the operator's
 in ``app_data`` — either raw UTF-8 bytes (pre-0.5 LXMF) or a msgpack array
 whose first element is the display name (LXMF >= 0.5, which appends the stamp
 cost).  ``nomadnetwork.node`` announces carry the node name as raw UTF-8.
-Undecodable ``app_data`` falls back to the 8-hex destination-hash prefix.
+Undecodable ``app_data`` falls back to ``"Reticulum <SHORT>"`` — the protocol
+label plus the upper-cased last four hex of the canonical node id.  It names the
+*node*, not whichever destination announced, and matches the placeholder form the
+web upsert refuses to overwrite a real name with.
 """
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -74,6 +78,19 @@ from .. import config, handlers
 
 _ANNOUNCE_ASPECTS: tuple[str, ...] = ("lxmf.delivery", "nomadnetwork.node")
 """Destination aspects whose announces are ingested as node records."""
+
+_SHARED_INSTANCE_INTERFACE_PREFIXES: tuple[str, ...] = (
+    "localinterface[",
+    "shared instance[",
+)
+"""Interface names that mean "attached to a shared RNS instance".
+
+``RNS.Interfaces.LocalInterface`` renders the client side as
+``LocalInterface[rns/<name>]`` and the server side as
+``Shared Instance[rns/<name>]``.  When the ingestor is attached to an external
+``rnsd`` every announce arrives over that one socket, whatever interface
+actually received it, so a per-interface allowlist cannot discriminate.
+"""
 
 _MSGPACK_ARRAY_LEAD_BYTES = frozenset(range(0x90, 0xA0)) | {0xDC, 0xDD}
 """First-byte values identifying a msgpack-encoded announce ``app_data``.
@@ -268,6 +285,41 @@ def _announce_interface_name(dest_hash: object) -> str | None:
         return None
 
 
+_allowlist_ignored_warned = False
+"""Whether the fail-open warning has already been emitted this session."""
+
+
+def _warn_allowlist_ignored_once(interface_name: str) -> None:
+    """Warn, once, that the interface allowlist cannot be honoured.
+
+    Emitted on the fail-open path: the ingestor is attached to a shared RNS
+    instance, so every announce arrives over one socket and
+    :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` cannot discriminate.
+    Ingesting everything is the safe failure, but it **widens** what the
+    operator asked for, so it must not be silent — this is the upgrade path for
+    a deployment whose config dir already exists and therefore was never seeded
+    (see :func:`_seed_config_dir`).
+
+    Once per process: this sits on the per-announce path.
+
+    Parameters:
+        interface_name: The shared-instance interface the announce arrived on.
+    """
+    global _allowlist_ignored_warned
+    if _allowlist_ignored_warned:
+        return
+    _allowlist_ignored_warned = True
+    config._debug_log(
+        "RETICULUM_INTERFACES cannot be honoured on a shared Reticulum instance; "
+        "ingesting every announce instead. Set share_instance = No in the "
+        "ingestor's own config dir to scope it",
+        context="reticulum.announce",
+        severity="warn",
+        interface=interface_name,
+        allowlist=list(config.RETICULUM_INTERFACES),
+    )
+
+
 def _interface_allowed(interface_name: str | None) -> bool:
     """Test *interface_name* against :data:`config.RETICULUM_INTERFACES`.
 
@@ -276,6 +328,9 @@ def _interface_allowed(interface_name: str | None) -> bool:
     an announce whose interface cannot be determined is rejected: the operator
     asked to ingest from named interfaces only, and an unverifiable one is not
     among them.
+
+    A shared-instance socket is the one exception and admits everything: see
+    :data:`_SHARED_INSTANCE_INTERFACE_PREFIXES`.
 
     Parameters:
         interface_name: Interface string form, or ``None`` when unknown.
@@ -289,6 +344,14 @@ def _interface_allowed(interface_name: str | None) -> bool:
     if not interface_name:
         return False
     lowered = interface_name.lower()
+    # Fail *open* on a shared-instance socket.  Every announce reaches us over
+    # that one interface, so the allowlist cannot tell them apart; rejecting
+    # them all would silently ingest nothing, which is the worse failure by far
+    # (:func:`ReticulumProvider.connect` refuses to share precisely so this
+    # path is not reached, and warns when it is).
+    if lowered.startswith(_SHARED_INSTANCE_INTERFACE_PREFIXES):
+        _warn_allowlist_ignored_once(interface_name)
+        return True
     return any(fragment in lowered for fragment in allowlist)
 
 
@@ -365,7 +428,18 @@ def _announce_to_node_dict(
         {h for h in (dest_hashes if dest_hashes is not None else [hash_hex]) if h}
     )
     display_name = _decode_display_name(app_data)
-    fallback_name = (hash_hex or node_id.lstrip("!"))[:8]
+    # Name the *node*, not whichever destination happened to announce.  The row
+    # is keyed on the identity (SPEC RN1), so a per-aspect destination-hash
+    # prefix names the wrong thing entirely — and the web upsert only yields to
+    # a placeholder it recognises, which is the "<Label> <short id>" form its
+    # +generic_fallback_name?+ builds.  A bare hex string reads as a real name
+    # and overwrites the stored one.
+    # Upper-case is load-bearing: the Ruby side builds the placeholder as
+    # +protocol_display_label+ plus +canonical_node_parts(...)[2]+, and that
+    # short id is +.upcase+d (identity.rb:129) then compared with +==+.  A
+    # lower-case tail matches only when all four hex digits are decimal — about
+    # 15% of ids — and every other node's stored name gets overwritten.
+    fallback_name = f"Reticulum {node_id[-4:].upper()}"
     node: dict = {
         "lastHeard": int(time.time()) if last_heard is None else int(last_heard),
         "protocol": "reticulum",
@@ -379,6 +453,75 @@ def _announce_to_node_dict(
     if hops is not None:
         node["hopsAway"] = hops
     return node
+
+
+def _seed_config_dir(configdir: str) -> None:
+    """Write a starter RNS config into *configdir* when none exists yet.
+
+    Only relevant when :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES`
+    is set.  RNS decides whether to attach to an external ``rnsd`` from the
+    ``share_instance`` **config option**, not from ``configdir`` — the
+    shared-instance socket is keyed on ``instance_name`` — so an app-owned
+    config dir alone does not stop the ingestor joining the operator's stack.
+    Attached, every announce arrives over one ``LocalInterface`` and the
+    allowlist cannot discriminate (SPEC RN4).
+
+    An operator-authored config is never touched: this seeds an absent file
+    only, so anyone who *wants* to share can say so and keep it.
+
+    Parameters:
+        configdir: The ingestor's Reticulum config directory.
+    """
+    config_path = os.path.join(configdir, "config")
+    if os.path.exists(config_path):
+        return
+    os.makedirs(configdir, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as handle:
+        handle.write(_SCOPED_CONFIG_TEMPLATE)
+    config._debug_log(
+        "Seeded an unshared Reticulum config with no interfaces enabled; add the "
+        "interfaces named in RETICULUM_INTERFACES or nothing will be ingested",
+        context="reticulum.connect",
+        severity="warn",
+        path=config_path,
+        allowlist=list(config.RETICULUM_INTERFACES),
+    )
+
+
+_SCOPED_CONFIG_TEMPLATE = """# Written by potato-mesh because RETICULUM_INTERFACES is set.
+#
+# share_instance = No keeps this ingestor on its own RNS stack. Attached to a
+# shared rnsd every announce arrives over one LocalInterface, so a per-interface
+# allowlist cannot tell them apart and would filter everything or nothing.
+#
+# Add the interfaces you want ingested below -- this ingestor does not inherit
+# the ones your rnsd has. Delete this file to fall back to RNS's own defaults.
+
+[reticulum]
+  enable_transport = No
+  share_instance = No
+
+[logging]
+  loglevel = 3
+
+[interfaces]
+
+  # No interface is enabled here on purpose. RETICULUM_INTERFACES names what you
+  # want ingested, and a stock AutoInterface would be called
+  # "AutoInterface[Default Interface]" -- matching no sensible allowlist, so the
+  # listener would connect and hear nothing. Add the interfaces you named, e.g.
+  #
+  #   [[RNode LoRa]]
+  #     type = RNodeInterface
+  #     enabled = Yes
+  #     port = /dev/ttyUSB0
+  #     frequency = 867200000
+  #     bandwidth = 125000
+  #     txpower = 7
+  #     spreadingfactor = 8
+  #     codingrate = 5
+"""
+"""Starter config seeded when an interface allowlist is configured (SPEC RN4)."""
 
 
 class _ReticulumAnnounceHandler:
@@ -616,6 +759,11 @@ class ReticulumProvider:
                 severity="warn",
             )
 
+        # An allowlist is only answerable on our own stack — see
+        # :func:`_seed_config_dir`.
+        if config.RETICULUM_INTERFACES:
+            _seed_config_dir(configdir)
+
         iface = _ReticulumInterface(target=target)
         rns_instance = RNS.Reticulum.get_instance()
         if rns_instance is None:
@@ -684,7 +832,9 @@ __all__ = [
     "_identity_from_announce",
     "_identity_public_key_hex",
     "_interface_allowed",
+    "_warn_allowlist_ignored_once",
     "_reticulum_hash_hex",
     "_reticulum_node_id",
+    "_seed_config_dir",
     "_reticulum_short_name",
 ]
