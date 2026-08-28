@@ -1573,6 +1573,39 @@ class TestReticulumDeploymentSurface:
                 re.MULTILINE | re.IGNORECASE,
             ), f"{name} still presents INGESTOR_NODE_ID as required for reticulum"
 
+    def test_docs_do_not_key_the_ingestor_on_the_transport_identity(self):
+        """RE8 excludes the transport identity from the pick; docs must agree.
+
+        RNS generates the transport identity as an independent keypair, so it
+        matches none of the operator's announced destinations -- keying on it
+        registered a node id the operator could not recognise.  A doc still
+        naming it would send them looking for the wrong hash in ``rnstatus``.
+        """
+        for name in ("README.md", ".env.example"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            assert (
+                "from the transport identity" not in text
+            ), f"{name} still derives the ingestor node id from the transport identity"
+            assert re.search(
+                r"primary identity", text, re.IGNORECASE
+            ), f"{name} does not name the primary identity as the id's source"
+
+    def test_docs_warn_that_changing_the_id_strands_the_old_row(self):
+        """Moving the id leaves a heartbeat-less row behind, so operators are told.
+
+        Nothing in code warns: that would need a durable record of the
+        previously registered id, which this provider does not keep.  The
+        operator-facing docs are the only place the caveat can live.
+        """
+        for name in ("README.md", ".env.example"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            assert re.search(
+                r"strands? the old row", text, re.IGNORECASE
+            ), f"{name} does not warn that changing the id strands the old row"
+            assert re.search(
+                r"ages out", text, re.IGNORECASE
+            ), f"{name} does not say the stranded row ages out"
+
     def test_docs_state_that_connection_does_not_apply(self):
         """RN10's answer has to reach the operator, not just the log."""
         for name in ("README.md", ".env.example"):
