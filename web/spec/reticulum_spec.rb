@@ -99,6 +99,10 @@ RSpec.describe "Reticulum protocol support" do
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
       db.execute("DELETE FROM nodes")
+      # Destinations outlive nodes otherwise: they are keyed on the destination
+      # hash, so a test using a different aspect accumulates rows rather than
+      # overwriting the previous one.
+      db.execute("DELETE FROM destinations")
       db.execute("DELETE FROM ingestors")
       db.execute("DELETE FROM ingestor_activity")
     end
@@ -177,6 +181,82 @@ RSpec.describe "Reticulum protocol support" do
         expect(columns).not_to include("dest_hash")
         expect(columns).to include("identity_hash")
       end
+    end
+  end
+
+  describe "headline aspect preference (SPEC RE10)" do
+    # Post two aspects of ONE identity, in a given order, and read back the
+    # node's headline fields. Both land on the same node row (SPEC RE7).
+    def post_two_aspects(first, second)
+      register_reticulum_ingestor
+      [first, second].each_with_index do |aspect, index|
+        payload = {
+          RETICULUM_NODE_ID => reticulum_node_fixture(
+            last_heard: now - 30 + index,
+            aspect: aspect[:aspect],
+            dest_id: aspect[:dest],
+            role: aspect[:role],
+          ).merge("user" => {
+            "longName" => aspect[:name],
+            "shortName" => "a1b2",
+            "publicKey" => RETICULUM_PUBLIC_KEY,
+          }),
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+        }
+        post "/api/nodes", payload.to_json, auth_headers
+      end
+      with_db(readonly: true) do |db|
+        db.execute(
+          "SELECT long_name, role FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID]
+        ).first
+      end
+    end
+
+    NODE_ASPECT = {
+      aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+      role: "NODE", name: "Department of Decentralization",
+    }.freeze
+    PEER_ASPECT = {
+      aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2,
+      role: "PEER", name: "Afri Nomad Orion",
+    }.freeze
+
+    it "prefers NODE over PEER whichever announce arrives last" do
+      # The whole point: the headline must not depend on arrival order, which
+      # is what made a multi-aspect peer's name alternate on every announce.
+      node_last = post_two_aspects(PEER_ASPECT, NODE_ASPECT)
+      expect(node_last["long_name"]).to eq("Department of Decentralization")
+      expect(node_last["role"]).to eq("NODE")
+
+      clear_tables
+      peer_last = post_two_aspects(NODE_ASPECT, PEER_ASPECT)
+      expect(peer_last["long_name"]).to eq("Department of Decentralization")
+      expect(peer_last["role"]).to eq("NODE")
+    end
+
+    it "ranks PROPAGATION above TRANSPORT" do
+      row = post_two_aspects(
+        { aspect: "rns.transport", dest: RETICULUM_DEST_HASH,
+          role: "TRANSPORT", name: "Transport Instance" },
+        { aspect: "lxmf.propagation", dest: RETICULUM_DEST_HASH2,
+          role: "PROPAGATION", name: "Propagation Store" },
+      )
+      expect(row["long_name"]).to eq("Propagation Store")
+      expect(row["role"]).to eq("PROPAGATION")
+    end
+
+    it "does not let a nameless higher aspect blank the headline" do
+      # Name and role resolve independently: an aspect can carry a role while
+      # announcing no display name.
+      row = post_two_aspects(
+        { aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2,
+          role: "PEER", name: "Afri Nomad Orion" },
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: nil },
+      )
+      expect(row["role"]).to eq("NODE")
+      expect(row["long_name"]).to eq("Afri Nomad Orion")
     end
   end
 

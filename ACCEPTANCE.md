@@ -5695,8 +5695,15 @@ rule that a mapping be deterministic and derived from sender-side material.
 ( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "derived_when_unset" )
 ```
 **Expected:** pass. `INGESTOR_NODE_ID` unset resolves to
-`RNS.Transport.internal_identity()` - the config dir's own transport identity,
-which `rnstatus` shows as "Transport Instance". Reticulum has no handshake
+`RNS.Transport.internal_identity()` - the config dir's persisted transport
+identity (`storage/transport_identity`), stable across restarts. It is **not**
+the hash `rnstatus` prints as "Transport Instance": that is
+`Transport.identity` (`Reticulum.py`), which `Transport.start` replaces with a
+fresh ephemeral identity on every process unless `enable_transport` is set,
+while `internal_identity()` returns the persisted `Transport._identity`.
+Measured across two processes on one config dir: `internal_identity` held
+`90c18b41` both times while `Transport.identity` moved `e7d23b11` -> `bd15b296`.
+Reticulum has no handshake
 revealing "our" node id, so the previous behaviour was to warn and leave the
 heartbeat unregistered; the operator's only recourse was grepping a nomadnet
 logfile. The ingestor aborts only when no identity can be derived at all.
@@ -5734,23 +5741,90 @@ neither has a reason to exist, and both are removed. RPC auth is keyed on the
 config dir's identity, so a differing dir is rejected - which is why
 `~/.reticulum` is the default again (RN3 amended).
 
-### RE-A5 - Each destination is its own node row - T-E (reverses RN1)
+### RE-A5 - One node record per identity - SPEC RE7 (supersedes the RE1 reversal)
 ```bash
-( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "each_destination or heard_on" )
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "one_node_row or field_destinations or heard_on" )
 ( cd web && bundle exec rspec spec/reticulum_spec.rb -e "destinations" )
 ```
-**Expected:** pass. RN1 keyed rows on the identity so a peer's aspects merged
-into one row. The field test showed why that loses information: the aspects
-carry **different names** - `lxmf.delivery` announced "Afri Nomad Orion" and
-`nomadnetwork.node` announced "Department of Decentralization" - so the merged
-row ended up named from one aspect and roled from another.
+**Expected:** pass. A peer announcing `lxmf.delivery`, `lxmf.propagation` and
+`nomadnetwork.node` is **one** node with three destinations. `node_id` is the
+first four bytes of the **identity** hash; a destination hash keys a row only
+when no identity resolves at all.
 
-`node_id` is therefore the first four bytes of the **destination hash** again,
-one row per announced destination. The identity is kept as `nodes.identity_hash`
-so the rows can be grouped by peer later; grouping is a separate design pass and
-is deliberately not attempted here. `_ROLE_RANK`, `_rank_role`, `_record_role`
-and the cross-ingestor `dest_hash` union all become unnecessary and are removed -
-each row now has exactly one aspect, so there is nothing to rank or merge.
+This reverses RE1, which had split one peer into a row per aspect to stop a
+merged row being named from one aspect and roled from another. That problem is
+real but belongs to the `destinations` table (RE-A6), which already carries the
+per-aspect name and role — so the row split bought nothing and cost the node
+count its meaning.
+
+`test_field_destinations_derive_from_the_primary_identity` anchors the model on
+**real captured data**: RNS recomputes `4cf985bf…`, `fee521eb…` and `9c59da5e…`
+from identity `27716218…` alone, proving the three destinations belong to one
+identity rather than assuming it. **Known consequence, accepted:** the
+node-level `long_name`/`role` follow the most recent announce and can alternate
+on a multi-aspect peer; the destinations table holds the per-aspect truth and
+what to surface is a frontend decision.
+
+### RE-A9 - The host id is its primary identity, not its transport identity - SPEC RE8
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "derived_when_unset or stable_across_calls or transport_identity_never_wins or tie_is_not_guessed or host_destinations_label" )
+```
+**Expected:** pass. The 0-hop path table names the destinations announced on
+this machine; `RNS.Identity.recall` maps them to identities, and the one
+fronting the most is the host's primary. The transport identity is **excluded**
+from that count and can never be the host id: RNS generates it as an
+independent keypair, so it matches none of the operator's announced
+destinations — in the field a host whose primary identity was `27716218…`
+registered as `!fbf8e338`, matching nothing it announced.
+
+A tie returns `None` rather than a guess (path-table ordering is unstable, so
+guessing would let the id change between restarts), as does an undiscoverable
+host; the daemon already retries `extract_host_node_id` each loop, so `None` is
+a wait, not a failure. Aspects are labelled by recomputing each known aspect's
+destination hash from the identity hash, because a destination hash is one-way.
+
+### RE-A10 - TRANSPORT is host-only and gated on transport_enabled - SPEC RE9
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "transport_aspect_is_gated" )
+git grep -n "TRANSPORT" -- data/mesh_ingestor/protocols/reticulum.py | grep -c "_ASPECT_ROLES" 
+```
+**Expected:** the test passes and the grep returns `0` — `TRANSPORT` is **not**
+in `_ASPECT_ROLES`, so no announce can ever produce it. It is emitted only for
+the ingestor's own host, under the synthetic aspect `rns.transport`, and only
+when the stack reports `transport_enabled`.
+
+Both halves matter. **Host-only** keeps CONTRACTS' sender-side determinism: for
+our own machine the association is local fact, not an inference from our
+vantage point, so two ingestors on that host agree while every remote peer is
+untouched. **Gated** keeps it honest: the transport identity exists on every
+stack while only a transport-enabled one relays, so an ungated role would
+assert something false on the default configuration. The destination row
+carries the transport identity hash as its `id` but the **primary** identity as
+its `identity_hash`, which is what keeps the host one node. Populates the
+`TRANSPORT` slot RD5 reserved.
+
+### RE-A11 - The headline aspect preference is stable and order-independent - SPEC RE10
+```bash
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "headline aspect preference" )
+```
+**Expected:** pass. A node's `long_name` and `role` come from its highest-ranked
+destination — `NODE` > `PEER` > `PROPAGATION` > `TRANSPORT` — not from whichever
+announce arrived last. The first example posts the same two aspects in **both
+orders** and expects the same headline either way; that order-independence is
+the whole point, since RE7's per-identity rows otherwise let a multi-aspect peer
+alternate between "Afri Nomad Orion" and "Department of Decentralization" on
+every announce, churning the row.
+
+Derived in SQL from the `destinations` rows on each destination write, so it
+survives a restart and agrees across ingestors — the durable form of the
+follow-up RD4 recorded as a known limitation. Name and role resolve
+independently: a third example gives the top-ranked aspect no display name and
+expects the role to move while the headline name stays.
+
+**Note:** `clear_tables` in `spec/reticulum_spec.rb` must delete from
+`destinations`. It did not, and rows keyed on the destination hash accumulated
+across examples; the pre-existing tests hid it by reusing one hash, so only a
+multi-aspect test exposed it.
 
 ### RE-A6 - Destinations are a table, and they are served - T-E
 ```bash

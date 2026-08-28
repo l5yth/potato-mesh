@@ -467,11 +467,9 @@ def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
         ("!0000000a", "Reticulum 000A"),
     ):
         # The placeholder names the row, and the row is keyed on the
-        # destination — so walk destination hashes, not identities.
-        dest = bytes.fromhex(node_id[1:] + "11" * 12)
-        node = _announce_to_node_dict(
-            dest, None, identity=_FakeIdentity(), last_heard=1
-        )
+        # identity — so walk identity hashes, not destinations.
+        idn = _FakeIdentity(bytes.fromhex(node_id[1:] + "11" * 12))
+        node = _announce_to_node_dict(_DEST_HASH, None, identity=idn, last_heard=1)
         assert node["user"]["longName"] == expected, node_id
 
 
@@ -538,26 +536,170 @@ def test_the_derived_node_id_is_stable_across_calls(monkeypatch):
     row per restart. The transport identity is stable per config dir, so no
     key generation or persistence is needed to get that property.
     """
-    fake, _state = _fake_rns()
-    fake.Transport.internal_identity = lambda: _FakeIdentity(
-        bytes.fromhex("fbf8e3389bc79a4fe9ed22eae97fc268")
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: _FIELD_PRIMARY},
     )
-    monkeypatch.setattr(_mod, "RNS", fake)
     monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
     first = ReticulumProvider().extract_host_node_id(None)
     second = ReticulumProvider().extract_host_node_id(None)
-    assert first == second == "!fbf8e338"
+    assert first == second == "!27716218"
+
+
+# ---------------------------------------------------------------------------
+# Host identity discovery (SPEC RE7/RE8)
+#
+# Fixture values are REAL, captured from a live stack, and the destination
+# hashes are verified to derive from the primary identity by RNS itself (see
+# test_field_destinations_derive_from_the_primary_identity). Using real values
+# keeps the fixture from drifting into a shape RNS would never produce.
+# ---------------------------------------------------------------------------
+
+_FIELD_PRIMARY = "27716218762cfd2864141ef286c39940"
+_FIELD_TRANSPORT = "fbf8e3389bc79a4fe9ed22eae97fc268"
+_FIELD_LXMF = "4cf985bf933c21b1aa8dabd407d4ef69"
+_FIELD_PROPAGATION = "fee521eb6fcd937cc519a1ec8c8b0b2a"
+_FIELD_NOMADNET = "9c59da5e1516745d74cc908243e0ba2b"
+
+
+def _local_stack(monkeypatch, dest_to_identity, *, transport_enabled=False):
+    """Point the real RNS at a synthetic 0-hop path table.
+
+    Patches only the four stack accessors discovery uses, leaving
+    ``RNS.Destination.hash`` real so aspect labelling is exercised against
+    RNS's own derivation rather than a reimplementation of it.
+
+    Parameters:
+        monkeypatch: pytest fixture.
+        dest_to_identity: ``{destination_hex: identity_hex}`` for 0-hop paths.
+        transport_enabled: What ``RNS.Reticulum.transport_enabled`` reports.
+    """
+    import RNS
+
+    table = [{"hash": bytes.fromhex(d), "hops": 0} for d in dest_to_identity]
+    instance = types.SimpleNamespace(get_path_table=lambda max_hops=None: table)
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: instance))
+    monkeypatch.setattr(
+        RNS.Reticulum, "transport_enabled", staticmethod(lambda: transport_enabled)
+    )
+    monkeypatch.setattr(
+        RNS.Transport,
+        "internal_identity",
+        staticmethod(lambda: _FakeIdentity(bytes.fromhex(_FIELD_TRANSPORT))),
+    )
+    monkeypatch.setattr(
+        RNS.Identity,
+        "recall",
+        staticmethod(
+            lambda dh, **_k: _FakeIdentity(
+                bytes.fromhex(dest_to_identity[bytes(dh).hex()])
+            )
+        ),
+    )
+
+
+def test_field_destinations_derive_from_the_primary_identity():
+    """The captured aspects really are destinations of the primary identity.
+
+    Anchors the whole model: RNS recomputes each field destination hash from
+    the identity hash alone, which is why one identity is one node and the
+    aspects are its destinations (SPEC RE7).
+    """
+    import RNS
+
+    primary = bytes.fromhex(_FIELD_PRIMARY)
+    assert RNS.Destination.hash(primary, "lxmf", "delivery").hex() == _FIELD_LXMF
+    assert (
+        RNS.Destination.hash(primary, "lxmf", "propagation").hex() == _FIELD_PROPAGATION
+    )
+    assert (
+        RNS.Destination.hash(primary, "nomadnetwork", "node").hex() == _FIELD_NOMADNET
+    )
+    # The transport identity is NOT one of them - it is its own identity.
+    assert _FIELD_TRANSPORT not in {_FIELD_LXMF, _FIELD_PROPAGATION, _FIELD_NOMADNET}
 
 
 def test_host_node_id_is_derived_when_unset(monkeypatch):
-    """T-B: an operator should not have to grep a nomadnet logfile for this."""
-    fake, _state = _fake_rns()
-    fake.Transport.internal_identity = lambda: _FakeIdentity(
-        bytes.fromhex("fbf8e3389bc79a4fe9ed22eae97fc268")
+    """T-B: the host id is the primary identity, never the transport identity.
+
+    The field case: a host whose primary identity is ``27716218…`` registered
+    as ``!fbf8e338`` because the id came from the transport identity, matching
+    none of the operator's announced destinations (SPEC RE8).
+    """
+    _local_stack(
+        monkeypatch,
+        {
+            _FIELD_LXMF: _FIELD_PRIMARY,
+            _FIELD_NOMADNET: _FIELD_PRIMARY,
+            _FIELD_PROPAGATION: _FIELD_PRIMARY,
+        },
     )
-    monkeypatch.setattr(_mod, "RNS", fake)
     monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
-    assert ReticulumProvider().extract_host_node_id(None) == "!fbf8e338"
+    assert ReticulumProvider().extract_host_node_id(None) == "!27716218"
+
+
+def test_transport_identity_never_wins_the_primary_pick(monkeypatch):
+    """A transport-only stack yields no host id rather than the wrong one."""
+    _local_stack(monkeypatch, {_FIELD_TRANSPORT: _FIELD_TRANSPORT})
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    assert ReticulumProvider().extract_host_node_id(None) is None
+
+
+def test_primary_identity_tie_is_not_guessed(monkeypatch):
+    """Two identities with equal destination counts yield None, not a coin flip.
+
+    Path-table ordering is not stable, so guessing would let the ingestor's own
+    id change between restarts (SPEC RE8).
+    """
+    other = "11223344" + "55" * 12
+    _local_stack(monkeypatch, {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: other})
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    assert ReticulumProvider().extract_host_node_id(None) is None
+
+
+def test_host_destinations_label_every_announced_aspect(monkeypatch):
+    """All of the host's aspects become destinations of ONE node record."""
+    _local_stack(
+        monkeypatch,
+        {
+            _FIELD_LXMF: _FIELD_PRIMARY,
+            _FIELD_NOMADNET: _FIELD_PRIMARY,
+            _FIELD_PROPAGATION: _FIELD_PRIMARY,
+        },
+    )
+    records = ReticulumProvider().host_destination_nodes()
+    assert {r["nodeId"] for r in records} == {"!27716218"}
+    by_aspect = {r["destination"]["aspect"]: r["destination"] for r in records}
+    assert by_aspect["lxmf.delivery"]["id"] == _FIELD_LXMF
+    assert by_aspect["lxmf.propagation"]["id"] == _FIELD_PROPAGATION
+    assert by_aspect["nomadnetwork.node"]["id"] == _FIELD_NOMADNET
+    assert by_aspect["lxmf.propagation"]["role"] == "PROPAGATION"
+    assert by_aspect["nomadnetwork.node"]["role"] == "NODE"
+    # Transport is off by default, so its aspect is absent.
+    assert _mod._TRANSPORT_ASPECT not in by_aspect
+    assert all(r["identityHash"] == _FIELD_PRIMARY for r in records)
+
+
+def test_transport_aspect_is_gated_on_transport_enabled(monkeypatch):
+    """TRANSPORT is reported only when the stack actually relays traffic.
+
+    The transport identity exists on every stack; claiming the role on a
+    non-transport one would assert something false (SPEC RE8).
+    """
+    dests = {_FIELD_LXMF: _FIELD_PRIMARY}
+    _local_stack(monkeypatch, dests, transport_enabled=True)
+    on = {
+        r["destination"]["aspect"]: r["destination"]
+        for r in ReticulumProvider().host_destination_nodes()
+    }
+    assert on[_mod._TRANSPORT_ASPECT]["id"] == _FIELD_TRANSPORT
+    assert on[_mod._TRANSPORT_ASPECT]["role"] == "TRANSPORT"
+
+    _local_stack(monkeypatch, dests, transport_enabled=False)
+    off = {
+        r["destination"]["aspect"] for r in ReticulumProvider().host_destination_nodes()
+    }
+    assert _mod._TRANSPORT_ASPECT not in off
 
 
 def test_local_announces_survive_an_interface_allowlist(monkeypatch):
@@ -581,12 +723,12 @@ def test_local_announces_survive_an_interface_allowlist(monkeypatch):
     assert _mod._announce_admitted(hops=1, interface_name="TCPInterface[hub]") is False
 
 
-def test_each_destination_is_its_own_node_row():
-    """T-E: aspects carry different names, so they are distinct entries.
+def test_every_aspect_of_one_identity_is_one_node_row():
+    """SPEC RE7: one peer is one node record, whatever it announces on.
 
-    One identity announcing ``lxmf.delivery`` ("Afri Nomad Orion") and
-    ``nomadnetwork.node`` ("Department of Decentralization") produced one row
-    whose name came from one aspect and whose role came from another.
+    An identity announcing ``lxmf.delivery`` and ``nomadnetwork.node`` is a
+    single node with two destinations -- not two nodes. Verified against real
+    ``RNS.Destination.hash`` output so the derivation cannot drift from RNS.
     """
     import RNS
 
@@ -599,10 +741,14 @@ def test_each_destination_is_its_own_node_row():
     b = _announce_to_node_dict(
         nomad, b"Dept of Decentralization", identity=idn, aspect="nomadnetwork.node"
     )
-    assert a["nodeId"] != b["nodeId"]
-    assert a["nodeId"] == "!" + lxmf.hex()[:8]
-    # Both still resolve to the same identity, which is what groups them later.
+    # One identity, one node id -- keyed on the identity, never the destination.
+    assert a["nodeId"] == b["nodeId"] == "!" + idn.hash.hex()[:8]
+    assert a["nodeId"] != "!" + lxmf.hex()[:8]
     assert a["identityHash"] == b["identityHash"] == idn.hash.hex()
+    # The aspects stay distinguishable through their destination rows (RE2).
+    assert a["destination"]["id"] == lxmf.hex()
+    assert b["destination"]["id"] == nomad.hex()
+    assert a["destination"]["aspect"] != b["destination"]["aspect"]
 
 
 def test_node_record_carries_the_interface_it_was_heard_on():
@@ -640,16 +786,16 @@ def test_announce_to_node_dict_basic_fields():
     assert node["protocol"] == "reticulum"
     assert node["hopsAway"] == 2
     assert node["user"]["longName"] == "Alice"
-    # Keyed on the destination, not the identity (SPEC RE-A5); the identity
-    # rides along so the rows can be grouped by peer later.
-    assert node["nodeId"] == "!aabbccdd"
+    # Keyed on the identity (SPEC RE7); the destination it arrived on is
+    # carried separately, in the destinations table.
+    assert node["nodeId"] == "!beef0001"
     assert node["identityHash"] == _IDENTITY_HASH.hex()
     assert node["destination"] == {
         "id": _DEST_HASH.hex(),
         "aspect": "lxmf.delivery",
         "role": "PEER",
     }
-    assert node["user"]["shortName"] == "aabb"
+    assert node["user"]["shortName"] == "beef"
     # publicKey is the identity's real key, never a destination hash (#888).
     assert node["user"]["publicKey"] == _PUBLIC_KEY.hex()
     assert node["user"]["publicKey"] != _DEST_HASH.hex()
@@ -669,13 +815,13 @@ def test_announce_to_node_dict_public_key_none_when_unreadable():
 def test_announce_to_node_dict_long_name_falls_back_to_the_node_placeholder():
     """Undecodable app_data falls back to a placeholder naming the *node*.
 
-    Not the destination: the row is keyed on the identity (SPEC RN1), and the
+    Not the destination: the row is keyed on the identity (SPEC RE7), and the
     web upsert only yields to the "<Label> <short id>" form it recognises.
     """
     node = _announce_to_node_dict(
         _DEST_HASH, b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
     )
-    assert node["user"]["longName"] == "Reticulum CCDD"
+    assert node["user"]["longName"] == "Reticulum 0001"
 
 
 def test_announce_to_node_dict_omits_hops_when_unknown():
@@ -694,13 +840,21 @@ def test_announce_to_node_dict_defaults_last_heard_to_now():
     assert before <= node["lastHeard"] <= after
 
 
-def test_announce_to_node_dict_none_without_a_usable_destination():
-    """An announce with no resolvable identity yields None, not a node dict."""
-    # The destination keys the row, so an unusable one yields nothing. A
-    # missing identity only costs the public key and the grouping hash.
-    assert _announce_to_node_dict(b"\xaa", b"Alice", identity=_FakeIdentity()) is None
-    assert _announce_to_node_dict(None, b"Alice", identity=_FakeIdentity()) is None
-    assert _announce_to_node_dict(_DEST_HASH, b"Alice") is not None
+def test_announce_to_node_dict_needs_an_identity_or_a_usable_destination():
+    """The identity keys the row; the destination is only its aspect (RE7).
+
+    A malformed destination hash no longer sinks the announce -- the identity
+    still keys the node -- but it must not produce a ``destination`` mapping,
+    which would write a destinations row under a truncated id.
+    """
+    salvaged = _announce_to_node_dict(b"\xaa", b"Alice", identity=_FakeIdentity())
+    assert salvaged["nodeId"] == "!beef0001"
+    assert "destination" not in salvaged
+    # Neither a usable identity nor a usable destination -> nothing to key on.
+    assert _announce_to_node_dict(b"\xaa", b"Alice", identity=None) is None
+    # Identity missing but destination good: falls back to the destination.
+    fallback = _announce_to_node_dict(_DEST_HASH, b"Alice")
+    assert fallback["nodeId"] == "!aabbccdd"
 
 
 def test_announce_to_node_dict_id_matches_node_id_helper():
@@ -708,8 +862,8 @@ def test_announce_to_node_dict_id_matches_node_id_helper():
     node = _announce_to_node_dict(
         _DEST_HASH, None, identity=_FakeIdentity(), last_heard=1
     )
-    assert node["nodeId"] == _reticulum_node_id(_DEST_HASH)
-    assert node["user"]["shortName"] == _reticulum_node_id(_DEST_HASH)[1:5]
+    assert node["nodeId"] == _reticulum_node_id(_IDENTITY_HASH)
+    assert node["user"]["shortName"] == _reticulum_node_id(_IDENTITY_HASH)[1:5]
 
 
 # ---------------------------------------------------------------------------
@@ -798,8 +952,8 @@ def test_received_announce_upserts_node(monkeypatch):
     assert seen["count"] == 1
     assert len(upserts) == 1
     node_id, node = upserts[0]
-    # Keyed on the destination the announce arrived for (SPEC RE-A5).
-    assert node_id == "!aabbccdd"
+    # Keyed on the announcing identity (SPEC RE7).
+    assert node_id == "!beef0001"
     assert node["protocol"] == "reticulum"
     assert node["user"]["longName"] == "Alice"
     assert node["hopsAway"] == 1
@@ -824,7 +978,7 @@ def test_received_announce_recalls_identity_when_callback_omits_it(monkeypatch):
     handler.received_announce(
         destination_hash=_DEST_HASH, announced_identity=None, app_data=b"Alice"
     )
-    assert [nid for nid, _ in upserts] == ["!aabbccdd"]
+    assert [nid for nid, _ in upserts] == ["!beef0001"]
 
 
 def test_received_announce_skips_non_allowlisted_interface(monkeypatch):
@@ -878,7 +1032,7 @@ def test_received_announce_ingests_allowlisted_interface(monkeypatch):
         announced_identity=_FakeIdentity(),
         app_data=b"Alice",
     )
-    assert [nid for nid, _ in upserts] == ["!aabbccdd"]
+    assert [nid for nid, _ in upserts] == ["!beef0001"]
 
 
 def test_received_announce_counts_frame_even_when_unmappable(monkeypatch):
@@ -1128,11 +1282,11 @@ def test_node_snapshot_items_returns_heard_announces(monkeypatch):
 
     items = ReticulumProvider().node_snapshot_items(iface)
     as_dict = dict(items)
-    assert set(as_dict) == {"!aabbccdd", "!11223344"}
-    assert as_dict["!aabbccdd"]["user"]["longName"] == "Alice"
+    assert set(as_dict) == {"!beef0001", "!c0ffee00"}
+    assert as_dict["!beef0001"]["user"]["longName"] == "Alice"
     # Name-less announce falls back to a placeholder built from its own node
     # id, so it can never carry another destination's hex.
-    assert as_dict["!11223344"]["user"]["longName"] == "Reticulum 3344"
+    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum EE00"
 
 
 def test_update_node_ignores_a_falsy_node_id():

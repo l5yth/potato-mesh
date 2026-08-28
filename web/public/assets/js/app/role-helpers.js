@@ -92,11 +92,12 @@ export const meshcoreRoleColors = Object.freeze({
  * The tile's own `#7b61ff` measures **4.39:1** and would fail, which is why
  * `TRANSPORT` is one step lighter than the tile rather than equal to it.
  *
- * `TRANSPORT` is a **reserved slot**: no Reticulum announce exposes transport
- * status, so nothing populates it today (SPEC RD4). It ships with the ramp so
- * the palette is complete the moment a source exists — deriving it from our own
- * path table would make it a property of this ingestor's vantage point rather
- * than of the node.
+ * `TRANSPORT` is populated for the **ingestor's own host only** (SPEC RE8), and
+ * only when its stack reports `transport_enabled`. No announce exposes
+ * transport status, so it stays absent for every remote peer: deriving it from
+ * our own path table would make it a property of this ingestor's vantage point
+ * rather than of the node, which is the CONTRACTS sender-side determinism rule
+ * (SPEC RD4).
  *
  * @type {Readonly<Record<string, string>>}
  */

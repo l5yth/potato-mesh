@@ -443,6 +443,17 @@ start, whose only interface is a link-local `AutoInterface`:
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
   and run the container with host networking.
 
+The ingestor derives its own node id from the config dir's transport identity;
+`INGESTOR_NODE_ID` overrides it. To read the id it will use:
+
+```bash
+python -c "import RNS; RNS.Reticulum(configdir='$HOME/.reticulum'); \
+  print('!' + RNS.Transport.internal_identity().hash.hex()[:8])"
+```
+
+It is stable per config dir. This is not the hash `rnstatus` prints as
+"Transport Instance" unless `enable_transport` is set in your config.
+
 A node appears once per announced destination, so one peer running LXMF and a
 nomadnet node shows up as two entries. `GET /api/destinations` lists them and
 groups them by identity.

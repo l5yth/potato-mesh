@@ -26,7 +26,7 @@ Note: non-Meshtastic protocols need a strategy to map their native node identifi
 The Reticulum provider (`PROTOCOL=reticulum`, `data/mesh_ingestor/protocols/reticulum.py`) maps announces into the canonical id space as follows:
 
 - **Canonical node id** = `!` + the first 4 bytes (8 lowercase hex chars) of the 16-byte **destination hash**, mirroring MeshCore's first-4-bytes-of-pubkey rule. Deterministic and sender-side, so two ingestors hearing the same announce upsert the same row.
-- **One row per announced destination.** A Reticulum identity announces on several destinations -- one per aspect (`lxmf.delivery`, `nomadnetwork.node`, `lxmf.propagation`) -- and each carries its **own display name and role**, so each is its own node row. Keying on the identity instead (the previous rule) merged them into a row named from one aspect and roled from another. The identity travels as `identityHash` and is what groups the rows back into one peer; grouping is a presentation concern, not an ingest one.
+- **One row per identity (SPEC RE7).** A Reticulum identity announces on several destinations -- one per aspect (`lxmf.delivery`, `nomadnetwork.node`, `lxmf.propagation`) -- and all of them are **one node**: `node_id` is the first four bytes of the *identity* hash. Each aspect becomes a row in the `destinations` table carrying its own name and role, which is where the per-aspect detail lives. Keying rows on the destination hash instead (the previous rule) split one peer into a node per aspect. A destination hash keys a row only when no identity can be resolved at all. **Consequence:** the node-level `long_name`/`role` reflect the most recent announce and can alternate on a multi-aspect peer; the destinations table holds the per-aspect truth.
 - **`user.publicKey`** is the announcing identity's real public key (64 bytes / 128 hex), never a destination hash -- a destination hash is a truncated hash over the identity and name hashes, not a key.
 - **`destination`** is `{id, aspect, role}` for the destination this announce arrived on. Role is derived from the aspect: `lxmf.delivery` -> `PEER`, `nomadnetwork.node` -> `NODE`, `lxmf.propagation` -> `PROPAGATION`. `TRANSPORT` is reserved and never emitted -- no announce exposes transport status, and inferring it from the ingestor's own path table would make it a property of our vantage point rather than of the node.
 - **`interface`** is the interface the announce was heard on, when known. Retrieved through `RNS.Reticulum`'s shared-instance-aware accessors, which RPC to a running `rnsd` and return **its** view; `RNS.Transport.next_hop_interface` reads only the local process's path table and answers `LocalInterface[...]` for everything.
@@ -43,10 +43,15 @@ the `destinations` table already gets, via its own forward-only statement
 outside the freshness guard) is a tracked follow-up; a new protocol should not
 copy the in-memory accumulator as though it were durable.
 
-**`TRANSPORT` is never emitted**: no announce exposes transport
+**`TRANSPORT` is emitted for the ingestor's own host only** (SPEC RE9), under
+the synthetic aspect `rns.transport` and only when the local stack reports
+`transport_enabled`.  For our own machine the association is local fact rather
+than an inference from a vantage point, so two ingestors on that host agree.
+For **every remote peer it stays absent**: no announce exposes transport
 status, and inferring it from the ingestor's own path table would make it a
 property of our vantage point rather than of the node, so two ingestors would
-disagree -- the sender-side determinism rule above (SPEC RD4).
+disagree -- the sender-side determinism rule above (SPEC RD4).  A provider for
+another protocol must not emit `TRANSPORT` for anything but its own host.
 
 **Interface scope.** An RNS stack can carry LoRa and IP interfaces at once, and an announce listener hears every announce reachable over any of them — with RNS's default `AutoInterface` (IPv6 link-local multicast) that is the entire local Reticulum network. `RETICULUM_INTERFACES` is a comma-separated, case-insensitive **substring** allowlist of interface names (e.g. `rnode`) matched against the interface the announce's path arrived on; **empty is the default and ingests everything**. A filtered-out announce is not counted as this mesh's traffic. Reticulum exposes no protocol-level "this peer is on LoRa" marker, so the interface a path arrived on is the only available proxy (SPEC RN4).
 
@@ -366,6 +371,21 @@ bound), and a `before` newer than "now" is a no-op. A non-positive or non-intege
 `before` is ignored (treated as absent). The cursor composes with `?protocol=` and
 is protocol-neutral. The per-id routes (`GET /api/.../:id`) and `GET /api/instances`
 do **not** accept `before`.
+
+### Host-owned destinations (SPEC RE8)
+
+The ingestor's own aspects never arrive as announces -- nothing relays our own
+announce back to us -- so they are discovered instead and re-emitted on every
+node snapshot.
+
+- Source: 0-hop entries of the running stack's path table, mapped to their
+  owning identity via `RNS.Identity.recall`.
+- The host's **primary identity** is the one fronting the most such
+  destinations, with the transport identity excluded from that count.
+- Aspects are labelled by recomputing each known aspect's destination hash from
+  the identity hash (a destination hash is one-way and cannot be read back).
+- Emitted as ordinary node records sharing one `nodeId`, each carrying its own
+  `destination` mapping, so no separate ingest route is involved.
 
 ### GET /api/destinations response shape
 

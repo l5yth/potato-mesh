@@ -293,6 +293,64 @@ module PotatoMesh
         end
       end
 
+      # Aspect preference for a Reticulum node's headline name and role.
+      #
+      # A peer announcing several aspects posts one record per destination, each
+      # with its own display name and role, so whichever arrived last would
+      # otherwise name the node -- alternating the headline on every announce
+      # and churning the row (SPEC RE10). Lower rank wins.
+      #
+      # Deliberately *not* the RD5 colour ramp order, which sequences a violet
+      # gradient; this ranks how well an aspect identifies the peer. A node
+      # address names the operator's node, a delivery address names its owner,
+      # a propagation store is infrastructure, and the transport instance is an
+      # implementation detail of the stack.
+      DESTINATION_ROLE_RANK_SQL = <<~SQL.freeze
+        CASE role
+          WHEN 'NODE' THEN 1
+          WHEN 'PEER' THEN 2
+          WHEN 'PROPAGATION' THEN 3
+          WHEN 'TRANSPORT' THEN 4
+          ELSE 5
+        END
+      SQL
+
+      # Re-derive a Reticulum node's headline name and role from its aspects.
+      #
+      # Durable by construction: the answer is recomputed from the
+      # +destinations+ rows every time one changes, so it survives a restart and
+      # agrees across ingestors -- unlike an in-memory rank accumulator, which
+      # a restart or a second ingestor hearing only a lower aspect could demote
+      # (the follow-up SPEC RD4 recorded as a known limitation).
+      #
+      # +name+ and +role+ are resolved independently: an aspect can carry a role
+      # while announcing no display name, and taking both from one row would let
+      # a nameless top-ranked aspect blank the headline. Ties break on the more
+      # recently heard destination.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param node_id [String] canonical id of the node to refresh.
+      # @return [void]
+      def refresh_node_identity_from_destinations(db, node_id)
+        rank = DESTINATION_ROLE_RANK_SQL
+        with_busy_retry do
+          db.execute(<<~SQL, [node_id, node_id, node_id])
+            UPDATE nodes SET
+              long_name = COALESCE((
+                SELECT name FROM destinations
+                WHERE node_id = ? AND name IS NOT NULL AND TRIM(name) <> ''
+                ORDER BY #{rank}, COALESCE(last_heard, 0) DESC LIMIT 1
+              ), long_name),
+              role = COALESCE((
+                SELECT role FROM destinations
+                WHERE node_id = ? AND role IS NOT NULL
+                ORDER BY #{rank}, COALESCE(last_heard, 0) DESC LIMIT 1
+              ), role)
+            WHERE node_id = ? AND protocol = 'reticulum'
+          SQL
+        end
+      end
+
       # Insert or update a node row from an inbound NodeInfo-style payload.
       #
       # Two-phase write. Phase one is the freshness-guarded upsert: a record
@@ -535,6 +593,9 @@ module PotatoMesh
                 interface: string_or_nil(n["interface"]),
                 heard: lh,
               )
+              # The headline fields follow the ranked aspect, not the announce
+              # that happened to arrive last (SPEC RE10).
+              refresh_node_identity_from_destinations(db, node_id)
             end
 
             # Keyed-evidence stamp (SPEC MR1).  Deliberately a separate,

@@ -25,12 +25,25 @@ Like :class:`~data.mesh_ingestor.protocols.meshtastic_udp.MeshtasticUdpProvider`
 this provider is receive-only: it never transmits and has no roster to fetch.
 
 **Own node id.**  Reticulum has no protocol-level handshake revealing "our"
-node id, but it does not need one: the config dir already holds a transport
-identity — what ``rnstatus`` shows as "Transport Instance" — and the ingestor
-derives its ``!xxxxxxxx`` from that.  :envvar:`INGESTOR_NODE_ID` is therefore an
-**override**, not a requirement (SPEC RE5).  Nothing is generated or written:
-peers are keyed on their *destination* hash (SPEC RE1), so an identity-keyed
-ingestor row would be a second, private id rule disagreeing with the first.
+node id, so the ingestor discovers it: the 0-hop entries of the running
+stack's path table are the destinations announced by apps on this machine, and
+:func:`RNS.Identity.recall` maps each back to its owning identity.  The
+identity fronting the most of them is the host's **primary identity**, and its
+first four bytes are the node id (SPEC RE8).  Ties are not guessed — path-table
+ordering is unstable, so an ambiguous host must set
+:envvar:`INGESTOR_NODE_ID`, which otherwise remains an **override**, not a
+requirement.
+
+The *transport* identity is deliberately **not** the node id.  RNS generates it
+as an independent keypair in ``storage/transport_identity``, so it matches none
+of the operator's announced destinations: a host whose primary identity was
+``27716218…`` registered as ``!fbf8e338`` under the old rule.  It is instead
+recorded as one more destination of the host — see :data:`_TRANSPORT_ASPECT`.
+Note also that it is not the hash ``rnstatus`` prints as "Transport Instance":
+``rnstatus`` reports ``Transport.identity``, which RNS replaces with a fresh
+ephemeral identity on every start unless ``enable_transport`` is set, while
+``internal_identity()`` returns the persisted ``Transport._identity``.  Nothing
+is generated or written by this provider.
 
 **Connection variables.**  :envvar:`CONNECTION` names a single serial, TCP, or
 BLE endpoint and has no meaning for RNS, which is a stack of many interfaces
@@ -108,6 +121,16 @@ ingestors would disagree (the CONTRACTS sender-side determinism rule).
 _ANNOUNCE_ASPECTS: tuple[str, ...] = tuple(_ASPECT_ROLES)
 """Destination aspects whose announces are ingested as node records."""
 
+_TRANSPORT_ASPECT = "rns.transport"
+"""Synthetic aspect naming the host's own transport instance (SPEC RE8).
+
+Not a real announce aspect: RNS never announces transport status, and the
+transport identity is an *independent* identity rather than a destination of
+the operator's primary one.  It is recorded only for **this ingestor's own
+host**, where the association is local fact rather than inference, so the
+CONTRACTS sender-side determinism rule still holds for every remote peer.
+"""
+
 _MSGPACK_ARRAY_LEAD_BYTES = frozenset(range(0x90, 0xA0)) | {0xDC, 0xDD}
 """First-byte values identifying a msgpack-encoded announce ``app_data``.
 
@@ -157,6 +180,32 @@ def _reticulum_hash_hex(dest_hash: object) -> str | None:
         stripped = dest_hash.strip().lower()
         return stripped or None
     return None
+
+
+def _announce_node_id(identity: object, dest_hash: object) -> str | None:
+    """Return the node ID an announce belongs to: the **identity**, not the
+    destination.
+
+    One peer is one node record; its destinations are aspects of that identity
+    and are carried separately in the ``destinations`` table (SPEC RE2).  A
+    destination hash is a truncated hash over the identity *and* the name hash,
+    so keying rows on it splits one peer into a row per aspect.
+
+    Falls back to the destination hash only when the identity cannot be
+    resolved at all — without it there is nothing else to key on, and dropping
+    the announce would lose a peer entirely.
+
+    Parameters:
+        identity: Announcing :class:`RNS.Identity`, or ``None``.
+        dest_hash: Destination hash the announce arrived for.
+
+    Returns:
+        Canonical ``!xxxxxxxx`` node ID, or ``None`` when neither hash is usable.
+    """
+    node_id = _reticulum_node_id(getattr(identity, "hash", None))
+    if node_id is not None:
+        return node_id
+    return _reticulum_node_id(dest_hash)
 
 
 def _reticulum_short_name(node_id: str | None) -> str:
@@ -289,6 +338,22 @@ def _announce_interface_name(dest_hash: object) -> str | None:
     """
     if not isinstance(dest_hash, (bytes, bytearray)):
         return None
+    # Ask the *running stack* which interface the path arrived on.  On a shared
+    # instance ``get_next_hop_if_name`` RPCs to ``rnsd`` and returns its view;
+    # ``RNS.Transport.next_hop_interface`` reads only this process's path table,
+    # which for a local client answers ``LocalInterface[...]`` for everything and
+    # is what made the allowlist look unanswerable (SPEC RE3).
+    try:
+        instance = RNS.Reticulum.get_instance()
+    except Exception:
+        instance = None
+    if instance is not None:
+        try:
+            name = instance.get_next_hop_if_name(bytes(dest_hash))
+            if name:
+                return str(name)
+        except Exception:
+            pass
     try:
         iface = RNS.Transport.next_hop_interface(bytes(dest_hash))
     except Exception:
@@ -400,7 +465,7 @@ def _announce_to_node_dict(
         Node dict for the ``POST /api/nodes`` payload, or ``None`` when
         *dest_hash* cannot be mapped to a canonical node ID.
     """
-    node_id = _reticulum_node_id(dest_hash)
+    node_id = _announce_node_id(identity, dest_hash)
     if node_id is None:
         return None
     hash_hex = _reticulum_hash_hex(dest_hash)
@@ -424,9 +489,12 @@ def _announce_to_node_dict(
     identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
     if identity_hash:
         node["identityHash"] = identity_hash
-    # hash_hex is necessarily set: node_id derives from it, and a None there
-    # already returned above — so no guard, which would be unreachable.
-    node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
+    # The node row can be keyed on the identity alone, so a malformed
+    # destination hash no longer sinks the whole announce — but it must not
+    # reach the destinations table either, where it would create a row keyed on
+    # a truncated id.  Emit the mapping only when the hash is usable.
+    if hash_hex is not None and len(hash_hex) >= 8:
+        node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
     if interface:
         node["interface"] = interface
     if hops is not None:
@@ -484,12 +552,12 @@ class _ReticulumAnnounceHandler:
                 return
             handlers._mark_packet_seen()
             identity = _identity_from_announce(announced_identity, destination_hash)
-            # One row per announced destination (SPEC RN1 as reversed by RE-A5):
-            # each aspect carries its own name and role, so merging them onto
-            # the identity produced a row named from one aspect and roled from
-            # another. The identity rides along as +identityHash+ so the rows
-            # can be grouped by peer later.
-            node_id = _reticulum_node_id(destination_hash)
+            # One row per *identity* (SPEC RE7, restoring RN1): a peer announcing
+            # lxmf.delivery, lxmf.propagation and nomadnetwork.node is one node
+            # with three destinations, not three nodes. The per-aspect names and
+            # roles live in the destinations table (RE2), which is what made the
+            # per-destination row split unnecessary.
+            node_id = _announce_node_id(identity, destination_hash)
             if node_id is None:
                 config._debug_log(
                     "Skipped Reticulum announce with an unusable destination hash",
@@ -540,8 +608,7 @@ class _ReticulumInterface:
     """Always ``None``: Reticulum has no handshake revealing "our" node id.
 
     :meth:`ReticulumProvider.extract_host_node_id` answers instead, from
-    :envvar:`INGESTOR_NODE_ID` or the config dir's own transport identity
-    (SPEC RE5).
+    :envvar:`INGESTOR_NODE_ID` or the discovered primary identity (SPEC RE8).
     """
 
     def __init__(self, *, target: str | None) -> None:
@@ -589,6 +656,199 @@ class _ReticulumInterface:
                 RNS.Transport.deregister_announce_handler(handler)
             except Exception:
                 pass
+
+
+def _local_path_entries() -> list[dict]:
+    """Return the running stack's 0-hop path-table entries.
+
+    ``get_path_table`` RPCs to ``rnsd`` on a shared instance, so this is the
+    stack's own view rather than this process's, and 0 hops means "announced by
+    an app on this machine" (SPEC RE4).
+
+    Returns:
+        List of path-table entry mappings; empty when the stack cannot be asked.
+    """
+    try:
+        instance = RNS.Reticulum.get_instance()
+    except Exception:
+        return []
+    if instance is None:
+        return []
+    try:
+        entries = instance.get_path_table(max_hops=0)
+    except Exception:
+        return []
+    if not isinstance(entries, (list, tuple)):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _transport_identity_hash() -> str | None:
+    """Return the hex hash of this config dir's persisted transport identity.
+
+    Returns:
+        Lowercase hex identity hash, or ``None`` when it cannot be read.
+    """
+    try:
+        identity = RNS.Transport.internal_identity()
+    except Exception:
+        return None
+    return _reticulum_hash_hex(getattr(identity, "hash", None))
+
+
+def _local_identity_destinations() -> dict[str, set[str]]:
+    """Group local (0-hop) destinations by the identity that owns them.
+
+    The transport identity is **excluded**: it fronts no destinations and is a
+    separate identity, so counting it would distort the "most destinations"
+    rule that picks the host's primary identity (SPEC RE8).
+
+    Returns:
+        Mapping of identity hash hex to the set of its 0-hop destination hashes.
+    """
+    transport = _transport_identity_hash()
+    groups: dict[str, set[str]] = {}
+    for entry in _local_path_entries():
+        dest = entry.get("hash")
+        if not isinstance(dest, (bytes, bytearray)):
+            continue
+        try:
+            identity = RNS.Identity.recall(bytes(dest))
+        except Exception:
+            continue
+        identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
+        if identity_hash is None or identity_hash == transport:
+            continue
+        dest_hex = _reticulum_hash_hex(dest)
+        if dest_hex is None:
+            continue
+        groups.setdefault(identity_hash, set()).add(dest_hex)
+    return groups
+
+
+def _primary_local_identity() -> str | None:
+    """Pick the host's primary identity: the one fronting the most destinations.
+
+    A tie is not resolved by guessing — the id would then depend on path-table
+    ordering and could change between restarts — so an ambiguous host must set
+    :envvar:`INGESTOR_NODE_ID` (SPEC RE8).
+
+    Returns:
+        Identity hash hex, or ``None`` when none can be chosen.
+    """
+    groups = _local_identity_destinations()
+    if not groups:
+        return None
+    ranked = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    if len(ranked) > 1 and len(ranked[0][1]) == len(ranked[1][1]):
+        return None
+    return ranked[0][0]
+
+
+def _aspect_destination_hex(identity_hash: str, aspect: str) -> str | None:
+    """Compute the destination hash an identity would announce for *aspect*.
+
+    A destination hash is one-way, so an aspect cannot be read back from a
+    path-table entry.  It can be *recomputed*: ``RNS.Destination.hash`` accepts
+    a raw 16-byte identity hash, so each known aspect is hashed and matched
+    against the local destinations to label them.
+
+    Parameters:
+        identity_hash: Owning identity hash as hex.
+        aspect: Dotted aspect name, e.g. ``lxmf.delivery``.
+
+    Returns:
+        Destination hash hex, or ``None`` when it cannot be computed.
+    """
+    app_name, _, rest = aspect.partition(".")
+    if not app_name or not rest:
+        return None
+    try:
+        return RNS.Destination.hash(
+            bytes.fromhex(identity_hash), app_name, *rest.split(".")
+        ).hex()
+    except Exception:
+        return None
+
+
+def _host_destination_nodes(identity_hash: str) -> list[dict]:
+    """Build node records for every local destination of the host's identity.
+
+    One record per aspect the host actually announces, plus the transport
+    instance when the stack has transport enabled — all keyed on the **same**
+    node id, because they are aspects of one identity (SPEC RE7/RE8).
+
+    Parameters:
+        identity_hash: The host's primary identity hash, as hex.
+
+    Returns:
+        Node dicts ready for ``POST /api/nodes``; empty when none apply.
+    """
+    node_id = _reticulum_node_id(identity_hash)
+    if node_id is None:
+        return []
+    local = _local_identity_destinations().get(identity_hash, set())
+    now = int(time.time())
+    records: list[dict] = []
+    for aspect in _ANNOUNCE_ASPECTS:
+        dest_hex = _aspect_destination_hex(identity_hash, aspect)
+        if dest_hex is None or dest_hex not in local:
+            continue
+        records.append(
+            {
+                "nodeId": node_id,
+                "lastHeard": now,
+                "protocol": "reticulum",
+                "identityHash": identity_hash,
+                "destination": {
+                    "id": dest_hex,
+                    "aspect": aspect,
+                    "role": _ASPECT_ROLES.get(aspect),
+                },
+                "user": {
+                    "shortName": _reticulum_short_name(node_id),
+                    "longName": f"Reticulum {node_id[-4:].upper()}",
+                    "role": _ASPECT_ROLES.get(aspect),
+                },
+            }
+        )
+    transport = _transport_identity_hash()
+    if transport and _transport_enabled():
+        records.append(
+            {
+                "nodeId": node_id,
+                "lastHeard": now,
+                "protocol": "reticulum",
+                "identityHash": identity_hash,
+                "destination": {
+                    "id": transport,
+                    "aspect": _TRANSPORT_ASPECT,
+                    "role": "TRANSPORT",
+                },
+                "user": {
+                    "shortName": _reticulum_short_name(node_id),
+                    "longName": f"Reticulum {node_id[-4:].upper()}",
+                    "role": "TRANSPORT",
+                },
+            }
+        )
+    return records
+
+
+def _transport_enabled() -> bool:
+    """Report whether the running stack relays other nodes' traffic.
+
+    Gates the ``TRANSPORT`` role: the transport identity exists on every stack,
+    but only a transport-enabled one actually relays, so reporting the role
+    unconditionally would assert something false (SPEC RE8).
+
+    Returns:
+        ``True`` when RNS reports transport enabled.
+    """
+    try:
+        return bool(RNS.Reticulum.transport_enabled())
+    except Exception:
+        return False
 
 
 class ReticulumProvider:
@@ -684,8 +944,9 @@ class ReticulumProvider:
         The operator's :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` when
         set — canonicalised the Reticulum way, since a raw identity hash sent
         through the shared ``canonical_node_id`` truncates from the wrong end
-        (SPEC RE5) — otherwise the id derived from the config dir's own
-        transport identity.  *iface* is unused: there is no handshake to read.
+        (SPEC RE5) — otherwise the id derived from the host's discovered
+        primary identity (SPEC RE8).  *iface* is unused: there is no handshake
+        to read.
 
         Parameters:
             iface: Active :class:`_ReticulumInterface` instance, or any object
@@ -699,6 +960,36 @@ class ReticulumProvider:
             self._canonical_host_node_id(config.INGESTOR_NODE_ID)
             or self._derived_host_node_id()
         )
+
+    def host_destination_nodes(self) -> list[dict]:
+        """Return node records for the host's own local destinations.
+
+        Called by :meth:`node_snapshot_items` so the host's aspects are
+        (re)reported on every snapshot — an hourly-or-better refresh that picks
+        up an aspect the operator started announcing after the ingestor did,
+        without a restart (SPEC RE8).
+
+        Returns:
+            Node dicts for the host's aspects, or empty when the host's
+            identity is not resolvable.
+        """
+        identity_hash = self._host_identity_hash()
+        if identity_hash is None:
+            return []
+        return _host_destination_nodes(identity_hash)
+
+    @staticmethod
+    def _host_identity_hash() -> str | None:
+        """Resolve the host's primary identity hash.
+
+        An explicit :envvar:`INGESTOR_NODE_ID` names a *node id*, not a full
+        identity hash, so it cannot be expanded back into one; discovery is the
+        only source of the full hash.
+
+        Returns:
+            Identity hash hex, or ``None`` when it cannot be determined.
+        """
+        return _primary_local_identity()
 
     @staticmethod
     def _canonical_host_node_id(value: object) -> str | None:
@@ -726,21 +1017,23 @@ class ReticulumProvider:
 
     @staticmethod
     def _derived_host_node_id() -> str | None:
-        """Derive the host node id from the stack's own transport identity.
+        """Derive the host node id from its **primary identity** (SPEC RE8).
 
-        Reticulum has no handshake revealing "our" node id, and an operator
-        should not have to grep a nomadnet logfile for one (SPEC RE-A2).  The
-        config dir's transport identity — what ``rnstatus`` shows as "Transport
-        Instance" — is stable and already ours.
+        The identity is the node; its destinations are aspects of it (RE7).
+        The *transport* identity is deliberately not used: RNS generates it as
+        an independent keypair, so keying the host on it names the ingestor
+        something matching none of the operator's announced destinations —
+        which is precisely what registered ``!fbf8e338`` on a host whose
+        primary identity was ``27716218…`` in the field.
+
+        Returns ``None`` when no primary identity can be chosen (nothing local
+        heard yet, or an unresolved tie); the daemon retries on its next loop
+        rather than treating that as fatal.
 
         Returns:
             Canonical ``!xxxxxxxx`` id, or ``None`` when none can be derived.
         """
-        try:
-            identity = RNS.Transport.internal_identity()
-        except Exception:
-            return None
-        return _reticulum_node_id(getattr(identity, "hash", None))
+        return _reticulum_node_id(_primary_local_identity())
 
     def node_snapshot_items(self, iface: object) -> list[tuple[str, dict]]:
         """Return every announce heard this session as node entries.
@@ -755,7 +1048,20 @@ class ReticulumProvider:
         """
         if not isinstance(iface, _ReticulumInterface):
             return []
-        return iface.nodes_snapshot()
+        items = iface.nodes_snapshot()
+        # The host's own aspects are not learned from announces — nothing
+        # relays our own announce back to us — so they are folded in here, on
+        # every snapshot, which doubles as the periodic refresh (SPEC RE8).
+        seen_destinations = {
+            node.get("destination", {}).get("id")
+            for _nid, node in items
+            if isinstance(node, dict)
+        }
+        for node in self.host_destination_nodes():
+            if node["destination"]["id"] in seen_destinations:
+                continue
+            items.append((node["nodeId"], node))
+        return items
 
 
 __all__ = [
