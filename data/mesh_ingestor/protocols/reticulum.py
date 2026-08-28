@@ -22,9 +22,27 @@ network is converted into a ``POST /api/nodes`` upsert with
 ``protocol="reticulum"``.
 
 Like :class:`~data.mesh_ingestor.protocols.meshtastic_udp.MeshtasticUdpProvider`
-this provider is receive-only: it never transmits, has no roster to fetch, and
-has no protocol-level handshake that reveals "our" node id (the operator may
-supply :envvar:`INGESTOR_NODE_ID` for the heartbeat).
+this provider is receive-only: it never transmits and has no roster to fetch.
+
+**Own node id.**  Reticulum has no protocol-level handshake revealing "our"
+node id, but it does not need one: the ingestor **owns an RNS identity**,
+persisted as ``potato_mesh_identity`` inside
+:data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR`, and derives its own
+``!xxxxxxxx`` through the same identity-hash mapping applied to every peer
+(:func:`_reticulum_node_id`).  :envvar:`INGESTOR_NODE_ID` is therefore an
+**override**, not a requirement — the heartbeat and the reticulum
+packets/hour scope come up on their own (SPEC RN9).  The identity is generated
+and stored locally and is never announced, so this adds no transmit site
+(SPEC MA7/RN5).
+
+**Connection variables.**  :envvar:`CONNECTION` names a single serial, TCP, or
+BLE endpoint and has no meaning for RNS, which is a stack of many interfaces
+rather than one endpoint.  Its two Reticulum counterparts are disjoint rather
+than overlapping: :data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR` says
+*which stack*, :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` says
+*which of its interfaces to ingest from*.  A set :envvar:`CONNECTION` is
+ignored here and said so at startup, because the shipped container image
+carries a serial default for every protocol (SPEC RN10).
 
 **Canonical node-id mapping.**  A Reticulum *destination* hash is a truncated
 hash over the identity hash and the name hash — it is neither stable across a
@@ -508,6 +526,117 @@ def _announce_to_node_dict(
     return node
 
 
+_IDENTITY_FILENAME = "potato_mesh_identity"
+"""File inside the config dir holding the ingestor's own RNS identity.
+
+Deliberately *not* under RNS's own ``storage/`` subdirectory: the file is
+potato-mesh's, written and read by this provider alone, and must not be
+mistaken for part of the RNS-managed layout.
+"""
+
+
+def _load_self_identity(configdir: str) -> object | None:
+    """Return the ingestor's own persisted :class:`RNS.Identity`, creating it once.
+
+    Reticulum gives a passive listener no handshake revealing "our" node id, so
+    the ingestor supplies one by owning an identity of its own (SPEC RN9).  The
+    identity is created on first run and stored in *configdir*, which
+    :func:`~data.mesh_ingestor.config._resolve_reticulum_config_dir` keeps
+    app-owned (SPEC RN3), so the derived node id is **stable across restarts**.
+
+    Persist-or-nothing is load-bearing rather than defensive: an identity that
+    could not be written would be regenerated on every start, and each
+    generation is a different ``!xxxxxxxx``, so the dashboard would accumulate
+    a fresh ingestor node row per restart.  Returning ``None`` instead leaves
+    the heartbeat unregistered — the shipped behaviour before RN9 — which is
+    recoverable, whereas a landfill of orphan rows is not.
+
+    An existing but unreadable file is never overwritten.  The likeliest causes
+    are a permissions problem or a half-written file, and clobbering the
+    identity on either would silently change the ingestor's node id; the
+    warning names the path so an operator can delete it deliberately.
+
+    This never transmits: generating and storing keys is local, and the
+    identity is not announced (SPEC MA7/RN5).
+
+    Parameters:
+        configdir: The ingestor's Reticulum config directory.
+
+    Returns:
+        The loaded or newly created identity, or ``None`` when it could
+        neither be read nor persisted.
+    """
+    path = os.path.join(configdir, _IDENTITY_FILENAME)
+    if os.path.isfile(path):
+        try:
+            identity = RNS.Identity.from_file(path)
+        except Exception:
+            identity = None
+        if identity is not None:
+            return identity
+        config._debug_log(
+            "Reticulum identity file exists but could not be read; leaving it "
+            "in place and continuing without an ingestor node id — delete it "
+            "to have a new identity generated, or set INGESTOR_NODE_ID",
+            context="reticulum.identity",
+            severity="warn",
+            path=path,
+        )
+        return None
+
+    try:
+        os.makedirs(configdir, exist_ok=True)
+        identity = RNS.Identity()
+        identity.to_file(path)
+        # RNS writes the file with the process umask; the private key deserves
+        # owner-only permissions regardless of what that umask happened to be.
+        os.chmod(path, 0o600)
+    except Exception as exc:
+        config._debug_log(
+            "Could not create a Reticulum identity; continuing without an "
+            "ingestor node id (the reticulum packets/hour stats will stay at "
+            "zero) — set INGESTOR_NODE_ID or make the config dir writable",
+            context="reticulum.identity",
+            severity="warn",
+            path=path,
+            error=str(exc),
+        )
+        return None
+
+    config._debug_log(
+        "Generated the ingestor's own Reticulum identity",
+        context="reticulum.identity",
+        severity="info",
+        path=path,
+    )
+    return identity
+
+
+def _resolve_host_node_id(configdir: str) -> str | None:
+    """Resolve the ingestor's own canonical ``!xxxxxxxx`` node id.
+
+    :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` wins when set — an
+    explicit operator statement about which node this ingestor *is* outranks a
+    derived one, and honouring it means no identity is generated for a
+    deployment that does not need one.  Otherwise the id is derived from the
+    ingestor's own identity (SPEC RN9), matching the mapping applied to peers
+    so the ingestor's row is shaped like every other Reticulum row.
+
+    Parameters:
+        configdir: The ingestor's Reticulum config directory.
+
+    Returns:
+        Canonical ``!xxxxxxxx`` node id, or ``None`` when none could be
+        resolved.
+    """
+    if config.INGESTOR_NODE_ID:
+        return config.INGESTOR_NODE_ID
+    identity = _load_self_identity(configdir)
+    if identity is None:
+        return None
+    return _reticulum_node_id(getattr(identity, "hash", None))
+
+
 def _seed_config_dir(configdir: str) -> None:
     """Write a starter RNS config into *configdir* when none exists yet.
 
@@ -684,7 +813,13 @@ class _ReticulumInterface:
     """
 
     host_node_id: str | None = None
-    """Always ``None``: Reticulum has no handshake revealing "our" node id."""
+    """The ingestor's own canonical node id, resolved at connect time.
+
+    Class-level ``None`` is the pre-connect value; :meth:`ReticulumProvider.connect`
+    replaces it per instance with the result of :func:`_resolve_host_node_id`
+    (SPEC RN9).  It is not a handshake result — Reticulum has none — but the id
+    derived from the identity this ingestor owns.
+    """
 
     def __init__(self, *, target: str | None) -> None:
         """Initialise an unconnected interface bound to *target*."""
@@ -829,19 +964,20 @@ class ReticulumProvider:
             target=target,
         )
 
-        # Reticulum has no handshake revealing "our" node id, so the daemon's
-        # ingestor heartbeat depends entirely on the operator-supplied
-        # INGESTOR_NODE_ID.  Without it the heartbeat silently never registers
-        # and the instance's reticulum packets/hour stats stay at zero even
-        # while announces are being ingested — warn once at startup so the
-        # dead scope is diagnosable.
-        if not config.INGESTOR_NODE_ID:
+        # CONNECTION names one serial/TCP/BLE endpoint, which an RNS stack of
+        # many interfaces does not have; the config dir and the interface
+        # allowlist cover the same ground for Reticulum (SPEC RN10).  Said out
+        # loud rather than passed over in silence because the shipped image
+        # sets a serial default for every protocol, so an operator switching to
+        # PROTOCOL=reticulum inherits one they never chose.
+        if config.CONNECTION:
             config._debug_log(
-                "INGESTOR_NODE_ID is not set; the ingestor heartbeat will "
-                "never register and the reticulum packets/hour stats will "
-                "stay at zero",
+                "CONNECTION is set but does not apply to PROTOCOL=reticulum; "
+                "use RETICULUM_CONFIG_DIR for which RNS stack and "
+                "RETICULUM_INTERFACES for which of its interfaces to ingest",
                 context="reticulum.connect",
-                severity="warn",
+                severity="info",
+                connection=config.CONNECTION,
             )
 
         # An allowlist is only answerable on our own stack — see
@@ -850,6 +986,17 @@ class ReticulumProvider:
             _seed_config_dir(configdir)
 
         iface = _ReticulumInterface(target=target)
+        # Resolved before the stack comes up: it only touches the config dir,
+        # and a failure to resolve must not stop announces being ingested.
+        iface.host_node_id = _resolve_host_node_id(configdir)
+        if iface.host_node_id is None:
+            config._debug_log(
+                "No ingestor node id could be resolved; the heartbeat will not "
+                "register and the reticulum packets/hour stats will stay at "
+                "zero while announces are still ingested",
+                context="reticulum.connect",
+                severity="warn",
+            )
         rns_instance = RNS.Reticulum.get_instance()
         if rns_instance is None:
             rns_instance = RNS.Reticulum(configdir=configdir)
@@ -867,26 +1014,36 @@ class ReticulumProvider:
             severity="info",
             aspects=list(_ANNOUNCE_ASPECTS),
             interfaces=list(config.RETICULUM_INTERFACES) or "all",
+            node_id=iface.host_node_id,
         )
         return iface, target, active_candidate
 
     def extract_host_node_id(self, iface: object) -> str | None:
-        """Return the configured host node id.
+        """Return the ingestor's own canonical node id.
 
-        A passive announce listener has no protocol-level handshake that
-        reveals "our" node id, so this surfaces the operator-supplied
-        :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` (mirroring the
-        UDP transport).
+        Surfaces the value :meth:`connect` resolved onto *iface* — the
+        operator's :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` when
+        set, otherwise the id derived from the identity this ingestor owns
+        (SPEC RN9).  The daemon calls this on every loop iteration, so reading
+        the resolved value rather than re-resolving keeps it off the identity
+        file after connect.
+
+        Falls back to :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` for
+        an interface this provider did not build (an object with no
+        ``host_node_id``), preserving the pre-RN9 behaviour rather than
+        reporting no id at all.
 
         Parameters:
-            iface: Unused; accepted for
-                :class:`~data.mesh_ingestor.mesh_protocol.MeshProtocol`
-                signature compatibility.
+            iface: Active :class:`_ReticulumInterface` instance, or any object
+                for the fallback path.
 
         Returns:
-            :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID`, or ``None``
-            when unset.
+            Canonical ``!xxxxxxxx`` node id, or ``None`` when none was
+            resolved.
         """
+        resolved = getattr(iface, "host_node_id", None)
+        if resolved:
+            return resolved
         return config.INGESTOR_NODE_ID
 
     def node_snapshot_items(self, iface: object) -> list[tuple[str, dict]]:
@@ -919,7 +1076,9 @@ __all__ = [
     "_identity_from_announce",
     "_identity_public_key_hex",
     "_interface_allowed",
+    "_load_self_identity",
     "_rank_role",
+    "_resolve_host_node_id",
     "_warn_allowlist_ignored_once",
     "_reticulum_hash_hex",
     "_reticulum_node_id",

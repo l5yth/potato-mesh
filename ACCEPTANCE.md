@@ -5285,6 +5285,41 @@ databases. #889 shipped the boot guard for `reticulum_nodes_count` but skipped t
 migration file that the four preceding schema changes all shipped; that is
 restored here.
 
+### RN-A9 — The ingestor derives its own node id; `INGESTOR_NODE_ID` only overrides — #888 / RN9
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k 'node_id or identity' )
+git grep -n 'INGESTOR_NODE_ID' -- data/mesh_ingestor/protocols/reticulum.py
+```
+**Expected:** green, and `INGESTOR_NODE_ID` appears in `reticulum.py` only as an
+override consulted **before** the derived identity — never as a precondition.
+`connect` resolves `!xxxxxxxx` from an RNS identity the ingestor owns, generated
+once and stored as `potato_mesh_identity` inside `RETICULUM_CONFIG_DIR`, mapped
+by the same `_reticulum_node_id` rule applied to peers (RN1), so the id is stable
+across restarts. The key file is `0600`. An identity that can neither be read nor
+persisted yields **no** id and a warning rather than a fresh id per start
+(persist-or-nothing: a churning id would file one orphan ingestor row per
+restart), and announces keep being ingested either way. An existing but
+unreadable key file is left untouched. The startup warning #890 emitted for an
+unset `INGESTOR_NODE_ID` is gone.
+
+**Amends RN-A5's neighbourhood, not RN-A5 itself:** the config dir RN3/RN-A5
+made app-owned now also holds the ingestor's key, which is what makes owning one
+acceptable — it is never written into the operator's `~/.reticulum`.
+
+### RN-A10 — `CONNECTION` is inapplicable to Reticulum, and said so — #888 / RN10
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k connection )
+git grep -n 'CONNECTION=' -- data/Dockerfile
+```
+**Expected:** green. `ReticulumProvider.connect` resolves its target from
+`RETICULUM_CONFIG_DIR` alone (`reticulum://<configdir>`), never from `CONNECTION`
+or `active_candidate`, and logs once at `info` — naming both
+`RETICULUM_CONFIG_DIR` and `RETICULUM_INTERFACES` — when `CONNECTION` is set,
+saying nothing when it is not. The grep still shows `CONNECTION=/dev/ttyACM0` in
+**both** Dockerfile stages: the image default is deliberately retained (dropping
+it would change how meshtastic/meshcore containers resolve their port), which is
+exactly why the log line exists.
+
 ### RN-R1 — Regression: prior acceptance still holds
 ```bash
 ( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )

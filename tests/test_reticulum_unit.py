@@ -55,6 +55,9 @@ _IDENTITY_HASH = bytes.fromhex("beef0001" + "11" * 12)
 _PUBLIC_KEY = bytes.fromhex("ab" * 64)
 """A 64-byte Reticulum identity public key used across tests."""
 
+_SELF_IDENTITY_HASH = bytes.fromhex("5e1f0002" + "22" * 12)
+"""The identity hash a freshly generated *ingestor* identity carries."""
+
 
 class _FakeIdentity:
     """Stand-in for :class:`RNS.Identity` exposing the members the provider reads."""
@@ -77,14 +80,39 @@ def _fake_rns(
     hops=128,
     interface="RNodeInterface[RNode LoRa]",
     recalled=None,
+    self_identity_hash=_SELF_IDENTITY_HASH,
+    identity_write_error=None,
+    identity_read_error=None,
 ):
     """Build a fake ``RNS`` module namespace for provider tests.
 
+    ``Identity`` is a *class* rather than a namespace because the provider both
+    constructs one (generating the ingestor's own identity) and calls the
+    ``from_file``/``to_file`` classmethods on it.  ``from_file`` returns
+    ``None`` for an empty file, mirroring how the real
+    :meth:`RNS.Identity.from_file` reports an unusable key file.
+
+    Parameters:
+        existing_instance: Value :meth:`RNS.Reticulum.get_instance` returns.
+        hops: Hop count :func:`RNS.Transport.hops_to` reports.
+        interface: Interface :func:`RNS.Transport.next_hop_interface` reports.
+        recalled: Identity :meth:`RNS.Identity.recall` returns.
+        self_identity_hash: Hash a freshly constructed identity carries.
+        identity_write_error: Exception ``to_file`` raises, or ``None``.
+        identity_read_error: Exception ``from_file`` raises, or ``None``.
+
     Returns:
         ``(fake_module, state)`` where ``state`` records constructed
-        Reticulum configdirs and (de)registered announce handlers.
+        Reticulum configdirs, (de)registered announce handlers, and the
+        identity files written and loaded.
     """
-    state = {"created": [], "registered": [], "deregistered": []}
+    state = {
+        "created": [],
+        "registered": [],
+        "deregistered": [],
+        "identities_written": [],
+        "identities_loaded": [],
+    }
 
     class FakeReticulum:
         def __init__(self, configdir=None):
@@ -94,6 +122,40 @@ def _fake_rns(
         def get_instance():
             return existing_instance
 
+    class FakeIdentityClass:
+        """Constructible stand-in for :class:`RNS.Identity`."""
+
+        def __init__(self, create_keys=True):
+            self.hash = self_identity_hash
+            self._public_key = _PUBLIC_KEY
+
+        def get_public_key(self):
+            return self._public_key
+
+        def to_file(self, path):
+            if identity_write_error is not None:
+                raise identity_write_error
+            with open(path, "wb") as handle:
+                handle.write(self.hash)
+            state["identities_written"].append(path)
+
+        @staticmethod
+        def from_file(path):
+            if identity_read_error is not None:
+                raise identity_read_error
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            state["identities_loaded"].append(path)
+            if not raw:
+                return None
+            loaded = FakeIdentityClass()
+            loaded.hash = raw
+            return loaded
+
+        @staticmethod
+        def recall(_dest_hash):
+            return recalled
+
     transport = types.SimpleNamespace(
         PATHFINDER_M=128,
         register_announce_handler=lambda h: state["registered"].append(h),
@@ -101,11 +163,23 @@ def _fake_rns(
         hops_to=lambda _dh: hops,
         next_hop_interface=lambda _dh: interface,
     )
-    identity = types.SimpleNamespace(recall=lambda _dh: recalled)
     fake = types.SimpleNamespace(
-        Reticulum=FakeReticulum, Transport=transport, Identity=identity
+        Reticulum=FakeReticulum, Transport=transport, Identity=FakeIdentityClass
     )
     return fake, state
+
+
+def _no_ingestor_node_id(monkeypatch, tmp_path):
+    """Point the provider at *tmp_path* with no operator-supplied node id.
+
+    The common arrangement for the RN9 tests: an app-owned config dir the test
+    owns, an unscoped allowlist, and ``INGESTOR_NODE_ID`` cleared so the
+    derived identity is what gets exercised.
+    """
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_INTERFACES", ())
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
 
 
 # ---------------------------------------------------------------------------
@@ -1071,11 +1145,11 @@ def test_connect_registers_announce_handlers_per_aspect(monkeypatch):
     assert iface._announce_handlers == state["registered"]
 
 
-def test_connect_passes_active_candidate_through(monkeypatch):
+def test_connect_passes_active_candidate_through(monkeypatch, tmp_path):
     """The candidate string is returned unchanged (no serial-candidate concept)."""
     fake, _state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)
-    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     _iface, _resolved, next_candidate = ReticulumProvider().connect(
@@ -1084,17 +1158,17 @@ def test_connect_passes_active_candidate_through(monkeypatch):
     assert next_candidate == "whatever"
 
 
-def test_connect_warns_when_ingestor_node_id_unset(monkeypatch):
-    """connect() warns once when INGESTOR_NODE_ID is missing.
+def test_connect_is_silent_when_ingestor_node_id_is_unset(monkeypatch, tmp_path):
+    """An unset ``INGESTOR_NODE_ID`` is no longer a warning (SPEC RN9).
 
-    Without the operator-supplied id the daemon's heartbeat never registers
-    and the reticulum packets/hour stats scope silently stays dead, so the
-    provider must surface a startup warning.
+    Before RN9 the missing variable left the heartbeat unregistered, so connect
+    warned about it.  The ingestor now derives its own id, which makes the
+    variable an override — warning about an override nobody has to set would
+    train operators to ignore the log.
     """
     fake, _state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)
-    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
-    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
     calls = []
     monkeypatch.setattr(
         _mod.config,
@@ -1104,10 +1178,7 @@ def test_connect_warns_when_ingestor_node_id_unset(monkeypatch):
 
     ReticulumProvider().connect(active_candidate=None)
 
-    warnings = [call for call in calls if call[1].get("severity") == "warn"]
-    assert len(warnings) == 1
-    assert "INGESTOR_NODE_ID" in warnings[0][0]
-    assert warnings[0][1]["context"] == "reticulum.connect"
+    assert [call for call in calls if call[1].get("severity") == "warn"] == []
 
 
 def test_connect_does_not_warn_when_ingestor_node_id_set(monkeypatch):
@@ -1399,3 +1470,300 @@ class TestReticulumDeploymentSurface:
             assert re.search(
                 rf"^#\s*{name}=", text, re.MULTILINE
             ), f"{name} is not documented in .env.example"
+
+    def test_docs_no_longer_call_ingestor_node_id_required(self):
+        """The variable became an override (SPEC RN9); docs saying otherwise mislead.
+
+        A README that still tells operators to set it would send them looking
+        for a value the ingestor now generates for itself.
+        """
+        for name in ("README.md", ".env.example"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            assert not re.search(
+                r"reticulum listener also needs INGESTOR_NODE_ID|"
+                r"^Set `INGESTOR_NODE_ID`\.",
+                text,
+                re.MULTILINE | re.IGNORECASE,
+            ), f"{name} still presents INGESTOR_NODE_ID as required for reticulum"
+
+    def test_docs_state_that_connection_does_not_apply(self):
+        """RN10's answer has to reach the operator, not just the log."""
+        for name in ("README.md", ".env.example"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            assert "CONNECTION" in text and re.search(
+                r"CONNECTION`? does not apply", text
+            ), f"{name} does not say CONNECTION is inapplicable to reticulum"
+
+
+# ---------------------------------------------------------------------------
+# The ingestor's own node id (SPEC RN9)
+# ---------------------------------------------------------------------------
+
+
+def _identity_path(tmp_path):
+    """Return the path the provider stores its own identity at."""
+    return tmp_path / _mod._IDENTITY_FILENAME
+
+
+def test_ingestor_derives_its_own_node_id_without_any_env(monkeypatch, tmp_path):
+    """`INGESTOR_NODE_ID` is an override, not a requirement (SPEC RN9).
+
+    The whole point of RN9: a plain ``PROTOCOL=reticulum`` deployment brings up
+    the heartbeat, and so the packets/hour scope, with no extra configuration.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id == "!5e1f0002"
+    assert _identity_path(tmp_path).exists()
+
+
+def test_the_derived_node_id_uses_the_peer_mapping(monkeypatch, tmp_path):
+    """Our own row is shaped like every other Reticulum row.
+
+    Deriving through a second, private rule would let the ingestor's own node
+    id disagree with the id any peer would compute for it.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id == _reticulum_node_id(_SELF_IDENTITY_HASH)
+
+
+def test_the_derived_node_id_is_stable_across_restarts(monkeypatch, tmp_path):
+    """A second start reloads the stored identity instead of generating one.
+
+    Regenerating would mint a new ``!xxxxxxxx`` per restart, and every one of
+    them would land in the dashboard as another ingestor node row.
+    """
+    fake, state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    first, _t, _n = ReticulumProvider().connect(active_candidate=None)
+    second, _t, _n = ReticulumProvider().connect(active_candidate=None)
+
+    assert first.host_node_id == second.host_node_id
+    assert len(state["identities_written"]) == 1
+    assert len(state["identities_loaded"]) == 1
+
+
+def test_the_identity_file_is_owner_only(monkeypatch, tmp_path):
+    """A private key is written 0600 whatever the process umask happens to be."""
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    assert _identity_path(tmp_path).stat().st_mode & 0o777 == 0o600
+
+
+def test_the_config_dir_is_created_when_absent(monkeypatch, tmp_path):
+    """Only a scoped ingestor seeds a config, so the dir may not exist yet."""
+    fake, _state = _fake_rns()
+    configdir = tmp_path / "missing"
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, configdir)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id == "!5e1f0002"
+    assert _identity_path(configdir).exists()
+
+
+def test_ingestor_node_id_env_overrides_the_derived_identity(monkeypatch, tmp_path):
+    """An explicit operator statement outranks a derived one — and generates no key.
+
+    Honouring the variable first is what keeps a deployment that does not need
+    an identity from being given one.
+    """
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", "!operator")
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id == "!operator"
+    assert not _identity_path(tmp_path).exists()
+
+
+def test_an_unreadable_identity_file_is_left_in_place(monkeypatch, tmp_path):
+    """Never clobber an existing identity: doing so silently changes our node id."""
+    warnings = []
+    fake, _state = _fake_rns()
+    _identity_path(tmp_path).write_bytes(b"")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda message, **_k: warnings.append(message),
+    )
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id is None
+    assert _identity_path(tmp_path).read_bytes() == b""
+    assert any("could not be read" in w for w in warnings)
+
+
+def test_a_raising_identity_read_is_swallowed(monkeypatch, tmp_path):
+    """A read that raises is as unusable as one returning nothing, not a crash."""
+    fake, _state = _fake_rns(identity_read_error=OSError("permission denied"))
+    _identity_path(tmp_path).write_bytes(b"junk")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id is None
+    assert _identity_path(tmp_path).read_bytes() == b"junk"
+
+
+def test_an_unpersistable_identity_yields_no_node_id(monkeypatch, tmp_path):
+    """Persist-or-nothing: an unstorable identity is not used for one session.
+
+    Using it would be worse than not having it — the id would differ on every
+    start, so each restart would file another ingestor row.
+    """
+    warnings = []
+    fake, _state = _fake_rns(identity_write_error=OSError("read-only filesystem"))
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda message, **_k: warnings.append(message),
+    )
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id is None
+    assert any("Could not create a Reticulum identity" in w for w in warnings)
+    # The dead heartbeat stays diagnosable, as it was before RN9.
+    assert any("packets/hour stats will stay at zero" in w for w in warnings)
+
+
+def test_announces_are_still_ingested_without_a_node_id(monkeypatch, tmp_path):
+    """A missing node id costs the heartbeat, never the ingestion."""
+    fake, state = _fake_rns(identity_write_error=OSError("read-only filesystem"))
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.isConnected
+    assert len(state["registered"]) == len(_ANNOUNCE_ASPECTS)
+
+
+def test_an_underivable_identity_hash_yields_no_node_id(monkeypatch, tmp_path):
+    """A hash too short to map is no id, not a truncated one."""
+    fake, _state = _fake_rns(self_identity_hash=b"\x01")
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface, _target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert iface.host_node_id is None
+
+
+def test_extract_host_node_id_returns_what_connect_resolved(monkeypatch, tmp_path):
+    """The daemon calls this every iteration; it reads, it does not re-resolve."""
+    fake, state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    provider = ReticulumProvider()
+    iface, _target, _next = provider.connect(active_candidate=None)
+    loads_after_connect = len(state["identities_loaded"])
+
+    assert provider.extract_host_node_id(iface) == "!5e1f0002"
+    assert len(state["identities_loaded"]) == loads_after_connect
+
+
+def test_extract_host_node_id_falls_back_to_the_env_for_a_foreign_iface(monkeypatch):
+    """An object this provider did not build keeps the pre-RN9 behaviour."""
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", "!operator")
+
+    assert ReticulumProvider().extract_host_node_id(object()) == "!operator"
+
+
+def test_extract_host_node_id_is_none_when_nothing_resolves(monkeypatch):
+    """No resolved id and no env value is None, not an empty string."""
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+
+    assert ReticulumProvider().extract_host_node_id(object()) is None
+
+
+# ---------------------------------------------------------------------------
+# CONNECTION does not apply to Reticulum (SPEC RN10)
+# ---------------------------------------------------------------------------
+
+
+def test_connection_is_reported_as_inapplicable(monkeypatch, tmp_path):
+    """The image ships a serial default for every protocol; say it is ignored."""
+    messages = []
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "CONNECTION", "/dev/ttyACM0")
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda message, **_k: messages.append(message),
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    said = [m for m in messages if "does not apply to PROTOCOL=reticulum" in m]
+    assert said, "a set CONNECTION was passed over in silence"
+    # Naming the replacements is the point: the operator needs somewhere to go.
+    assert "RETICULUM_CONFIG_DIR" in said[0] and "RETICULUM_INTERFACES" in said[0]
+
+
+def test_connection_is_not_mentioned_when_unset(monkeypatch, tmp_path):
+    """Nothing to correct means nothing to say."""
+    messages = []
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda message, **_k: messages.append(message),
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    assert not any("does not apply to PROTOCOL=reticulum" in m for m in messages)
+
+
+def test_connection_never_becomes_the_reticulum_target(monkeypatch, tmp_path):
+    """The resolved target stays the config dir, whatever CONNECTION says."""
+    fake, _state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+    monkeypatch.setattr(_mod.config, "CONNECTION", "/dev/ttyACM0")
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    _iface, target, _next = ReticulumProvider().connect(active_candidate=None)
+
+    assert target == f"reticulum://{tmp_path}"

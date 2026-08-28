@@ -58,6 +58,10 @@ disagree -- the sender-side determinism rule above (SPEC RD4).
 
 **Config isolation.** `RETICULUM_CONFIG_DIR` defaults to an app-owned directory (`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`) and never to RNS's user default `~/.reticulum`: installing a dashboard ingestor does not imply consent to run the operator's transport-node configuration (SPEC RN3).
 
+**The ingestor's own node id.** Reticulum has no handshake revealing "our" node id, so the ingestor **owns an RNS identity**: generated on first run, stored as `potato_mesh_identity` inside `RETICULUM_CONFIG_DIR`, and mapped to `!xxxxxxxx` by the same identity-hash rule applied to every peer above. `INGESTOR_NODE_ID` is therefore an **override** for this protocol rather than a requirement, and the heartbeat — and so the `reticulum.packets.hour` rate — comes up unaided (SPEC RN9). The identity is local and is never announced, so it adds no transmit site. Persistence is load-bearing: an identity that could not be stored would be regenerated per start and each generation is a different node id, so the provider reports **no** id rather than a churning one, leaving the heartbeat unregistered exactly as it was before RN9. A protocol adding its own self-id should follow the same rule — a derived id must be stable across restarts or it is worse than none.
+
+**`CONNECTION` does not apply.** It names a single serial, TCP, or BLE endpoint; an RNS stack is a set of interfaces with no such endpoint. Its counterparts are disjoint rather than overlapping: `RETICULUM_CONFIG_DIR` selects the stack, `RETICULUM_INTERFACES` selects which of its interfaces to ingest from. A set `CONNECTION` is ignored and logged as ignored, because the shipped container image carries a serial default for every protocol (SPEC RN10).
+
 **Transmit policy.** The provider is receive-only and has no transmit site to gate, so `PROTOCOL=reticulum` works with `TX_ENABLED=0` (the default). The underlying RNS stack is not silent at the *interface* layer, though — `AutoInterface` multicasts peer discovery, and `enable_transport` relays other nodes' traffic. That is owned by the Reticulum config, which is why the two paragraphs above exist (SPEC RN5).
 
 **Collision trade-off (accepted).** Truncating to 4 bytes means two distinct 16-byte identity hashes sharing a 4-byte prefix collapse onto one `node_id`. Within a protocol this is the same accepted trade-off MeshCore's pubkey-prefix mapping has always carried: the colliding records merge into one row, and the odds are negligible at mesh scale (~1 in 4 billion per pair). **Across protocols** the shared `nodes.node_id` keyspace makes a prefix collision a hijack risk instead of a merge, so the web **nodeinfo upsert** (`upsert_node`) refuses cross-protocol overwrites: when the stored row already carries a known protocol and an incoming record resolves to a different one, the record is skipped entirely (logged at debug level) rather than allowed to flip the row's protocol or overwrite its fields. The one exception is the established `meshtastic` → `meshcore` self-heal (bug #747): `meshtastic` doubles as the schema/classification default, so a `meshcore` record may still reclaim a default-stamped row. The guard covers the nodeinfo upsert only: position, telemetry, and last-seen touch writes key on the bare `node_id` without a protocol check, so a cross-protocol prefix collision can still attach position or telemetry fields to the row or advance its `last_heard` (extending the guard to those paths is a tracked follow-up).
@@ -416,9 +420,11 @@ do **not** accept `before`.
   of the per-protocol rates (distinct protocols ride distinct frequencies, so they
   add rather than dedup); `reticulum.packets.hour` shipped as an always-zero
   stub and reports the real rate since the Reticulum ingestor landed. The rate
-  only moves when the reticulum ingestor's heartbeat registers, which requires
-  the operator-supplied `INGESTOR_NODE_ID` (Reticulum has no handshake revealing
-  "our" node id; the provider warns at startup when it is unset). Unlike
+  only moves when the reticulum ingestor's heartbeat registers, which needs a
+  node id; the provider derives one from the identity it owns, so no operator
+  configuration is required and `INGESTOR_NODE_ID` merely overrides it (SPEC
+  RN9). It warns at startup in the one case that leaves the rate dead — an
+  identity that can neither be read nor stored. Unlike
   `messages`, it is **not** privacy-gated
   (packets are a public aggregate, no message content). Additive to the 0.7.x
   `/api/stats` tree — no version bump; the ingestor dogfeeds it for the activity
