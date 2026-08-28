@@ -269,7 +269,7 @@ appear in the allowlist.
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
 | `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. |
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
-| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP connections, and bluetooth addresses (BLE mac). |
+| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP connections, and bluetooth addresses (BLE mac). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
 | `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; when set, all other channels are skipped before hidden filters. |
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
@@ -279,7 +279,7 @@ appear in the allowlist.
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast`: the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key: only the per-channel hash of *(name, key)* distinguishes them. |
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat on the transports that cannot auto-detect "self": UDP transport and `PROTOCOL=reticulum`. Without it the heartbeat never registers and that protocol's packets/hour stats stay at zero. |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self" — without it the heartbeat never registers and its packets/hour stats stay at zero. Optional for `PROTOCOL=reticulum`, which derives its own id from the identity it owns; set it there only to override that. See [Reticulum](#reticulum). |
 | `RETICULUM_CONFIG_DIR` | `$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum` | Which Reticulum config the ingestor uses, and so where it looks for available interfaces. App-owned by default: it never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. See [Reticulum](#reticulum). |
 | `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest announces from: name your local LoRa interface, e.g. `RNode` or `BerlinMesh`. Comma-separated and matched as a case-insensitive substring of the interface name. Empty ingests every interface. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
@@ -367,10 +367,27 @@ and Reticulum nodes stay off the map. One peer is one node row: the canonical
 several destination aspects merges into a single row rather than appearing once
 per aspect.
 
-Set `INGESTOR_NODE_ID`. Reticulum has no handshake revealing "our" node id.
-Without it the ingestor heartbeat never registers and the Reticulum
-packets/hour figure stays at zero even while announces are being ingested. The
-ingestor warns about this at startup.
+**You do not need to set `INGESTOR_NODE_ID`.** Reticulum has no handshake
+revealing "our" node id, so the ingestor owns an RNS identity of its own,
+generated on first run and stored as `potato_mesh_identity` inside
+`RETICULUM_CONFIG_DIR`. Its `!xxxxxxxx` comes from that identity's hash through
+the same mapping applied to every peer, so it is stable across restarts and the
+ingestor's own row is shaped like any other. Set `INGESTOR_NODE_ID` only to
+override it. The identity is local and never announced, so this adds nothing the
+transmit switches gate.
+
+If the identity can neither be read nor written — an unwritable config dir, or a
+key file left unreadable — the ingestor says so and carries on ingesting
+announces without a node id, which is the one case where the heartbeat stays
+unregistered and the packets/hour figure stays at zero.
+
+**`CONNECTION` does not apply.** It names one serial, TCP, or BLE endpoint, and
+an RNS stack of many interfaces has no such thing. The two variables below cover
+the same ground: `RETICULUM_CONFIG_DIR` says *which stack*,
+`RETICULUM_INTERFACES` says *which of its interfaces to ingest from*. A set
+`CONNECTION` is ignored, and the ingestor logs that it was — the shipped
+container image carries a serial default for every protocol, so switching to
+`PROTOCOL=reticulum` inherits one you never chose.
 
 **Two things worth configuring:**
 
