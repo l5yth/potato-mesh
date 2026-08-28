@@ -395,19 +395,23 @@ def maybe_run_announcements(
 
     if now is None:
         now = time.monotonic()
+    # Due first, policy second.  An announcement is due at most once per 24 h,
+    # so checking the policy first logged a suppression line on every 60 s loop
+    # for something that was never going to be sent — the field log was one
+    # line a minute of pure noise.  The startup "Transmit policy resolved" line
+    # already states the resolved policy, which is what an operator needs to
+    # tell "TX_ENABLED unset" from "RX_ONLY still set"; this line now names the
+    # gate only when it actually blocks a due announcement (SPEC RE-A8).
+    if not announce_due(
+        start_monotonic=start_monotonic, last_announce=last_announce, now=now
+    ):
+        return last_announce
     if not tx_policy.announcements_permitted():
-        # Name the closed gate: an operator who opted in and hears nothing must
-        # be able to tell "TX_ENABLED unset" from "RX_ONLY still set" from
-        # "still inside the 24 h delay" without a day of observation per guess.
         config._debug_log(
             "Activity announcement suppressed by transmit policy",
             context="announce.tx",
             blocked_by=tx_policy.describe_tx_policy()["blocked_by"],
         )
-        return last_announce
-    if not announce_due(
-        start_monotonic=start_monotonic, last_announce=last_announce, now=now
-    ):
         return last_announce
     run_announcement_cycle(provider, iface)
     return now

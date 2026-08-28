@@ -40,21 +40,26 @@ RSpec.describe "Reticulum protocol support" do
   # same identity, and therefore to the same node row.
   RETICULUM_DEST_HASH2 = "00ff11ee22dd33cc44bb55aa66997788".freeze
   RETICULUM_PUBLIC_KEY = ("ab" * 64).freeze
+  RETICULUM_IDENTITY_HASH = "27716218762cfd2864141ef286c39940".freeze
   RETICULUM_NODE_ID2 = "!0badcafe".freeze
   MESHTASTIC_PEER_ID = "!12ab34cd".freeze
 
   # Announce-derived node fixture, exactly the shape the Reticulum ingestor
   # POSTs (no snr/rssi/position/deviceMetrics/user.role).
-  def reticulum_node_fixture(last_heard:, hops_away: 2, dest_hashes: [RETICULUM_DEST_HASH])
+  def reticulum_node_fixture(last_heard:, hops_away: 2, aspect: "lxmf.delivery",
+                             dest_id: RETICULUM_DEST_HASH, role: "PEER")
     node = {
       "user" => {
         "longName" => "Argos Station",
         "shortName" => "a1b2",
         "publicKey" => RETICULUM_PUBLIC_KEY,
+        "role" => role,
       },
       "lastHeard" => last_heard,
       "protocol" => "reticulum",
-      "destHash" => dest_hashes,
+      "identityHash" => RETICULUM_IDENTITY_HASH,
+      "interface" => "RNodeInterface[RNode Reticulum Berlin]",
+      "destination" => { "id" => dest_id, "aspect" => aspect, "role" => role },
     }
     node["hopsAway"] = hops_away if hops_away
     node
@@ -94,6 +99,10 @@ RSpec.describe "Reticulum protocol support" do
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
       db.execute("DELETE FROM nodes")
+      # Destinations outlive nodes otherwise: they are keyed on the destination
+      # hash, so a test using a different aspect accumulates rows rather than
+      # overwriting the previous one.
+      db.execute("DELETE FROM destinations")
       db.execute("DELETE FROM ingestors")
       db.execute("DELETE FROM ingestor_activity")
     end
@@ -149,6 +158,192 @@ RSpec.describe "Reticulum protocol support" do
     end
   end
 
+  describe "destinations schema (T-E)" do
+    it "stores one destination row per announced aspect, linked by identity" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+
+      with_db(readonly: true) do |db|
+        rows = db.execute(
+          "SELECT id, node_id, name, aspect, role FROM destinations ORDER BY aspect",
+        )
+        expect(rows.length).to eq(1)
+        expect(rows[0]["id"]).to eq(RETICULUM_DEST_HASH)
+        expect(rows[0]["node_id"]).to eq(RETICULUM_NODE_ID)
+        expect(rows[0]["aspect"]).to eq("lxmf.delivery")
+      end
+    end
+
+    it "replaces the nodes.dest_hash column" do
+      # A JSON array column and a table modelling the same thing would drift.
+      with_db(readonly: true) do |db|
+        columns = db.execute("PRAGMA table_info(nodes)").map { |r| r["name"] }
+        expect(columns).not_to include("dest_hash")
+        expect(columns).to include("identity_hash")
+      end
+    end
+  end
+
+  describe "headline aspect preference (SPEC RE10)" do
+    # Post two aspects of ONE identity, in a given order, and read back the
+    # node's headline fields. Both land on the same node row (SPEC RE7).
+    def post_two_aspects(first, second)
+      register_reticulum_ingestor
+      [first, second].each_with_index do |aspect, index|
+        payload = {
+          RETICULUM_NODE_ID => reticulum_node_fixture(
+            last_heard: now - 30 + index,
+            aspect: aspect[:aspect],
+            dest_id: aspect[:dest],
+            role: aspect[:role],
+          ).merge("user" => {
+                    "longName" => aspect[:name],
+                    "shortName" => "a1b2",
+                    "publicKey" => RETICULUM_PUBLIC_KEY,
+                  }),
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+        }
+        post "/api/nodes", payload.to_json, auth_headers
+      end
+      with_db(readonly: true) do |db|
+        db.execute(
+          "SELECT long_name, role FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID]
+        ).first
+      end
+    end
+
+    NODE_ASPECT = {
+      aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+      role: "NODE", name: "Department of Decentralization",
+    }.freeze
+    PEER_ASPECT = {
+      aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2,
+      role: "PEER", name: "Afri Nomad Orion",
+    }.freeze
+
+    it "prefers NODE over PEER whichever announce arrives last" do
+      # The whole point: the headline must not depend on arrival order, which
+      # is what made a multi-aspect peer's name alternate on every announce.
+      node_last = post_two_aspects(PEER_ASPECT, NODE_ASPECT)
+      expect(node_last["long_name"]).to eq("Department of Decentralization")
+      expect(node_last["role"]).to eq("NODE")
+
+      clear_tables
+      peer_last = post_two_aspects(NODE_ASPECT, PEER_ASPECT)
+      expect(peer_last["long_name"]).to eq("Department of Decentralization")
+      expect(peer_last["role"]).to eq("NODE")
+    end
+
+    it "ranks PROPAGATION above TRANSPORT" do
+      row = post_two_aspects(
+        { aspect: "rns.transport", dest: RETICULUM_DEST_HASH,
+          role: "TRANSPORT", name: "Transport Instance" },
+        { aspect: "lxmf.propagation", dest: RETICULUM_DEST_HASH2,
+          role: "PROPAGATION", name: "Propagation Store" },
+      )
+      expect(row["long_name"]).to eq("Propagation Store")
+      expect(row["role"]).to eq("PROPAGATION")
+    end
+
+    it "keeps a real destination name when a placeholder arrives later" do
+      # Discovery re-emits the host's aspects on every snapshot, falling back to
+      # "Reticulum <SHORT>" when the stack remembers no app_data. Arriving after
+      # a real announce, that must not overwrite the stored name -- which would
+      # rename the node too, since RE10 derives the headline from these rows.
+      row = post_two_aspects(
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Department of Decentralization" },
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Reticulum C3D4" },
+      )
+      expect(row["long_name"]).to eq("Department of Decentralization")
+      with_db(readonly: true) do |db|
+        stored = db.execute(
+          "SELECT name FROM destinations WHERE id = ?", [RETICULUM_DEST_HASH]
+        ).first
+        expect(stored["name"]).to eq("Department of Decentralization")
+      end
+    end
+
+    it "stores a placeholder on a first sighting" do
+      # The generic name is wanted where there is no real one to prefer.
+      post_two_aspects(
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Reticulum C3D4" },
+        { aspect: "lxmf.propagation", dest: RETICULUM_DEST_HASH2,
+          role: "PROPAGATION", name: "Reticulum C3D4" },
+      )
+      with_db(readonly: true) do |db|
+        names = db.execute(
+          "SELECT name FROM destinations ORDER BY aspect",
+        ).map { |r| r["name"] }
+        expect(names).to eq(["Reticulum C3D4", "Reticulum C3D4"])
+      end
+    end
+
+    it "does not let a nameless higher aspect blank the headline" do
+      # Name and role resolve independently: an aspect can carry a role while
+      # announcing no display name.
+      row = post_two_aspects(
+        { aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2,
+          role: "PEER", name: "Afri Nomad Orion" },
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: nil },
+      )
+      expect(row["role"]).to eq("NODE")
+      expect(row["long_name"]).to eq("Afri Nomad Orion")
+    end
+  end
+
+  describe "GET /api/destinations" do
+    it "serves the destinations for a node" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+
+      get "/api/destinations"
+      expect(last_response.status).to eq(200)
+      payload = JSON.parse(last_response.body)
+      expect(payload.length).to eq(1)
+      expect(payload.first).to include(
+        "id" => RETICULUM_DEST_HASH,
+        "node_id" => RETICULUM_NODE_ID,
+        "aspect" => "lxmf.delivery",
+      )
+    end
+  end
+
+  describe "GET /api/destinations?node_id=" do
+    it "filters to one node's destinations" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+      # A second node's destination, which the filter must exclude.
+      payload = {
+        RETICULUM_NODE_ID2 => reticulum_node_fixture(
+          last_heard: now - 20,
+          aspect: "nomadnetwork.node",
+          dest_id: RETICULUM_DEST_HASH2,
+          role: "NODE",
+        ),
+        "ingestor" => RETICULUM_INGESTOR_ID,
+        "protocol" => "reticulum",
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+
+      get "/api/destinations"
+      expect(JSON.parse(last_response.body).length).to eq(2)
+
+      get "/api/destinations?node_id=#{RETICULUM_NODE_ID2}"
+      expect(last_response.status).to eq(200)
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first).to include(
+        "id" => RETICULUM_DEST_HASH2,
+        "node_id" => RETICULUM_NODE_ID2,
+      )
+    end
+  end
+
   describe "POST /api/nodes" do
     it "stores reticulum nodes under their own protocol via the wrapper stamp" do
       register_reticulum_ingestor
@@ -163,58 +358,8 @@ RSpec.describe "Reticulum protocol support" do
         # (a destination hash is a truncated hash over the identity and name
         # hashes, not a key) — #888.
         expect(row["public_key"]).to eq(RETICULUM_PUBLIC_KEY)
-        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH])
+        expect(row["identity_hash"]).to eq(RETICULUM_IDENTITY_HASH)
         expect(row["hops_away"]).to eq(2)
-      end
-    end
-
-    it "unions destination hashes across a peer's announce aspects" do
-      register_reticulum_ingestor
-      # First aspect (lxmf.delivery) heard on its own...
-      post_reticulum_nodes
-      # ...then the second (nomadnetwork.node), which the ingestor posts with
-      # both hashes.  Two rows must never appear: one identity, one node.
-      post(
-        "/api/nodes",
-        {
-          "ingestor" => RETICULUM_INGESTOR_ID,
-          "protocol" => "reticulum",
-          RETICULUM_NODE_ID => reticulum_node_fixture(
-            last_heard: now,
-            dest_hashes: [RETICULUM_DEST_HASH2],
-          ),
-        }.to_json,
-        auth_headers,
-      )
-
-      with_db(readonly: true) do |db|
-        count = db.get_first_value(
-          "SELECT COUNT(*) FROM nodes WHERE protocol = 'reticulum'",
-        )
-        expect(count).to eq(1)
-        row = db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID])
-        # A record naming only the second hash must not drop the first: two
-        # ingestors can each have heard a different subset of a peer's aspects.
-        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH2, RETICULUM_DEST_HASH].sort)
-      end
-    end
-
-    it "keeps the stored destination hashes when a record names none" do
-      register_reticulum_ingestor
-      post_reticulum_nodes
-      post(
-        "/api/nodes",
-        {
-          "ingestor" => RETICULUM_INGESTOR_ID,
-          "protocol" => "reticulum",
-          RETICULUM_NODE_ID => reticulum_node_fixture(last_heard: now, dest_hashes: nil),
-        }.to_json,
-        auth_headers,
-      )
-
-      with_db(readonly: true) do |db|
-        row = db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID])
-        expect(JSON.parse(row["dest_hash"])).to eq([RETICULUM_DEST_HASH])
       end
     end
 
@@ -245,7 +390,9 @@ RSpec.describe "Reticulum protocol support" do
         expect(row["latitude"]).to be_nil
         expect(row["longitude"]).to be_nil
         expect(row["position_time"]).to be_nil
-        expect(row["role"]).to be_nil
+        # A role *is* stored now — derived from the announce aspect, which is
+        # the only signal Reticulum gives about what a destination is (RE-A5).
+        expect(row["role"]).to eq("PEER")
         expect(row["lora_freq"]).to be_nil
         expect(row["modem_preset"]).to be_nil
       end

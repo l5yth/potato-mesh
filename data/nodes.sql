@@ -50,14 +50,15 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- (message touches, chat placeholders) never write it; NULL means no keyed
   -- evidence has been recorded since the column shipped (SPEC MR1).
   last_advert_heard  INTEGER,
-  -- JSON array of protocol-native destination hashes that resolve to this
-  -- node's identity.  Reticulum peers announce one destination per aspect
-  -- (lxmf.delivery, nomadnetwork.node, …), all derived from a single identity
-  -- that keys the row; this back-references them.  NULL for protocols that
-  -- have no such indirection (#888).
-  dest_hash          TEXT
+  -- Protocol-native identity this node's destination belongs to.  A Reticulum
+  -- row is keyed on one announced destination (SPEC RE-A5), and several such
+  -- rows can share an identity -- this is what groups them back into one peer.
+  -- The destinations themselves live in the `destinations` table.  NULL for
+  -- protocols with no such indirection.
+  identity_hash      TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_nodes_identity_hash ON nodes(identity_hash);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);
 CREATE INDEX IF NOT EXISTS idx_nodes_hw_model  ON nodes(hw_model);
 CREATE INDEX IF NOT EXISTS idx_nodes_latlon    ON nodes(latitude, longitude);

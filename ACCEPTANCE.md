@@ -5285,26 +5285,13 @@ databases. #889 shipped the boot guard for `reticulum_nodes_count` but skipped t
 migration file that the four preceding schema changes all shipped; that is
 restored here.
 
-### RN-A9 — The ingestor derives its own node id; `INGESTOR_NODE_ID` only overrides — #888 / RN9
-```bash
-( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k 'node_id or identity' )
-git grep -n 'INGESTOR_NODE_ID' -- data/mesh_ingestor/protocols/reticulum.py
-```
-**Expected:** green, and `INGESTOR_NODE_ID` appears in `reticulum.py` only as an
-override consulted **before** the derived identity — never as a precondition.
-`connect` resolves `!xxxxxxxx` from an RNS identity the ingestor owns, generated
-once and stored as `potato_mesh_identity` inside `RETICULUM_CONFIG_DIR`, mapped
-by the same `_reticulum_node_id` rule applied to peers (RN1), so the id is stable
-across restarts. The key file is `0600`. An identity that can neither be read nor
-persisted yields **no** id and a warning rather than a fresh id per start
-(persist-or-nothing: a churning id would file one orphan ingestor row per
-restart), and announces keep being ingested either way. An existing but
-unreadable key file is left untouched. The startup warning #890 emitted for an
-unset `INGESTOR_NODE_ID` is gone.
-
-**Amends RN-A5's neighbourhood, not RN-A5 itself:** the config dir RN3/RN-A5
-made app-owned now also holds the ingestor's key, which is what makes owning one
-acceptable — it is never written into the operator's `~/.reticulum`.
+### RN-A9 — Superseded by RE-A2
+The ingestor no longer generates or stores an identity of its own: **RE1**
+re-keyed peers on the destination hash and **RE3** put the config dir back under
+the operator's control, which removed both of this criterion's premises. The
+behaviour it protected — `INGESTOR_NODE_ID` is an override, never a requirement,
+and the heartbeat comes up unaided — is asserted by **RE-A2** against the
+transport identity the config dir already holds.
 
 ### RN-A10 — `CONNECTION` is inapplicable to Reticulum, and said so — #888 / RN10
 ```bash
@@ -5684,3 +5671,332 @@ this feature is rebased onto - RD4 adds `lxmf.propagation` to the same
 `_ANNOUNCE_ASPECTS` that RV-A1's interface scoping reads, and shares the module
 whose fallback name RV-A2 corrected).
 
+## Bugfix: Reticulum end-to-end field findings (#893 hardware test)
+
+Seven findings from the first run against a real RNode and a live `rnsd`. Two are
+plain defects; two reverse decisions this project made on assumptions the field
+test disproved; three land where the contract was silent.
+
+### RE-A1 - One identity yields one node-id mapping - T-D-2
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "host_node_id" )
+```
+**Expected:** pass. `canonical_node_id` parses a hex string as an integer and
+keeps the low 32 bits - correct for a Meshtastic node num, wrong for a 16-byte
+identity hash, which it truncates from the **opposite end** to
+`_reticulum_node_id`. In the field the ingestor registered itself as
+`!86c39940` while its own peer row was `!27716218`, from the same identity.
+The provider now canonicalises a raw identity hash the Reticulum way (first four
+bytes), matching MeshCore's `public_key_hex[:8]` convention and the CONTRACTS
+rule that a mapping be deterministic and derived from sender-side material.
+
+### RE-A2 - The host node id is derived, not hunted for - T-B
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "derived_when_unset" )
+```
+**Expected:** pass. `INGESTOR_NODE_ID` unset resolves to
+`RNS.Transport.internal_identity()` - the config dir's persisted transport
+identity (`storage/transport_identity`), stable across restarts. It is **not**
+the hash `rnstatus` prints as "Transport Instance": that is
+`Transport.identity` (`Reticulum.py`), which `Transport.start` replaces with a
+fresh ephemeral identity on every process unless `enable_transport` is set,
+while `internal_identity()` returns the persisted `Transport._identity`.
+Measured across two processes on one config dir: `internal_identity` held
+`90c18b41` both times while `Transport.identity` moved `e7d23b11` -> `bd15b296`.
+Reticulum has no handshake
+revealing "our" node id, so the previous behaviour was to warn and leave the
+heartbeat unregistered; the operator's only recourse was grepping a nomadnet
+logfile. The ingestor aborts only when no identity can be derived at all.
+
+### RE-A3 - A local announce is never hidden by an interface allowlist - T-C
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "local_announces or interface" )
+```
+**Expected:** pass. `Transport.inbound` adds a hop to every inbound packet and
+takes it back for a local-client or shared-instance interface, so **0 hops means
+"announced by an app on this machine"** - it cannot mean anything else. Those
+announces are always ingested; the allowlist applies from 1 hop out, where the
+interface is the real one.
+
+This replaces the previous rule, which filtered purely on interface name and
+therefore hid the operator's own nodes: every local destination legitimately
+reads `LocalInterface[rns/default]`.
+
+### RE-A4 - Interface scoping works through a shared instance - T-C (amends RN4/RN8)
+```bash
+git grep -n "get_next_hop_if_name" -- data/mesh_ingestor/protocols/reticulum.py
+git grep -c "_seed_config_dir\|_warn_allowlist_ignored_once" -- data/mesh_ingestor/protocols/reticulum.py
+```
+**Expected:** the first grep hits; the second returns `0`. `RNS.Reticulum`'s
+accessors RPC to the shared instance and return **its** view -
+`RNodeInterface[RNode Reticulum Berlin]`, not the local socket - which
+`RNS.Transport.next_hop_interface` cannot do. Verified in the field: a client's
+`get_interface_stats()` lists the RNode, which a purely local client could not
+know exists.
+
+**RN4 and RN8 were built on the opposite premise** and are amended. The
+config-seeding (RN8) existed only to force `share_instance = No` so the allowlist
+could work, and the fail-open existed only to stop the resulting blackout;
+neither has a reason to exist, and both are removed. RPC auth is keyed on the
+config dir's identity, so a differing dir is rejected - which is why
+`~/.reticulum` is the default again (RN3 amended).
+
+### RE-A5 - One node record per identity - SPEC RE7 (supersedes the RE1 reversal)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "one_node_row or field_destinations or heard_on" )
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "destinations" )
+```
+**Expected:** pass. A peer announcing `lxmf.delivery`, `lxmf.propagation` and
+`nomadnetwork.node` is **one** node with three destinations. `node_id` is the
+first four bytes of the **identity** hash; a destination hash keys a row only
+when no identity resolves at all.
+
+This reverses RE1, which had split one peer into a row per aspect to stop a
+merged row being named from one aspect and roled from another. That problem is
+real but belongs to the `destinations` table (RE-A6), which already carries the
+per-aspect name and role — so the row split bought nothing and cost the node
+count its meaning.
+
+`test_field_destinations_derive_from_the_primary_identity` anchors the model on
+**real captured data**: RNS recomputes `4cf985bf…`, `fee521eb…` and `9c59da5e…`
+from identity `27716218…` alone, proving the three destinations belong to one
+identity rather than assuming it. **Known consequence, accepted:** the
+node-level `long_name`/`role` follow the most recent announce and can alternate
+on a multi-aspect peer; the destinations table holds the per-aspect truth and
+what to surface is a frontend decision.
+
+### RE-A9 - The host id is its primary identity, not its transport identity - SPEC RE8
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "derived_when_unset or stable_across_calls or transport_identity_never_wins or tie_is_not_guessed or host_destinations_label" )
+```
+**Expected:** pass. The 0-hop path table names the destinations announced on
+this machine; `RNS.Identity.recall` maps them to identities, and the one
+fronting the most is the host's primary. The transport identity is **excluded**
+from that count and can never be the host id: RNS generates it as an
+independent keypair, so it matches none of the operator's announced
+destinations — in the field a host whose primary identity was `27716218…`
+registered as `!fbf8e338`, matching nothing it announced.
+
+A tie returns `None` rather than a guess (path-table ordering is unstable, so
+guessing would let the id change between restarts), as does an undiscoverable
+host; the daemon already retries `extract_host_node_id` each loop, so `None` is
+a wait, not a failure. Aspects are labelled by recomputing each known aspect's
+destination hash from the identity hash, because a destination hash is one-way.
+
+### RE-A10 - TRANSPORT is host-only and gated on transport_enabled - SPEC RE9
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "transport_aspect_is_gated" )
+git grep -n "TRANSPORT" -- data/mesh_ingestor/protocols/reticulum.py | grep -c "_ASPECT_ROLES" 
+```
+**Expected:** the test passes and the grep returns `0` — `TRANSPORT` is **not**
+in `_ASPECT_ROLES`, so no announce can ever produce it. It is emitted only for
+the ingestor's own host, under the synthetic aspect `rns.transport`, and only
+when the stack reports `transport_enabled`.
+
+Both halves matter. **Host-only** keeps CONTRACTS' sender-side determinism: for
+our own machine the association is local fact, not an inference from our
+vantage point, so two ingestors on that host agree while every remote peer is
+untouched. **Gated** keeps it honest: the transport identity exists on every
+stack while only a transport-enabled one relays, so an ungated role would
+assert something false on the default configuration. The destination row
+carries the transport identity hash as its `id` but the **primary** identity as
+its `identity_hash`, which is what keeps the host one node. Populates the
+`TRANSPORT` slot RD5 reserved.
+
+### RE-A11 - The headline aspect preference is stable and order-independent - SPEC RE10
+```bash
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "headline aspect preference" )
+```
+**Expected:** pass. A node's `long_name` and `role` come from its highest-ranked
+destination — `NODE` > `PEER` > `PROPAGATION` > `TRANSPORT` — not from whichever
+announce arrived last. The first example posts the same two aspects in **both
+orders** and expects the same headline either way; that order-independence is
+the whole point, since RE7's per-identity rows otherwise let a multi-aspect peer
+alternate between "Afri Nomad Orion" and "Department of Decentralization" on
+every announce, churning the row.
+
+Derived in SQL from the `destinations` rows on each destination write, so it
+survives a restart and agrees across ingestors — the durable form of the
+follow-up RD4 recorded as a known limitation. Name and role resolve
+independently: a third example gives the top-ranked aspect no display name and
+expects the role to move while the headline name stays.
+
+A discovered host destination gets its name from
+`RNS.Identity.recall_app_data` — the host's own announces are never delivered
+back to this ingestor, so without recalling what the stack last heard every one
+of them stored the `Reticulum <SHORT>` placeholder and named the node with it.
+Its interface comes from the path-table entry. Both were dropped in the field
+(`interface: null`, `name: "Reticulum 6218"` on all three aspects of
+`!27716218`). A placeholder is still stored on a **first** sighting — it is what
+a reader sees until a real name turns up — but `upsert_destination` never lets
+one **replace** a real name, which would rename the node through the RE10 rule.
+
+**Note:** `clear_tables` in `spec/reticulum_spec.rb` must delete from
+`destinations`. It did not, and rows keyed on the destination hash accumulated
+across examples; the pre-existing tests hid it by reusing one hash, so only a
+multi-aspect test exposed it.
+
+### RE-A6 - Destinations are a table, and they are served - T-E
+```bash
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "GET /api/destinations" )
+git grep -n "dest_hash" -- data/nodes.sql
+```
+**Expected:** the spec passes and the grep returns nothing. The `destinations`
+table (`id`, `node_id`, `name`, `aspect`, `role`, timestamps) **replaces** the
+`nodes.dest_hash` JSON column - a column and a table modelling the same thing
+would drift. `GET /api/destinations` serves them, and `/api/nodes` carries a
+reference list. Named `destinations` rather than "aspects" because an aspect is
+one component of a destination's name, not the destination itself; the table
+also stays honest for protocols whose nodes have exactly one.
+
+### RE-A7 - Operator-facing settings say which protocol they apply to - T-A
+```bash
+grep -n "CONNECTION" README.md | head -3
+```
+**Expected:** the `CONNECTION` row is marked as Meshtastic/MeshCore only. The
+Reticulum provider takes its target from `RETICULUM_CONFIG_DIR` and never reads
+`CONNECTION`; the field test passed `/dev/ttyACM1` to a Reticulum ingestor that
+ignored it, because the table implied it was required.
+
+### RE-A8 - The transmit gate is logged when it blocks something - T-D-3
+```bash
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py -k "suppress or policy" )
+```
+**Expected:** pass. `maybe_run_announcement_cycle` checked the transmit policy
+**before** `announce_due`, so it logged a suppression line every 60 s cycle even
+though an announcement is due at most once per 24 h. The order is reversed: the
+gate is named only when it actually blocks a due announcement. The startup
+`Transmit policy resolved` line already states the resolved policy, which is
+what the per-cycle message was for.
+
+### RE-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**RN-A1** (superseded on the row key by RE-A5, but its *evidence* - that
+destination hashes differ per aspect - is what motivates the reversal);
+**RN-A2** (`publicKey` is still the identity key; the identity hash now also
+lands in `nodes.identity_hash`); **RN-A3** (the `dest_hash` union is removed
+outright, so its criterion retires with it); **RN-A5/RN-A6** (config dir and
+allowlist, both amended here); **RV-A1-RV-A4** (the #893 review fixes, of which
+RV-A1's fail-open and seeding are removed as no longer needed); **RD-A1-RD-A8**
+(the visual identity feature - presentation only, untouched); and **MA7/TX-A1**
+(the transmit policy itself is unchanged; only its logging moves).
+
+
+## Documentation audit (operator docs, flags, APIs, contracts)
+
+### DOC-A1 - Every env var is documented, and the operator set is piped everywhere
+```bash
+python3 - <<'PY'
+import re, pathlib
+ING = pathlib.Path("data/mesh_ingestor/config.py").read_text()
+WEB = pathlib.Path("web/lib/potato_mesh/config.rb").read_text()
+ing_vars = set(re.findall(r'os\.environ\.get\(\s*"([A-Z_]+)"', ING))
+web_vars = set(re.findall(r'ENV\[\s*"([A-Z_]+)"', WEB))
+web_vars |= set(re.findall(r'fetch_\w+\(\s*"([A-Z_]+)"', WEB))
+RUNTIME = {"HOME","PATH","PORT","HOST","RACK_ENV","APP_ENV","APP_VERSION",
+           "XDG_DATA_HOME","XDG_CONFIG_HOME","PYTHONPATH","INSTANCES"}
+ADVANCED = {"MIN_THREADS","MAX_THREADS","PUMA_FORCE_SHUTDOWN","STATS_CACHE_TTL_SECONDS",
+            "OG_IMAGE_TTL_SECONDS","LIVE_SAFETY_POLL_SECONDS","SSE_HEARTBEAT_SECONDS",
+            "SSE_MAX_LIFETIME_SECONDS","SSE_PUBLISH_COOLDOWN","SSE_THREAD_RESERVE",
+            "INITIAL_FEDERATION_DELAY_SECONDS"}
+ADVANCED |= {v for v in ing_vars | web_vars
+             if v.startswith(("FEDERATION_", "REMOTE_INSTANCE_"))}
+allv = (ing_vars | web_vars) - RUNTIME
+txt = {n: pathlib.Path(n).read_text() for n in
+       (".env.example","docker-compose.yml","data/Dockerfile","web/Dockerfile",
+        "flake.nix","README.md")}
+has = lambda n, v: re.search(rf'\b{v}\b', txt[n]) is not None
+bad = []
+for v in sorted(allv):
+    if not has("README.md", v):
+        bad.append(f"{v}: absent from README.md")
+    if v in ADVANCED:
+        continue
+    need = [".env.example", "docker-compose.yml", "flake.nix"]
+    if v in ing_vars: need.append("data/Dockerfile")
+    if v in web_vars: need.append("web/Dockerfile")
+    miss = [n for n in need if not has(n, v)]
+    if miss:
+        bad.append(f"{v}: missing from {', '.join(miss)}")
+print("\n".join(bad) if bad else "OK")
+print(f"({len(allv)} variables, {len(ADVANCED)} advanced)")
+PY
+```
+**Expected:** prints `OK` (57 variables, 22 advanced at the time of writing).
+Two tiers, deliberately:
+
+- **`README.md` documents every variable either config file reads.** No
+  exemptions. `PROM_REPORT_IDS` shipped readable-by-code and documented nowhere
+  at all; the whole `SSE_*`/`FEDERATION_*`/`REMOTE_INSTANCE_*` block likewise.
+- **The operator-facing set is additionally piped through `.env.example`,
+  Compose, the NixOS module, and the image of each service that reads it.** A
+  variable read by both services must be declared in both images.
+- **`ADVANCED` covers internal tuning knobs** (thread pools, timeouts, SSE and
+  federation internals). They are README-only on purpose: pre-declaring two
+  dozen of them would bury the handful an operator actually sets. Adding a name
+  to `ADVANCED` is a deliberate choice to keep it out of the templates, not a
+  way to silence this check — it still must be in the README.
+
+Regression guard for `PROTOCOL`/`RETICULUM_*` never reaching `flake.nix`, which
+left Reticulum unconfigurable on NixOS while the README documented it.
+
+### DOC-A2 - Compose defaults are bare, never quoted
+```bash
+grep -nE '\$\{[A-Z_]+:-""\}' docker-compose.yml ; echo "exit=$?"
+```
+**Expected:** prints nothing (`exit=1`). Compose substitutes a default as
+**literal text**, so `${VAR:-""}` yields the two-character value `""`. On
+`ALLOWED_CHANNELS` that parses as a one-entry allowlist matching nothing and
+drops every message; on `RETICULUM_INTERFACES` it ingests no announces. Both
+regressions shipped once. Bare `${VAR:-}` is the only correct empty default.
+
+### DOC-A3 - Every route is documented
+```bash
+grep -rhoE '(get|post) "/[^"]*"' web/lib/potato_mesh/application/routes/*.rb \
+  | sed 's/.*"\(.*\)"/\1/' | sed -E 's#/:[a-z_]+$##' | sed '/^$/d' | sort -u \
+  | while read -r p; do grep -qF "$p" README.md || echo "undocumented: $p"; done
+echo done
+```
+**Expected:** only `done`. A trailing `/:param` is stripped before the check
+because the README documents per-node reads as a `GET /:id` column on the
+collection row rather than as their own bullet. The `### API` section covers
+every collection, every non-collection endpoint (`/version`, `/metrics`,
+`/.well-known/potato-mesh`, `/og-image.png`, `robots.txt`, `sitemap.xml`), the
+page routes, and states there is **no** health endpoint — the repository has
+none, so "health" is documented by its absence rather than left to a reader to
+discover.
+
+### DOC-A4 - Operator docs carry no design rationale
+```bash
+grep -nE "\b(that default is deliberate|airtime on a lora mesh is|not a default we get to make)\b" -i README.md ; echo "exit=$?"
+```
+**Expected:** prints nothing (`exit=1`). Operator documentation answers "do X to
+achieve Y"; the reasoning behind a decision belongs in `SPEC.md`, which is where
+the transmit-default rationale now lives alone.
+
+### DOC-A5 - CONTRACTS.md matches the served shapes
+```bash
+grep -c "Served on no read API" data/mesh_ingestor/CONTRACTS.md
+grep -n "GET /api/destinations response shape" data/mesh_ingestor/CONTRACTS.md
+grep -n "dest_hash" data/mesh_ingestor/CONTRACTS.md ; echo "exit=$?"
+```
+**Expected:** the first prints `0`, the second hits, the third prints nothing
+(`exit=1`). `identityHash` **is** served — by `GET /api/destinations` — so the
+"served on no read API" claim was false once the endpoint landed, and the
+`dest_hash` column it referenced no longer exists. A contract that describes a
+column the schema dropped is worse than silence.
+
+### DOC-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. This audit changes documentation, `configure.sh`,
+Compose, both Dockerfiles, and `flake.nix` — no application code — so every
+prior criterion must hold unchanged. Explicitly re-verified because editorial
+passes have broken them before: **SB-A6** (dual-CDN egress disclosure, which the
+README refactor had dropped), **RV-A4** (`potatomesh_reticulum`, likewise
+dropped), **TX-A6**, **RD-A2/RD-A7** (badge greps), and the `RETICULUM_CONFIG_DIR`
+counts in RN-A5.

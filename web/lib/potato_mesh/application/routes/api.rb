@@ -244,6 +244,16 @@ module PotatoMesh
             end
           end
 
+          app.get "/api/destinations" do
+            content_type :json
+            limit = coerce_query_limit(params["limit"])
+            node_id = string_or_nil(params["node_id"])
+            json_body = query_destinations(limit, node_id: node_id).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            api_cache_control
+            json_body
+          end
+
           app.get "/api/messages" do
             content_type :json
             limit = coerce_query_limit(params["limit"])

@@ -25,15 +25,25 @@ Like :class:`~data.mesh_ingestor.protocols.meshtastic_udp.MeshtasticUdpProvider`
 this provider is receive-only: it never transmits and has no roster to fetch.
 
 **Own node id.**  Reticulum has no protocol-level handshake revealing "our"
-node id, but it does not need one: the ingestor **owns an RNS identity**,
-persisted as ``potato_mesh_identity`` inside
-:data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR`, and derives its own
-``!xxxxxxxx`` through the same identity-hash mapping applied to every peer
-(:func:`_reticulum_node_id`).  :envvar:`INGESTOR_NODE_ID` is therefore an
-**override**, not a requirement — the heartbeat and the reticulum
-packets/hour scope come up on their own (SPEC RN9).  The identity is generated
-and stored locally and is never announced, so this adds no transmit site
-(SPEC MA7/RN5).
+node id, so the ingestor discovers it: the 0-hop entries of the running
+stack's path table are the destinations announced by apps on this machine, and
+:func:`RNS.Identity.recall` maps each back to its owning identity.  The
+identity fronting the most of them is the host's **primary identity**, and its
+first four bytes are the node id (SPEC RE8).  Ties are not guessed — path-table
+ordering is unstable, so an ambiguous host must set
+:envvar:`INGESTOR_NODE_ID`, which otherwise remains an **override**, not a
+requirement.
+
+The *transport* identity is deliberately **not** the node id.  RNS generates it
+as an independent keypair in ``storage/transport_identity``, so it matches none
+of the operator's announced destinations: a host whose primary identity was
+``27716218…`` registered as ``!fbf8e338`` under the old rule.  It is instead
+recorded as one more destination of the host — see :data:`_TRANSPORT_ASPECT`.
+Note also that it is not the hash ``rnstatus`` prints as "Transport Instance":
+``rnstatus`` reports ``Transport.identity``, which RNS replaces with a fresh
+ephemeral identity on every start unless ``enable_transport`` is set, while
+``internal_identity()`` returns the persisted ``Transport._identity``.  Nothing
+is generated or written by this provider.
 
 **Connection variables.**  :envvar:`CONNECTION` names a single serial, TCP, or
 BLE endpoint and has no meaning for RNS, which is a stack of many interfaces
@@ -111,51 +121,15 @@ ingestors would disagree (the CONTRACTS sender-side determinism rule).
 _ANNOUNCE_ASPECTS: tuple[str, ...] = tuple(_ASPECT_ROLES)
 """Destination aspects whose announces are ingested as node records."""
 
-_SHARED_INSTANCE_INTERFACE_PREFIXES: tuple[str, ...] = (
-    "localinterface[",
-    "shared instance[",
-)
-"""Interface names that mean "attached to a shared RNS instance".
+_TRANSPORT_ASPECT = "rns.transport"
+"""Synthetic aspect naming the host's own transport instance (SPEC RE8).
 
-``RNS.Interfaces.LocalInterface`` renders the client side as
-``LocalInterface[rns/<name>]`` and the server side as
-``Shared Instance[rns/<name>]``.  When the ingestor is attached to an external
-``rnsd`` every announce arrives over that one socket, whatever interface
-actually received it, so a per-interface allowlist cannot discriminate.
+Not a real announce aspect: RNS never announces transport status, and the
+transport identity is an *independent* identity rather than a destination of
+the operator's primary one.  It is recorded only for **this ingestor's own
+host**, where the association is local fact rather than inference, so the
+CONTRACTS sender-side determinism rule still holds for every remote peer.
 """
-
-_ROLE_RANK: tuple[str, ...] = ("PEER", "NODE", "TRANSPORT", "PROPAGATION")
-"""Roles in ascending precedence order (SPEC RD4).
-
-``TRANSPORT`` is ranked although :data:`_ASPECT_ROLES` maps nothing to it: the
-rank is the reserved slot's other half, so a future source drops in without
-re-opening the ordering.  Ranking it below ``PROPAGATION`` reflects that a
-propagation node is the more specific claim.
-
-A node's role is the **highest-ranked aspect it has announced on during this
-ingestor session**, not the most recent.  A fixed rank is load-bearing rather than cosmetic: an identity's
-aspects collapse onto one row (SPEC RN1) and the web upsert writes
-``role=COALESCE(excluded.role, nodes.role)``, so mapping each announce straight
-to its own role would make a dual-aspect peer's role flip on every announce,
-oscillating its badge and its legend bucket.
-"""
-
-
-def _rank_role(role: str | None) -> int:
-    """Return a role's precedence, or ``-1`` when it is unranked.
-
-    Parameters:
-        role: Role name, or ``None``.
-
-    Returns:
-        Index into :data:`_ROLE_RANK`; ``-1`` for ``None`` or an unknown role,
-        so anything unranked always loses to a ranked role.
-    """
-    try:
-        return _ROLE_RANK.index(role)
-    except ValueError:
-        return -1
-
 
 _MSGPACK_ARRAY_LEAD_BYTES = frozenset(range(0x90, 0xA0)) | {0xDC, 0xDD}
 """First-byte values identifying a msgpack-encoded announce ``app_data``.
@@ -206,6 +180,32 @@ def _reticulum_hash_hex(dest_hash: object) -> str | None:
         stripped = dest_hash.strip().lower()
         return stripped or None
     return None
+
+
+def _announce_node_id(identity: object, dest_hash: object) -> str | None:
+    """Return the node ID an announce belongs to: the **identity**, not the
+    destination.
+
+    One peer is one node record; its destinations are aspects of that identity
+    and are carried separately in the ``destinations`` table (SPEC RE2).  A
+    destination hash is a truncated hash over the identity *and* the name hash,
+    so keying rows on it splits one peer into a row per aspect.
+
+    Falls back to the destination hash only when the identity cannot be
+    resolved at all — without it there is nothing else to key on, and dropping
+    the announce would lose a peer entirely.
+
+    Parameters:
+        identity: Announcing :class:`RNS.Identity`, or ``None``.
+        dest_hash: Destination hash the announce arrived for.
+
+    Returns:
+        Canonical ``!xxxxxxxx`` node ID, or ``None`` when neither hash is usable.
+    """
+    node_id = _reticulum_node_id(getattr(identity, "hash", None))
+    if node_id is not None:
+        return node_id
+    return _reticulum_node_id(dest_hash)
 
 
 def _reticulum_short_name(node_id: str | None) -> str:
@@ -338,6 +338,22 @@ def _announce_interface_name(dest_hash: object) -> str | None:
     """
     if not isinstance(dest_hash, (bytes, bytearray)):
         return None
+    # Ask the *running stack* which interface the path arrived on.  On a shared
+    # instance ``get_next_hop_if_name`` RPCs to ``rnsd`` and returns its view;
+    # ``RNS.Transport.next_hop_interface`` reads only this process's path table,
+    # which for a local client answers ``LocalInterface[...]`` for everything and
+    # is what made the allowlist look unanswerable (SPEC RE3).
+    try:
+        instance = RNS.Reticulum.get_instance()
+    except Exception:
+        instance = None
+    if instance is not None:
+        try:
+            name = instance.get_next_hop_if_name(bytes(dest_hash))
+            if name:
+                return str(name)
+        except Exception:
+            pass
     try:
         iface = RNS.Transport.next_hop_interface(bytes(dest_hash))
     except Exception:
@@ -350,73 +366,38 @@ def _announce_interface_name(dest_hash: object) -> str | None:
         return None
 
 
-_allowlist_ignored_warned = False
-"""Whether the fail-open warning has already been emitted this session."""
+def _announce_admitted(hops: int | None, interface_name: str | None) -> bool:
+    """Decide whether an announce is in scope for this ingestor (SPEC RN4).
 
+    Two rules, in order.
 
-def _warn_allowlist_ignored_once(interface_name: str) -> None:
-    """Warn, once, that the interface allowlist cannot be honoured.
+    **A 0-hop announce is always admitted.**  ``RNS.Transport.inbound`` adds a
+    hop to every inbound packet and takes it back again for a local-client or
+    shared-instance interface, so zero hops can only mean "announced by an app
+    on this machine" — the operator's own nodes.  Scoping to a radio must never
+    hide those; filtering purely on interface name did exactly that, because
+    every local destination legitimately reads ``LocalInterface[rns/default]``.
 
-    Emitted on the fail-open path: the ingestor is attached to a shared RNS
-    instance, so every announce arrives over one socket and
-    :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` cannot discriminate.
-    Ingesting everything is the safe failure, but it **widens** what the
-    operator asked for, so it must not be silent — this is the upgrade path for
-    a deployment whose config dir already exists and therefore was never seeded
-    (see :func:`_seed_config_dir`).
-
-    Once per process: this sits on the per-announce path.
-
-    Parameters:
-        interface_name: The shared-instance interface the announce arrived on.
-    """
-    global _allowlist_ignored_warned
-    if _allowlist_ignored_warned:
-        return
-    _allowlist_ignored_warned = True
-    config._debug_log(
-        "RETICULUM_INTERFACES cannot be honoured on a shared Reticulum instance; "
-        "ingesting every announce instead. Set share_instance = No in the "
-        "ingestor's own config dir to scope it",
-        context="reticulum.announce",
-        severity="warn",
-        interface=interface_name,
-        allowlist=list(config.RETICULUM_INTERFACES),
-    )
-
-
-def _interface_allowed(interface_name: str | None) -> bool:
-    """Test *interface_name* against :data:`config.RETICULUM_INTERFACES`.
-
-    An empty allowlist — the default — admits every interface, preserving the
-    behaviour the provider shipped with.  When an allowlist *is* configured,
-    an announce whose interface cannot be determined is rejected: the operator
-    asked to ingest from named interfaces only, and an unverifiable one is not
-    among them.
-
-    A shared-instance socket is the one exception and admits everything: see
-    :data:`_SHARED_INSTANCE_INTERFACE_PREFIXES`.
+    **Anything further out is scoped by interface.**  From one hop the
+    receiving interface is a real one, so
+    :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` can discriminate.
+    An empty allowlist — the default — admits everything.
 
     Parameters:
-        interface_name: Interface string form, or ``None`` when unknown.
+        hops: Hop count for the announce, or ``None`` when unknown.
+        interface_name: Interface the announce arrived on, or ``None``.
 
     Returns:
-        ``True`` when announces from this interface may be ingested.
+        ``True`` when the announce may be ingested.
     """
+    if hops == 0:
+        return True
     allowlist = config.RETICULUM_INTERFACES
     if not allowlist:
         return True
     if not interface_name:
         return False
     lowered = interface_name.lower()
-    # Fail *open* on a shared-instance socket.  Every announce reaches us over
-    # that one interface, so the allowlist cannot tell them apart; rejecting
-    # them all would silently ingest nothing, which is the worse failure by far
-    # (:func:`ReticulumProvider.connect` refuses to share precisely so this
-    # path is not reached, and warns when it is).
-    if lowered.startswith(_SHARED_INSTANCE_INTERFACE_PREFIXES):
-        _warn_allowlist_ignored_once(interface_name)
-        return True
     return any(fragment in lowered for fragment in allowlist)
 
 
@@ -453,257 +434,72 @@ def _announce_to_node_dict(
     app_data: object,
     *,
     identity: object = None,
-    dest_hashes: "list[str] | tuple[str, ...] | None" = None,
-    role: str | None = None,
+    aspect: str | None = None,
+    interface: str | None = None,
     hops: int | None = None,
     last_heard: int | None = None,
 ) -> dict | None:
     """Convert a Reticulum announce into a ``POST /api/nodes`` node dict.
 
-    The record is keyed on the announcing **identity** (see
-    :func:`_reticulum_node_id`), so a peer's several destination aspects merge
-    into one node row.  The destination hashes themselves are carried in the
-    ``destHash`` list — a destination hash is a truncated hash over the
-    identity and name hashes, not a key, and never belongs in ``publicKey``.
+    One record per **announced destination** (SPEC RE-A5).  Each aspect carries
+    its own display name and implies its own role, so a record names exactly the
+    destination it came from.  The announcing identity rides along as
+    ``identityHash`` — the rows for one peer are grouped by it, which is a
+    separate design pass.
 
     Parameters:
-        dest_hash: 16-byte destination hash (or hex string) the announce
-            arrived for; used for the display-name fallback and as the sole
-            ``destHash`` entry when *dest_hashes* is omitted.
-        app_data: Raw announce application data carrying the display name
-            (see :func:`_decode_display_name`).
-        identity: Announcing :class:`RNS.Identity`; its hash keys the node row
-            and its public key populates ``user.publicKey``.
-        dest_hashes: Every destination hash known for this identity, so far.
-            Defaults to just *dest_hash*.
-        role: Highest-ranked role this identity has announced (SPEC RD4).
-            Omitted from the payload when falsy, so a record never asserts a
-            role it could not determine.
+        dest_hash: 16-byte destination hash the announce arrived for.  Keys the
+            node row.
+        app_data: Raw announce application data (see
+            :func:`_decode_display_name`).
+        identity: Announcing :class:`RNS.Identity`; supplies the real public key
+            and the identity hash.
+        aspect: Destination aspect this announce arrived on, e.g.
+            ``lxmf.delivery``.  Maps to the role via :data:`_ASPECT_ROLES`.
+        interface: Interface the announce was heard on, when known — the honest
+            answer to "is this a LoRa peer" (SPEC RN4).
         hops: Hop count travelled by the announce, when known.
         last_heard: Unix seconds of announce receipt; defaults to now.
 
     Returns:
-        Node dict compatible with the ``POST /api/nodes`` payload format, or
-        ``None`` when no identity hash is available to key the record.  The
-        canonical node id is *not* embedded: the payload envelope is keyed by
-        it (``routes/ingest.rb``), and :meth:`_ReticulumInterface.nodes_snapshot`
-        carries it alongside.
+        Node dict for the ``POST /api/nodes`` payload, or ``None`` when
+        *dest_hash* cannot be mapped to a canonical node ID.
     """
-    node_id = _reticulum_node_id(getattr(identity, "hash", None))
+    node_id = _announce_node_id(identity, dest_hash)
     if node_id is None:
         return None
     hash_hex = _reticulum_hash_hex(dest_hash)
-    hashes = sorted(
-        {h for h in (dest_hashes if dest_hashes is not None else [hash_hex]) if h}
-    )
     display_name = _decode_display_name(app_data)
-    # Name the *node*, not whichever destination happened to announce.  The row
-    # is keyed on the identity (SPEC RN1), so a per-aspect destination-hash
-    # prefix names the wrong thing entirely — and the web upsert only yields to
-    # a placeholder it recognises, which is the "<Label> <short id>" form its
-    # +generic_fallback_name?+ builds.  A bare hex string reads as a real name
-    # and overwrites the stored one.
-    # Upper-case is load-bearing: the Ruby side builds the placeholder as
-    # +protocol_display_label+ plus +canonical_node_parts(...)[2]+, and that
-    # short id is +.upcase+d (identity.rb:129) then compared with +==+.  A
-    # lower-case tail matches only when all four hex digits are decimal — about
-    # 15% of ids — and every other node's stored name gets overwritten.
-    fallback_name = f"Reticulum {node_id[-4:].upper()}"
+    user: dict = {
+        "longName": (
+            display_name if display_name else f"Reticulum {node_id[-4:].upper()}"
+        ),
+        "shortName": _reticulum_short_name(node_id),
+        "publicKey": _identity_public_key_hex(identity),
+    }
+    role = _ASPECT_ROLES.get(aspect) if aspect else None
+    if role:
+        user["role"] = role
     node: dict = {
+        "nodeId": node_id,
         "lastHeard": int(time.time()) if last_heard is None else int(last_heard),
         "protocol": "reticulum",
-        "destHash": hashes,
-        "user": {
-            "longName": display_name if display_name else fallback_name,
-            "shortName": _reticulum_short_name(node_id),
-            "publicKey": _identity_public_key_hex(identity),
-        },
+        "user": user,
     }
-    if role:
-        node["user"]["role"] = role
+    identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
+    if identity_hash:
+        node["identityHash"] = identity_hash
+    # The node row can be keyed on the identity alone, so a malformed
+    # destination hash no longer sinks the whole announce — but it must not
+    # reach the destinations table either, where it would create a row keyed on
+    # a truncated id.  Emit the mapping only when the hash is usable.
+    if hash_hex is not None and len(hash_hex) >= 8:
+        node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
+    if interface:
+        node["interface"] = interface
     if hops is not None:
         node["hopsAway"] = hops
     return node
-
-
-_IDENTITY_FILENAME = "potato_mesh_identity"
-"""File inside the config dir holding the ingestor's own RNS identity.
-
-Deliberately *not* under RNS's own ``storage/`` subdirectory: the file is
-potato-mesh's, written and read by this provider alone, and must not be
-mistaken for part of the RNS-managed layout.
-"""
-
-
-def _load_self_identity(configdir: str) -> object | None:
-    """Return the ingestor's own persisted :class:`RNS.Identity`, creating it once.
-
-    Reticulum gives a passive listener no handshake revealing "our" node id, so
-    the ingestor supplies one by owning an identity of its own (SPEC RN9).  The
-    identity is created on first run and stored in *configdir*, which
-    :func:`~data.mesh_ingestor.config._resolve_reticulum_config_dir` keeps
-    app-owned (SPEC RN3), so the derived node id is **stable across restarts**.
-
-    Persist-or-nothing is load-bearing rather than defensive: an identity that
-    could not be written would be regenerated on every start, and each
-    generation is a different ``!xxxxxxxx``, so the dashboard would accumulate
-    a fresh ingestor node row per restart.  Returning ``None`` instead leaves
-    the heartbeat unregistered — the shipped behaviour before RN9 — which is
-    recoverable, whereas a landfill of orphan rows is not.
-
-    An existing but unreadable file is never overwritten.  The likeliest causes
-    are a permissions problem or a half-written file, and clobbering the
-    identity on either would silently change the ingestor's node id; the
-    warning names the path so an operator can delete it deliberately.
-
-    This never transmits: generating and storing keys is local, and the
-    identity is not announced (SPEC MA7/RN5).
-
-    Parameters:
-        configdir: The ingestor's Reticulum config directory.
-
-    Returns:
-        The loaded or newly created identity, or ``None`` when it could
-        neither be read nor persisted.
-    """
-    path = os.path.join(configdir, _IDENTITY_FILENAME)
-    if os.path.isfile(path):
-        try:
-            identity = RNS.Identity.from_file(path)
-        except Exception:
-            identity = None
-        if identity is not None:
-            return identity
-        config._debug_log(
-            "Reticulum identity file exists but could not be read; leaving it "
-            "in place and continuing without an ingestor node id — delete it "
-            "to have a new identity generated, or set INGESTOR_NODE_ID",
-            context="reticulum.identity",
-            severity="warn",
-            path=path,
-        )
-        return None
-
-    try:
-        os.makedirs(configdir, exist_ok=True)
-        identity = RNS.Identity()
-        identity.to_file(path)
-        # RNS writes the file with the process umask; the private key deserves
-        # owner-only permissions regardless of what that umask happened to be.
-        os.chmod(path, 0o600)
-    except Exception as exc:
-        config._debug_log(
-            "Could not create a Reticulum identity; continuing without an "
-            "ingestor node id (the reticulum packets/hour stats will stay at "
-            "zero) — set INGESTOR_NODE_ID or make the config dir writable",
-            context="reticulum.identity",
-            severity="warn",
-            path=path,
-            error=str(exc),
-        )
-        return None
-
-    config._debug_log(
-        "Generated the ingestor's own Reticulum identity",
-        context="reticulum.identity",
-        severity="info",
-        path=path,
-    )
-    return identity
-
-
-def _resolve_host_node_id(configdir: str) -> str | None:
-    """Resolve the ingestor's own canonical ``!xxxxxxxx`` node id.
-
-    :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` wins when set — an
-    explicit operator statement about which node this ingestor *is* outranks a
-    derived one, and honouring it means no identity is generated for a
-    deployment that does not need one.  Otherwise the id is derived from the
-    ingestor's own identity (SPEC RN9), matching the mapping applied to peers
-    so the ingestor's row is shaped like every other Reticulum row.
-
-    Parameters:
-        configdir: The ingestor's Reticulum config directory.
-
-    Returns:
-        Canonical ``!xxxxxxxx`` node id, or ``None`` when none could be
-        resolved.
-    """
-    if config.INGESTOR_NODE_ID:
-        return config.INGESTOR_NODE_ID
-    identity = _load_self_identity(configdir)
-    if identity is None:
-        return None
-    return _reticulum_node_id(getattr(identity, "hash", None))
-
-
-def _seed_config_dir(configdir: str) -> None:
-    """Write a starter RNS config into *configdir* when none exists yet.
-
-    Only relevant when :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES`
-    is set.  RNS decides whether to attach to an external ``rnsd`` from the
-    ``share_instance`` **config option**, not from ``configdir`` — the
-    shared-instance socket is keyed on ``instance_name`` — so an app-owned
-    config dir alone does not stop the ingestor joining the operator's stack.
-    Attached, every announce arrives over one ``LocalInterface`` and the
-    allowlist cannot discriminate (SPEC RN4).
-
-    An operator-authored config is never touched: this seeds an absent file
-    only, so anyone who *wants* to share can say so and keep it.
-
-    Parameters:
-        configdir: The ingestor's Reticulum config directory.
-    """
-    config_path = os.path.join(configdir, "config")
-    if os.path.exists(config_path):
-        return
-    os.makedirs(configdir, exist_ok=True)
-    with open(config_path, "w", encoding="utf-8") as handle:
-        handle.write(_SCOPED_CONFIG_TEMPLATE)
-    config._debug_log(
-        "Seeded an unshared Reticulum config with no interfaces enabled; add the "
-        "interfaces named in RETICULUM_INTERFACES or nothing will be ingested",
-        context="reticulum.connect",
-        severity="warn",
-        path=config_path,
-        allowlist=list(config.RETICULUM_INTERFACES),
-    )
-
-
-_SCOPED_CONFIG_TEMPLATE = """# Written by potato-mesh because RETICULUM_INTERFACES is set.
-#
-# share_instance = No keeps this ingestor on its own RNS stack. Attached to a
-# shared rnsd every announce arrives over one LocalInterface, so a per-interface
-# allowlist cannot tell them apart and would filter everything or nothing.
-#
-# Add the interfaces you want ingested below -- this ingestor does not inherit
-# the ones your rnsd has. Delete this file to fall back to RNS's own defaults.
-
-[reticulum]
-  enable_transport = No
-  share_instance = No
-
-[logging]
-  loglevel = 3
-
-[interfaces]
-
-  # No interface is enabled here on purpose. RETICULUM_INTERFACES names what you
-  # want ingested, and a stock AutoInterface would be called
-  # "AutoInterface[Default Interface]" -- matching no sensible allowlist, so the
-  # listener would connect and hear nothing. Add the interfaces you named, e.g.
-  #
-  #   [[RNode LoRa]]
-  #     type = RNodeInterface
-  #     enabled = Yes
-  #     port = /dev/ttyUSB0
-  #     frequency = 867200000
-  #     bandwidth = 125000
-  #     txpower = 7
-  #     spreadingfactor = 8
-  #     codingrate = 5
-"""
-"""Starter config seeded when an interface allowlist is configured (SPEC RN4)."""
 
 
 class _ReticulumAnnounceHandler:
@@ -742,45 +538,41 @@ class _ReticulumAnnounceHandler:
             app_data: Raw announce application data (display name carrier).
         """
         try:
+            hops = _announce_hops(destination_hash)
             interface_name = _announce_interface_name(destination_hash)
-            if not _interface_allowed(interface_name):
+            if not _announce_admitted(hops, interface_name):
                 config._debug_log(
                     "Skipped Reticulum announce from a non-allowlisted interface",
                     context="reticulum.announce",
                     aspect=self.aspect_filter,
+                    hops=hops,
                     interface=interface_name,
                     allowlist=list(config.RETICULUM_INTERFACES),
                 )
                 return
             handlers._mark_packet_seen()
             identity = _identity_from_announce(announced_identity, destination_hash)
-            node_id = _reticulum_node_id(getattr(identity, "hash", None))
+            # One row per *identity* (SPEC RE7, restoring RN1): a peer announcing
+            # lxmf.delivery, lxmf.propagation and nomadnetwork.node is one node
+            # with three destinations, not three nodes. The per-aspect names and
+            # roles live in the destinations table (RE2), which is what made the
+            # per-destination row split unnecessary.
+            node_id = _announce_node_id(identity, destination_hash)
             if node_id is None:
                 config._debug_log(
-                    "Skipped Reticulum announce with no resolvable identity",
+                    "Skipped Reticulum announce with an unusable destination hash",
                     context="reticulum.announce",
                     severity="warn",
                     aspect=self.aspect_filter,
                 )
                 return
-            # Merge this aspect's destination hash into the identity's set
-            # before building the record, so the posted destHash list carries
-            # every aspect heard from this peer so far (#888).
-            dest_hashes = self._iface._record_dest_hash(
-                node_id, _reticulum_hash_hex(destination_hash)
-            )
-            # The role is the highest-ranked aspect this identity has announced
-            # on this session, not this announce's own (SPEC RD4).
-            role = self._iface._record_role(
-                node_id, _ASPECT_ROLES.get(self.aspect_filter)
-            )
             node = _announce_to_node_dict(
                 destination_hash,
                 app_data,
                 identity=identity,
-                dest_hashes=dest_hashes,
-                role=role,
-                hops=_announce_hops(destination_hash),
+                aspect=self.aspect_filter,
+                interface=interface_name,
+                hops=hops,
             )
             self._iface._update_node(node_id, node)
             handlers.upsert_node(node_id, node)
@@ -790,7 +582,7 @@ class _ReticulumAnnounceHandler:
                 aspect=self.aspect_filter,
                 node_id=node_id,
                 interface=interface_name,
-                role=role,
+                role=node["user"].get("role"),
                 long_name=node["user"]["longName"],
             )
         except Exception as exc:
@@ -813,12 +605,10 @@ class _ReticulumInterface:
     """
 
     host_node_id: str | None = None
-    """The ingestor's own canonical node id, resolved at connect time.
+    """Always ``None``: Reticulum has no handshake revealing "our" node id.
 
-    Class-level ``None`` is the pre-connect value; :meth:`ReticulumProvider.connect`
-    replaces it per instance with the result of :func:`_resolve_host_node_id`
-    (SPEC RN9).  It is not a handshake result — Reticulum has none — but the id
-    derived from the identity this ingestor owns.
+    :meth:`ReticulumProvider.extract_host_node_id` answers instead, from
+    :envvar:`INGESTOR_NODE_ID` or the discovered primary identity (SPEC RE8).
     """
 
     def __init__(self, *, target: str | None) -> None:
@@ -828,54 +618,7 @@ class _ReticulumInterface:
         self._announce_handlers: list[_ReticulumAnnounceHandler] = []
         self._nodes_lock = threading.Lock()
         self._nodes: dict[str, dict] = {}
-        self._dest_hashes: dict[str, set[str]] = {}
-        self._roles: dict[str, str] = {}
         self.isConnected: bool = False
-
-    def _record_role(self, node_id: str, role: str | None) -> str | None:
-        """Merge *role* into the recorded role for *node_id*, keeping the highest.
-
-        Mirrors :meth:`_record_dest_hash`: one identity announces on several
-        aspects, and the node's role is the highest-ranked of them rather than
-        the most recent (SPEC RD4).  Without this a peer announcing both
-        ``lxmf.delivery`` and ``nomadnetwork.node`` would flip between ``PEER``
-        and ``NODE`` on every announce.
-
-        Parameters:
-            node_id: Canonical identity-derived ``!xxxxxxxx`` node ID.
-            role: Role implied by the aspect this announce arrived on.
-
-        Returns:
-            The highest-ranked role seen for *node_id*, or ``None`` when none
-            has been.
-        """
-        with self._nodes_lock:
-            current = self._roles.get(node_id)
-            if _rank_role(role) > _rank_role(current):
-                self._roles[node_id] = role
-                return role
-            return current
-
-    def _record_dest_hash(self, node_id: str, hash_hex: str | None) -> list[str]:
-        """Merge *hash_hex* into the destination-hash set for *node_id*.
-
-        One Reticulum identity announces on several destination aspects, each
-        with its own destination hash.  Accumulating them per node keeps the
-        posted ``destHash`` list complete instead of letting the most recent
-        aspect overwrite the others (#888).
-
-        Parameters:
-            node_id: Canonical identity-derived ``!xxxxxxxx`` node ID.
-            hash_hex: Destination hash hex to record; ignored when falsy.
-
-        Returns:
-            Sorted list of every destination hash known for *node_id*.
-        """
-        with self._nodes_lock:
-            known = self._dest_hashes.setdefault(node_id, set())
-            if hash_hex:
-                known.add(hash_hex)
-            return sorted(known)
 
     def _update_node(self, node_id: str | None, node: dict) -> None:
         """Thread-safely record *node* in the local snapshot.
@@ -913,6 +656,232 @@ class _ReticulumInterface:
                 RNS.Transport.deregister_announce_handler(handler)
             except Exception:
                 pass
+
+
+def _local_path_entries() -> list[dict]:
+    """Return the running stack's 0-hop path-table entries.
+
+    ``get_path_table`` RPCs to ``rnsd`` on a shared instance, so this is the
+    stack's own view rather than this process's, and 0 hops means "announced by
+    an app on this machine" (SPEC RE4).
+
+    Returns:
+        List of path-table entry mappings; empty when the stack cannot be asked.
+    """
+    try:
+        instance = RNS.Reticulum.get_instance()
+    except Exception:
+        return []
+    if instance is None:
+        return []
+    try:
+        entries = instance.get_path_table(max_hops=0)
+    except Exception:
+        return []
+    if not isinstance(entries, (list, tuple)):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def _transport_identity_hash() -> str | None:
+    """Return the hex hash of this config dir's persisted transport identity.
+
+    Returns:
+        Lowercase hex identity hash, or ``None`` when it cannot be read.
+    """
+    try:
+        identity = RNS.Transport.internal_identity()
+    except Exception:
+        return None
+    return _reticulum_hash_hex(getattr(identity, "hash", None))
+
+
+def _local_identity_destinations() -> dict[str, dict[str, str | None]]:
+    """Group local (0-hop) destinations by the identity that owns them.
+
+    The transport identity is **excluded**: it fronts no destinations and is a
+    separate identity, so counting it would distort the "most destinations"
+    rule that picks the host's primary identity (SPEC RE8).
+
+    Returns:
+        Mapping of identity hash hex to ``{destination hex: interface name}``.
+        The interface is the path-table entry's own, so a discovered host
+        destination records where it lives exactly like an announced one does.
+    """
+    transport = _transport_identity_hash()
+    groups: dict[str, dict[str, str | None]] = {}
+    for entry in _local_path_entries():
+        dest = entry.get("hash")
+        if not isinstance(dest, (bytes, bytearray)):
+            continue
+        try:
+            identity = RNS.Identity.recall(bytes(dest))
+        except Exception:
+            continue
+        identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
+        if identity_hash is None or identity_hash == transport:
+            continue
+        # dest is already bytes here, and _reticulum_hash_hex always returns
+        # hex for bytes -- so no None guard, which would be unreachable.
+        dest_hex = _reticulum_hash_hex(dest)
+        interface = entry.get("interface")
+        groups.setdefault(identity_hash, {})[dest_hex] = (
+            str(interface) if interface else None
+        )
+    return groups
+
+
+def _recalled_display_name(dest_hex: str) -> str | None:
+    """Return the display name last announced on a destination, if any.
+
+    The host's own announces are never delivered back to this ingestor, so a
+    discovered destination has no ``app_data`` of its own to decode — but the
+    stack kept the last one it heard, which is what ``rnsd`` recorded when the
+    local app announced.  Without this a discovered destination would carry
+    only the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline
+    rule, name the node with it (SPEC RE8).
+
+    Parameters:
+        dest_hex: Destination hash as hex.
+
+    Returns:
+        Decoded display name, or ``None`` when the stack has none.
+    """
+    try:
+        app_data = RNS.Identity.recall_app_data(bytes.fromhex(dest_hex))
+    except Exception:
+        return None
+    return _decode_display_name(app_data)
+
+
+def _primary_local_identity() -> str | None:
+    """Pick the host's primary identity: the one fronting the most destinations.
+
+    A tie is not resolved by guessing — the id would then depend on path-table
+    ordering and could change between restarts — so an ambiguous host must set
+    :envvar:`INGESTOR_NODE_ID` (SPEC RE8).
+
+    Returns:
+        Identity hash hex, or ``None`` when none can be chosen.
+    """
+    groups = _local_identity_destinations()
+    if not groups:
+        return None
+    ranked = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+    if len(ranked) > 1 and len(ranked[0][1]) == len(ranked[1][1]):
+        return None
+    return ranked[0][0]
+
+
+def _aspect_destination_hex(identity_hash: str, aspect: str) -> str | None:
+    """Compute the destination hash an identity would announce for *aspect*.
+
+    A destination hash is one-way, so an aspect cannot be read back from a
+    path-table entry.  It can be *recomputed*: ``RNS.Destination.hash`` accepts
+    a raw 16-byte identity hash, so each known aspect is hashed and matched
+    against the local destinations to label them.
+
+    Parameters:
+        identity_hash: Owning identity hash as hex.
+        aspect: Dotted aspect name, e.g. ``lxmf.delivery``.
+
+    Returns:
+        Destination hash hex, or ``None`` when it cannot be computed.
+    """
+    app_name, _, rest = aspect.partition(".")
+    if not app_name or not rest:
+        return None
+    try:
+        return RNS.Destination.hash(
+            bytes.fromhex(identity_hash), app_name, *rest.split(".")
+        ).hex()
+    except Exception:
+        return None
+
+
+def _host_destination_nodes(identity_hash: str) -> list[dict]:
+    """Build node records for every local destination of the host's identity.
+
+    One record per aspect the host actually announces, plus the transport
+    instance when the stack has transport enabled — all keyed on the **same**
+    node id, because they are aspects of one identity (SPEC RE7/RE8).
+
+    Parameters:
+        identity_hash: The host's primary identity hash, as hex.
+
+    Returns:
+        Node dicts ready for ``POST /api/nodes``; empty when none apply.
+    """
+    node_id = _reticulum_node_id(identity_hash)
+    if node_id is None:
+        return []
+    local = _local_identity_destinations().get(identity_hash, {})
+    now = int(time.time())
+    placeholder = f"Reticulum {node_id[-4:].upper()}"
+    records: list[dict] = []
+    for aspect in _ANNOUNCE_ASPECTS:
+        dest_hex = _aspect_destination_hex(identity_hash, aspect)
+        if dest_hex is None or dest_hex not in local:
+            continue
+        record = {
+            "nodeId": node_id,
+            "lastHeard": now,
+            "protocol": "reticulum",
+            "identityHash": identity_hash,
+            "destination": {
+                "id": dest_hex,
+                "aspect": aspect,
+                "role": _ASPECT_ROLES.get(aspect),
+            },
+            "user": {
+                "shortName": _reticulum_short_name(node_id),
+                # A real announced name always wins; the placeholder is only
+                # for a destination the stack has never heard a name for.
+                "longName": _recalled_display_name(dest_hex) or placeholder,
+                "role": _ASPECT_ROLES.get(aspect),
+            },
+        }
+        interface = local.get(dest_hex)
+        if interface:
+            record["interface"] = interface
+        records.append(record)
+    transport = _transport_identity_hash()
+    if transport and _transport_enabled():
+        records.append(
+            {
+                "nodeId": node_id,
+                "lastHeard": now,
+                "protocol": "reticulum",
+                "identityHash": identity_hash,
+                "destination": {
+                    "id": transport,
+                    "aspect": _TRANSPORT_ASPECT,
+                    "role": "TRANSPORT",
+                },
+                "user": {
+                    "shortName": _reticulum_short_name(node_id),
+                    "longName": _recalled_display_name(transport) or placeholder,
+                    "role": "TRANSPORT",
+                },
+            }
+        )
+    return records
+
+
+def _transport_enabled() -> bool:
+    """Report whether the running stack relays other nodes' traffic.
+
+    Gates the ``TRANSPORT`` role: the transport identity exists on every stack,
+    but only a transport-enabled one actually relays, so reporting the role
+    unconditionally would assert something false (SPEC RE8).
+
+    Returns:
+        ``True`` when RNS reports transport enabled.
+    """
+    try:
+        return bool(RNS.Reticulum.transport_enabled())
+    except Exception:
+        return False
 
 
 class ReticulumProvider:
@@ -980,23 +949,7 @@ class ReticulumProvider:
                 connection=config.CONNECTION,
             )
 
-        # An allowlist is only answerable on our own stack — see
-        # :func:`_seed_config_dir`.
-        if config.RETICULUM_INTERFACES:
-            _seed_config_dir(configdir)
-
         iface = _ReticulumInterface(target=target)
-        # Resolved before the stack comes up: it only touches the config dir,
-        # and a failure to resolve must not stop announces being ingested.
-        iface.host_node_id = _resolve_host_node_id(configdir)
-        if iface.host_node_id is None:
-            config._debug_log(
-                "No ingestor node id could be resolved; the heartbeat will not "
-                "register and the reticulum packets/hour stats will stay at "
-                "zero while announces are still ingested",
-                context="reticulum.connect",
-                severity="warn",
-            )
         rns_instance = RNS.Reticulum.get_instance()
         if rns_instance is None:
             rns_instance = RNS.Reticulum(configdir=configdir)
@@ -1008,30 +961,40 @@ class ReticulumProvider:
             iface._announce_handlers.append(handler)
 
         iface.isConnected = True
+        # Resolve the host id for the log rather than reading
+        # +iface.host_node_id+, which is a constant None: the startup line
+        # printed node_id=None on every run regardless of what discovery would
+        # have found, which reads as a failure rather than a pending lookup.
+        host_node_id = self.extract_host_node_id(iface)
         config._debug_log(
             "Reticulum announce listener registered",
             context="reticulum.connect",
             severity="info",
             aspects=list(_ANNOUNCE_ASPECTS),
             interfaces=list(config.RETICULUM_INTERFACES) or "all",
-            node_id=iface.host_node_id,
+            node_id=host_node_id or "pending",
         )
+        if not host_node_id:
+            # Say so explicitly: a fresh stack has nothing 0-hop in its path
+            # table yet, the daemon retries every loop, and an operator reading
+            # only the line above would otherwise think it had failed.
+            config._debug_log(
+                "Host node id not resolved yet; retrying until a local "
+                "destination is heard. Set INGESTOR_NODE_ID to pin it.",
+                context="reticulum.connect",
+                severity="info",
+            )
         return iface, target, active_candidate
 
     def extract_host_node_id(self, iface: object) -> str | None:
         """Return the ingestor's own canonical node id.
 
-        Surfaces the value :meth:`connect` resolved onto *iface* — the
-        operator's :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` when
-        set, otherwise the id derived from the identity this ingestor owns
-        (SPEC RN9).  The daemon calls this on every loop iteration, so reading
-        the resolved value rather than re-resolving keeps it off the identity
-        file after connect.
-
-        Falls back to :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` for
-        an interface this provider did not build (an object with no
-        ``host_node_id``), preserving the pre-RN9 behaviour rather than
-        reporting no id at all.
+        The operator's :data:`~data.mesh_ingestor.config.INGESTOR_NODE_ID` when
+        set — canonicalised the Reticulum way, since a raw identity hash sent
+        through the shared ``canonical_node_id`` truncates from the wrong end
+        (SPEC RE5) — otherwise the id derived from the host's discovered
+        primary identity (SPEC RE8).  *iface* is unused: there is no handshake
+        to read.
 
         Parameters:
             iface: Active :class:`_ReticulumInterface` instance, or any object
@@ -1041,10 +1004,84 @@ class ReticulumProvider:
             Canonical ``!xxxxxxxx`` node id, or ``None`` when none was
             resolved.
         """
-        resolved = getattr(iface, "host_node_id", None)
-        if resolved:
-            return resolved
-        return config.INGESTOR_NODE_ID
+        return (
+            self._canonical_host_node_id(config.INGESTOR_NODE_ID)
+            or self._derived_host_node_id()
+        )
+
+    def host_destination_nodes(self) -> list[dict]:
+        """Return node records for the host's own local destinations.
+
+        Called by :meth:`node_snapshot_items` so the host's aspects are
+        (re)reported on every snapshot — an hourly-or-better refresh that picks
+        up an aspect the operator started announcing after the ingestor did,
+        without a restart (SPEC RE8).
+
+        Returns:
+            Node dicts for the host's aspects, or empty when the host's
+            identity is not resolvable.
+        """
+        identity_hash = self._host_identity_hash()
+        if identity_hash is None:
+            return []
+        return _host_destination_nodes(identity_hash)
+
+    @staticmethod
+    def _host_identity_hash() -> str | None:
+        """Resolve the host's primary identity hash.
+
+        An explicit :envvar:`INGESTOR_NODE_ID` names a *node id*, not a full
+        identity hash, so it cannot be expanded back into one; discovery is the
+        only source of the full hash.
+
+        Returns:
+            Identity hash hex, or ``None`` when it cannot be determined.
+        """
+        return _primary_local_identity()
+
+    @staticmethod
+    def _canonical_host_node_id(value: object) -> str | None:
+        """Canonicalise an operator-supplied host node id the Reticulum way.
+
+        A raw 32-hex identity hash maps through :func:`_reticulum_node_id`
+        (first four bytes), **not** through the shared ``canonical_node_id``,
+        which parses hex as an integer and keeps the low 32 bits — right for a
+        Meshtastic node num, wrong here, and truncating from the opposite end.
+        In the field that registered the ingestor as ``!86c39940`` while its own
+        peer row read ``!27716218``, from one identity (SPEC RE-A1).
+
+        Parameters:
+            value: :envvar:`INGESTOR_NODE_ID`, canonical or raw hex.
+
+        Returns:
+            Canonical ``!xxxxxxxx`` id, or ``None`` when unset or unusable.
+        """
+        text = str(value).strip() if value else ""
+        if not text:
+            return None
+        if text.startswith("!"):
+            return text.lower()
+        return _reticulum_node_id(text)
+
+    @staticmethod
+    def _derived_host_node_id() -> str | None:
+        """Derive the host node id from its **primary identity** (SPEC RE8).
+
+        The identity is the node; its destinations are aspects of it (RE7).
+        The *transport* identity is deliberately not used: RNS generates it as
+        an independent keypair, so keying the host on it names the ingestor
+        something matching none of the operator's announced destinations —
+        which is precisely what registered ``!fbf8e338`` on a host whose
+        primary identity was ``27716218…`` in the field.
+
+        Returns ``None`` when no primary identity can be chosen (nothing local
+        heard yet, or an unresolved tie); the daemon retries on its next loop
+        rather than treating that as fatal.
+
+        Returns:
+            Canonical ``!xxxxxxxx`` id, or ``None`` when none can be derived.
+        """
+        return _reticulum_node_id(_primary_local_identity())
 
     def node_snapshot_items(self, iface: object) -> list[tuple[str, dict]]:
         """Return every announce heard this session as node entries.
@@ -1059,14 +1096,26 @@ class ReticulumProvider:
         """
         if not isinstance(iface, _ReticulumInterface):
             return []
-        return iface.nodes_snapshot()
+        items = iface.nodes_snapshot()
+        # The host's own aspects are not learned from announces — nothing
+        # relays our own announce back to us — so they are folded in here, on
+        # every snapshot, which doubles as the periodic refresh (SPEC RE8).
+        seen_destinations = {
+            node.get("destination", {}).get("id")
+            for _nid, node in items
+            if isinstance(node, dict)
+        }
+        for node in self.host_destination_nodes():
+            if node["destination"]["id"] in seen_destinations:
+                continue
+            items.append((node["nodeId"], node))
+        return items
 
 
 __all__ = [
     "ReticulumProvider",
     "_ANNOUNCE_ASPECTS",
     "_ASPECT_ROLES",
-    "_ROLE_RANK",
     "_ReticulumAnnounceHandler",
     "_ReticulumInterface",
     "_announce_hops",
@@ -1075,13 +1124,8 @@ __all__ = [
     "_decode_display_name",
     "_identity_from_announce",
     "_identity_public_key_hex",
-    "_interface_allowed",
-    "_load_self_identity",
-    "_rank_role",
-    "_resolve_host_node_id",
-    "_warn_allowlist_ignored_once",
+    "_announce_admitted",
     "_reticulum_hash_hex",
     "_reticulum_node_id",
-    "_seed_config_dir",
     "_reticulum_short_name",
 ]

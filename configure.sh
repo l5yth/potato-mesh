@@ -72,8 +72,19 @@ update_env() {
 
 # Get current values from .env if they exist
 SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "PotatoMesh Demo")
-CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
-FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
+# Radio preset/frequency: prefer the canonical MESHTASTIC_* names, falling back
+# to the deprecated CHANNEL/FREQUENCY aliases so existing .env files still load.
+MESHTASTIC_PRESET=$(grep "^MESHTASTIC_PRESET=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+[ -n "$MESHTASTIC_PRESET" ] || MESHTASTIC_PRESET=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
+MESHTASTIC_FREQ=$(grep "^MESHTASTIC_FREQ=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+[ -n "$MESHTASTIC_FREQ" ] || MESHTASTIC_FREQ=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
+MESHCORE_PRESET=$(grep "^MESHCORE_PRESET=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+MESHCORE_FREQ=$(grep "^MESHCORE_FREQ=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+PROTOCOL=$(grep "^PROTOCOL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "meshtastic")
+TX_ENABLED=$(grep "^TX_ENABLED=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
+TX_ANNOUNCE=$(grep "^TX_ANNOUNCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
+RETICULUM_CONFIG_DIR=$(grep "^RETICULUM_CONFIG_DIR=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+RETICULUM_INTERFACES=$(grep "^RETICULUM_INTERFACES=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 HIDDEN_CHANNELS=$(grep "^HIDDEN_CHANNELS=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
@@ -104,10 +115,28 @@ read_with_default "Default map zoom (leave blank to auto-fit)" "$MAP_ZOOM" MAP_Z
 read_with_default "Max Distance (km)" "$MAX_DISTANCE" MAX_DISTANCE
 
 echo ""
-echo "📡 Meshtastic Settings"
-echo "---------------------"
-read_with_default "Channel" "$CHANNEL" CHANNEL
-read_with_default "Frequency (868MHz, 915MHz, etc.)" "$FREQUENCY" FREQUENCY
+echo "🛰  Protocol"
+echo "-----------"
+echo "Which mesh protocol should the ingestor read? (meshtastic, meshcore, reticulum)"
+read_with_default "Protocol" "$PROTOCOL" PROTOCOL
+
+echo ""
+echo "📡 Radio Settings"
+echo "-----------------"
+echo "Preset and frequency are display values for the join strip and federation directory."
+case "$PROTOCOL" in
+    meshcore)
+        read_with_default "Meshcore preset" "$MESHCORE_PRESET" MESHCORE_PRESET
+        read_with_default "Meshcore frequency (868MHz, 915MHz, etc.)" "$MESHCORE_FREQ" MESHCORE_FREQ
+        ;;
+    reticulum)
+        echo "Reticulum announces carry no radio metadata; skipping preset/frequency."
+        ;;
+    *)
+        read_with_default "Meshtastic preset" "$MESHTASTIC_PRESET" MESHTASTIC_PRESET
+        read_with_default "Meshtastic frequency (868MHz, 915MHz, etc.)" "$MESHTASTIC_FREQ" MESHTASTIC_FREQ
+        ;;
+esac
 
 echo ""
 echo "💬 Optional Settings"
@@ -145,10 +174,32 @@ read_with_default "Docker image tag (latest, vX.Y, etc.)" "$POTATOMESH_IMAGE_TAG
 echo ""
 echo "🔌 Ingestor Connection"
 echo "----------------------"
-echo "Define how the mesh ingestor connects to your Meshtastic device."
-echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
-echo "or Bluetooth addresses when supported."
-read_with_default "Connection target" "$CONNECTION" CONNECTION
+if [ "$PROTOCOL" = "reticulum" ]; then
+    echo "Reticulum uses an RNS config directory, not a single endpoint."
+    echo "Leave the directory blank to use ~/.reticulum. Point it at the same"
+    echo "directory your rnsd uses so interface filtering can resolve names."
+    read_with_default "RNS config directory (blank = ~/.reticulum)" "$RETICULUM_CONFIG_DIR" RETICULUM_CONFIG_DIR
+    echo "Restrict ingestion to named interfaces (case-insensitive substring)."
+    echo "Leave blank to ingest announces from every interface."
+    read_with_default "Reticulum interfaces" "$RETICULUM_INTERFACES" RETICULUM_INTERFACES
+else
+    echo "Define how the mesh ingestor connects to your device."
+    echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
+    echo "or Bluetooth addresses when supported."
+    read_with_default "Connection target" "$CONNECTION" CONNECTION
+fi
+
+echo ""
+echo "📻 Transmit Settings"
+echo "--------------------"
+echo "The ingestor listens only by default. Enabling transmit puts traffic on"
+echo "shared airtime; announcements additionally broadcast one activity line per day."
+read_with_default "Allow transmitting (1=yes, 0=no)" "$TX_ENABLED" TX_ENABLED
+if [ "$TX_ENABLED" = "1" ]; then
+    read_with_default "Send daily activity announcement (1=yes, 0=no)" "$TX_ANNOUNCE" TX_ANNOUNCE
+else
+    TX_ANNOUNCE=0
+fi
 
 echo ""
 echo "🔐 Security Settings"
@@ -184,10 +235,29 @@ fi
 echo ""
 echo "📝 Updating .env file..."
 
+# Write KEY="VALUE" when the value is non-empty, otherwise strip the key so the
+# app falls back to its own default rather than reading an empty override.
+update_env_optional() {
+    local key="$1"
+    local value="$2"
+    if [ -n "$value" ]; then
+        update_env "$key" "\"$value\""
+    else
+        sed -i.bak "/^$key=.*/d" .env
+    fi
+}
+
 # Update .env file
 update_env "SITE_NAME" "\"$SITE_NAME\""
-update_env "CHANNEL" "\"$CHANNEL\""
-update_env "FREQUENCY" "\"$FREQUENCY\""
+update_env "PROTOCOL" "$PROTOCOL"
+update_env_optional "MESHTASTIC_PRESET" "$MESHTASTIC_PRESET"
+update_env_optional "MESHTASTIC_FREQ" "$MESHTASTIC_FREQ"
+update_env_optional "MESHCORE_PRESET" "$MESHCORE_PRESET"
+update_env_optional "MESHCORE_FREQ" "$MESHCORE_FREQ"
+update_env "TX_ENABLED" "$TX_ENABLED"
+update_env "TX_ANNOUNCE" "$TX_ANNOUNCE"
+update_env_optional "RETICULUM_CONFIG_DIR" "$RETICULUM_CONFIG_DIR"
+update_env_optional "RETICULUM_INTERFACES" "$RETICULUM_INTERFACES"
 update_env "MAP_CENTER" "\"$MAP_CENTER\""
 if [ -n "$MAP_ZOOM" ]; then
     update_env "MAP_ZOOM" "$MAP_ZOOM"
@@ -202,7 +272,13 @@ update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 update_env "POTATOMESH_IMAGE_TAG" "$POTATOMESH_IMAGE_TAG"
 update_env "FEDERATION" "$FEDERATION"
 update_env "PRIVATE" "$PRIVATE"
-update_env "CONNECTION" "$CONNECTION"
+if [ "$PROTOCOL" = "reticulum" ]; then
+    # Reticulum has no single endpoint; drop any inherited serial default so the
+    # ingestor does not log an ignored-CONNECTION warning on every start.
+    sed -i.bak '/^CONNECTION=.*/d' .env
+else
+    update_env "CONNECTION" "$CONNECTION"
+fi
 if [ -n "$ALLOWED_CHANNELS" ]; then
     update_env "ALLOWED_CHANNELS" "\"$ALLOWED_CHANNELS\""
 else
@@ -219,7 +295,7 @@ else
     sed -i.bak '/^INSTANCE_DOMAIN=.*/d' .env
 fi
 
-if ! grep -q "^CONNECTION=" .env; then
+if [ "$PROTOCOL" != "reticulum" ] && ! grep -q "^CONNECTION=" .env; then
     echo "CONNECTION=/dev/ttyACM0" >> .env
 fi
 
@@ -242,11 +318,27 @@ else
     echo "   Map Zoom: Auto-fit"
 fi
 echo "   Max Distance: ${MAX_DISTANCE}km"
-echo "   Channel: $CHANNEL"
-echo "   Frequency: $FREQUENCY"
+echo "   Protocol: $PROTOCOL"
+case "$PROTOCOL" in
+    meshcore)
+        echo "   Preset: ${MESHCORE_PRESET:-'Not set'}"
+        echo "   Frequency: ${MESHCORE_FREQ:-'Not set'}"
+        ;;
+    reticulum)
+        echo "   RNS Config Dir: ${RETICULUM_CONFIG_DIR:-'~/.reticulum'}"
+        echo "   Interfaces: ${RETICULUM_INTERFACES:-'All'}"
+        ;;
+    *)
+        echo "   Preset: $MESHTASTIC_PRESET"
+        echo "   Frequency: $MESHTASTIC_FREQ"
+        ;;
+esac
+echo "   Transmit: ${TX_ENABLED} (announce: ${TX_ANNOUNCE})"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
 echo "   Debug Logging: ${DEBUG}"
-echo "   Connection: ${CONNECTION}"
+if [ "$PROTOCOL" != "reticulum" ]; then
+    echo "   Connection: ${CONNECTION}"
+fi
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo "   Docker Image Tag: $POTATOMESH_IMAGE_TAG"

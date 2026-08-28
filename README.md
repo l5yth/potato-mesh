@@ -118,6 +118,7 @@ The web app can be configured with environment variables (defaults shown):
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 | `OG_IMAGE_URL` | _unset_ | Optional absolute URL for the social preview image. Must use an `http://` or `https://` scheme; values with other schemes are ignored. Most social platforms (Facebook, LinkedIn, Slack, iMessage) require **HTTPS** to render the card. When set, replaces the runtime-generated `/og-image.png` so deployments without Chromium (or with size-conscious images) can point at a CDN. |
 | `PAGES_DIR` | `./pages` | The directory for static, custom-content pages. |
+| `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. |
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values. `/robots.txt` and
@@ -150,6 +151,12 @@ well-known document is staged in
 `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`.
 
 The database can be found in `$XDG_DATA_HOME/potato-mesh`.
+
+**Outbound requests.** The map requests basemap tiles from two third-party CDNs
+on every viewport — OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
+(`basemaps.cartocdn.com`) — so a visitor's browser contacts both. Only `z/x/y`
+tile coordinates are sent: no API key, token, cookie, or analytics parameter.
+Tiles are the only third-party request the dashboard makes.
 
 ### Custom Pages
 
@@ -191,26 +198,73 @@ directory.
 
 ### API
 
-The web app contains an API:
+All `GET` routes accept `?limit=` and `?since=`; bulk collections also accept
+`?before=` and `?protocol=`. All `POST` routes require
+`Authorization: Bearer <API_TOKEN>`.
 
-* GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
-* GET `/api/positions?limit=100` - returns the latest 100 position data
-* GET `/api/messages?limit=100&encrypted=false&since=0` - returns the latest 100 messages newer than the provided unix timestamp (defaults to `since=0` to return full history; disabled when `PRIVATE=1`)
-* GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
-* GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
-* GET `/api/traces?limit=100` - returns the latest 100 trace-routes caught
-* GET `/api/instances` - returns known potato-mesh instances in other locations
-* GET `/api/ingestors` - returns active potato-mesh python ingestors that feed data
-* GET `/metrics`- metrics for the prometheus endpoint
-* GET `/version`- information about the potato-mesh instance
-* POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)
-* POST `/api/telemetry` - appends telemetry provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/neighbors` - appends neighbor tuples provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/traces` - appends caught traces routes provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
+**Collections** — `GET` list, `GET /:id` for one node's rows, `POST` to ingest:
 
-The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
+| Path | Notes |
+| --- | --- |
+| `/api/nodes` | `GET`, `GET /:id`, `POST` |
+| `/api/positions` | `GET`, `GET /:id`, `POST` |
+| `/api/telemetry` | `GET`, `GET /:id`, `POST`; `/api/telemetry/aggregated` for rollups |
+| `/api/messages` | `GET`, `GET /:id`, `POST`; all 404 when `PRIVATE=1` |
+| `/api/neighbors` | `GET`, `GET /:id`, `POST` |
+| `/api/traces` | `GET`, `GET /:id`, `POST` |
+| `/api/waypoints` | `GET`, `GET /:id`, `POST`; all 404 when `PRIVATE=1` |
+| `/api/destinations` | `GET`; `?node_id=` filters. Reticulum destinations per node |
+| `/api/ingestors` | `GET`, `POST`. Active ingestors feeding this instance |
+| `/api/instances` | `GET`, `POST`. Known federated instances |
+
+**Other**
+
+| Path | Returns |
+| --- | --- |
+| `GET /api/stats` | Node/message/telemetry counts per protocol and window |
+| `GET /api/stats/activity` | Packets/hour time series per protocol |
+| `GET /api/events` | SSE stream of collection-change events |
+| `GET /version` | Instance name, version, and public config |
+| `GET /metrics` | Prometheus exporter — see [`PROMETHEUS.md`](./PROMETHEUS.md) |
+| `GET /.well-known/potato-mesh` | Signed federation record for this instance |
+| `GET /og-image.png` | Open Graph preview image |
+| `GET /robots.txt`, `GET /sitemap.xml` | Crawler directives |
+
+**Pages** — `GET /` dashboard, `GET /nodes/:id` node detail, `GET /pages/:slug`
+custom pages. Static assets: `GET /favicon.ico`, `GET /potatomesh-logo.svg`.
+
+There is no health endpoint; use `GET /version`.
+
+### Advanced tuning
+
+Environment variables for the web app's internals. All optional; set only to
+change the defaults shown. Not pre-declared in `.env.example`, Compose, or the
+NixOS module — set them in the environment of the web process.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MIN_THREADS` | `16` | Puma minimum thread count. |
+| `MAX_THREADS` | `96` | Puma maximum thread count. |
+| `PUMA_FORCE_SHUTDOWN` | `3` | Seconds Puma waits before forcing shutdown. |
+| `STATS_CACHE_TTL_SECONDS` | `60` | Cache lifetime for `/api/stats` responses. |
+| `OG_IMAGE_TTL_SECONDS` | `3600` | Cache lifetime for the generated `/og-image.png`. |
+| `LIVE_SAFETY_POLL_SECONDS` | `300` | Interval of the fallback poll that backstops the SSE stream. |
+| `SSE_HEARTBEAT_SECONDS` | `15` | Comment-frame keepalive interval on `/api/events`. |
+| `SSE_MAX_LIFETIME_SECONDS` | `600` | Maximum lifetime of one SSE connection before the client reconnects. |
+| `SSE_PUBLISH_COOLDOWN` | `1.0` | Minimum seconds between SSE publishes, coalescing bursts. |
+| `SSE_THREAD_RESERVE` | `32` | Threads held back from SSE so ordinary requests keep being served. |
+| `FEDERATION_WORKERS` | `4` | Federation crawl worker-pool size. |
+| `FEDERATION_WORK_QUEUE` | `128` | Queued federation tasks before new ones are dropped. |
+| `FEDERATION_TASK_TIMEOUT` | `120` | Seconds before one federation task is abandoned. |
+| `FEDERATION_SHUTDOWN_TIMEOUT` | `3` | Seconds to drain federation workers on shutdown. |
+| `FEDERATION_CRAWL_COOLDOWN` | `300` | Minimum seconds between crawls of the same domain. |
+| `FEDERATION_MAX_DOMAINS_PER_CRAWL` | `256` | Domain ceiling for one crawl pass. |
+| `FEDERATION_MAX_INSTANCES_PER_RESPONSE` | `64` | Instances accepted from one peer's response. |
+| `INITIAL_FEDERATION_DELAY_SECONDS` | `2` | Delay before the first crawl after boot. |
+| `REMOTE_INSTANCE_CONNECT_TIMEOUT` | `15` | Connect timeout when fetching a peer. |
+| `REMOTE_INSTANCE_READ_TIMEOUT` | `60` | Read timeout when fetching a peer. |
+| `REMOTE_INSTANCE_REQUEST_TIMEOUT` | `30` | Overall request timeout when fetching a peer. |
+| `REMOTE_INSTANCE_MAX_RESPONSE_BYTES` | `8388608` | Response ceiling (8 MiB) when fetching a peer. |
 
 ### Monitoring
 
@@ -271,6 +325,10 @@ appear in the allowlist.
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
 | `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP connections, and bluetooth addresses (BLE mac). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
+| `CHANNEL_INDEX` | `0` | Which channel index to ingest from. |
+| `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
+| `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |
+| `CHANNEL` | _unset_ | Deprecated alias for `MESHTASTIC_PRESET`. |
 | `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; when set, all other channels are skipped before hidden filters. |
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
 | `TRANSPORT` | `api` | Ingestor transport: `api` (Meshtastic library over serial/TCP/BLE) or `udp` (passive LAN multicast; see [Passive UDP transport](#passive-udp-transport)). |
@@ -279,9 +337,9 @@ appear in the allowlist.
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast`: the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key: only the per-channel hash of *(name, key)* distinguishes them. |
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self" — without it the heartbeat never registers and its packets/hour stats stay at zero. Optional for `PROTOCOL=reticulum`, which derives its own id from the identity it owns; set it there only to override that. See [Reticulum](#reticulum). |
-| `RETICULUM_CONFIG_DIR` | `$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum` | Which Reticulum config the ingestor uses, and so where it looks for available interfaces. App-owned by default: it never adopts the operator's own `~/.reticulum`. Set it only to deliberately share an existing RNS stack. See [Reticulum](#reticulum). |
-| `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest announces from: name your local LoRa interface, e.g. `RNode` or `BerlinMesh`. Comma-separated and matched as a case-insensitive substring of the interface name. Empty ingests every interface. See [Reticulum](#reticulum). |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
+| `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
+| `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
 | `TX_ENABLED` | `0` | Master switch for everything the ingestor puts on the air Off by default: the ingestor is a listener. Set to `1` to allow transmitting; this is what enables Meshcore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
@@ -291,10 +349,6 @@ appear in the allowlist.
 
 By default a PotatoMesh ingestor never transmits. It listens, and forwards
 what it hears to your dashboard. Nothing below happens unless you turn it on.
-
-That default is deliberate. Airtime on a LoRa mesh is a shared, scarce resource,
-and whether automated traffic belongs on a community's channels is that
-community's decision: not a default we get to make for you.
 
 | Variable | Default | What turning it on means |
 | --- | --- | --- |
@@ -307,10 +361,9 @@ The announcement looks like this:
 Meshtastic activity in the last 24h: 42 active nodes, 118 packets/hour. https://mesh.example.org
 ```
 
-The numbers are read back from your own instance's public API, so they reflect
-the whole mesh your dashboard sees rather than the one radio doing the talking.
-It is suppressed automatically when your instance runs with `PRIVATE=1`, and
-that check fails closed: if the ingestor cannot reach your instance to ask, it
+The numbers come from your instance's public API, covering the whole mesh your
+dashboard sees. Announcements are suppressed when the instance runs `PRIVATE=1`,
+and the check fails closed: if the ingestor cannot reach the instance to ask, it
 does not transmit.
 
 Both flags must be on for an announcement to go out:
@@ -323,15 +376,14 @@ Both flags must be on for an announcement to go out:
 | `1` | `1` | Telemetry polling on, one announcement per 24 h. |
 
 
-The ingestor states the resolved policy in its
-log at startup, without needing `DEBUG=1`:
+The ingestor logs the resolved policy at startup, without `DEBUG=1`:
 
 ```
 [2026-08-24T09:12:44.117Z] [potato-mesh] [info] context=tx.policy announcements_permitted=False rx_only=False transmit_permitted=False tx_announce=False tx_enabled=False Transmit policy resolved
 ```
 
-If you set a flag and nothing happens, that line tells you what the ingestor
-actually resolved: including a flag that never reached the container.
+If a flag seems to have no effect, that line shows what the ingestor actually
+resolved — including a flag that never reached the container.
 
 ### Meshcore
 
@@ -353,102 +405,69 @@ the radio's local roster rotates.
 
 ### Reticulum
 
-Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. This is a
-passive announce listener: it registers announce handlers for the
-`lxmf.delivery`, `nomadnetwork.node` and `lxmf.propagation` destination aspects
-and files every announce it hears as a node. Which aspects a peer announces on
-is the only signal Reticulum gives about what it *is*, so the node's role is
-derived from them and ranked: `PROPAGATION > NODE > PEER`: rather than taken
-from whichever announce arrived last.
+Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. The ingestor
+listens for announces and files each one as a node. It never transmits, so
+`TX_ENABLED=0` (the default) is fine.
 
-Announces carry no SNR, battery, or position, so those columns render as dashes
-and Reticulum nodes stay off the map. One peer is one node row: the canonical
-`!xxxxxxxx` id derives from the peer's identity hash, so a peer announcing on
-several destination aspects merges into a single row rather than appearing once
-per aspect.
+`CONNECTION` does not apply; if it is set the ingestor ignores it and logs that
+it did.
 
-**You do not need to set `INGESTOR_NODE_ID`.** Reticulum has no handshake
-revealing "our" node id, so the ingestor owns an RNS identity of its own,
-generated on first run and stored as `potato_mesh_identity` inside
-`RETICULUM_CONFIG_DIR`. Its `!xxxxxxxx` comes from that identity's hash through
-the same mapping applied to every peer, so it is stable across restarts and the
-ingestor's own row is shaped like any other. Set `INGESTOR_NODE_ID` only to
-override it. The identity is local and never announced, so this adds nothing the
-transmit switches gate.
-
-If the identity can neither be read nor written — an unwritable config dir, or a
-key file left unreadable — the ingestor says so and carries on ingesting
-announces without a node id, which is the one case where the heartbeat stays
-unregistered and the packets/hour figure stays at zero.
-
-**`CONNECTION` does not apply.** It names one serial, TCP, or BLE endpoint, and
-an RNS stack of many interfaces has no such thing. The two variables below cover
-the same ground: `RETICULUM_CONFIG_DIR` says *which stack*,
-`RETICULUM_INTERFACES` says *which of its interfaces to ingest from*. A set
-`CONNECTION` is ignored, and the ingestor logs that it was — the shipped
-container image carries a serial default for every protocol, so switching to
-`PROTOCOL=reticulum` inherits one you never chose.
-
-**Two things worth configuring:**
-
-`RETICULUM_CONFIG_DIR` defaults to an app-owned directory
-(`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`)
-rather than RNS's user default `~/.reticulum`. Installing a dashboard ingestor
-should not silently adopt the transport-node configuration you run for yourself
-— including whatever `enable_transport` and interfaces it defines. Point the
-variable at your own directory if sharing a stack is what you want.
-
-**What the config dir starts with**, and it differs by whether you scoped it.
-
-*Without* `RETICULUM_INTERFACES`, RNS writes its own stock config, whose only
-interface is a link-local IPv6 `AutoInterface`. That hears the Reticulum peers on
-your LAN — the "ingests everything" default above — and the packaged `ingestor`
-service runs `network_mode: host`, so it behaves the same in Docker as on bare
-metal. (The opt-in `ingestor-bridge` profile is not on the host network and hears
-nothing there.)
-
-*With* `RETICULUM_INTERFACES` set, the ingestor seeds the file itself, with
-`share_instance = No` and **no interface enabled**. Both parts are deliberate.
-Sharing is off because an allowlist can only be honoured on its own RNS stack:
-attached to a shared `rnsd`, every announce arrives over a single
-`LocalInterface` and the allowlist cannot tell them apart. And no interface is
-enabled because a stock `AutoInterface` is named `AutoInterface[Default
-Interface]`, which matches no sensible allowlist — the listener would connect and
-ingest nothing. **So a freshly scoped ingestor hears nothing until you add the
-interfaces you named**; it warns about exactly that at startup, and the seeded
-file carries a commented `RNodeInterface` example to copy.
-
-Two consequences worth stating plainly. **A scoped ingestor does not inherit your
-`rnsd`'s interfaces**, so any radio you want it to hear has to be configured in
-its own file. And **an `AutoInterface` never reaches a LoRa radio** in any network
-mode — that always needs an `RNodeInterface` pointing at the device, or a
-`TCPClientInterface` pointing at a hub.
-
-Edit the `config` file on the `potatomesh_reticulum` volume (Linux images;
-`--no-deps` stops it starting the web stack too):
+It reads your existing `~/.reticulum`, so if `rnsd` already works, so does this:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint sh ingestor \
-  -c 'vi /app/.config/potato-mesh/reticulum/config'
+API_TOKEN=... INSTANCE_DOMAIN=https://your.instance PROTOCOL=reticulum ./data/mesh.sh
 ```
 
-An existing config is never overwritten, so if you would rather share the stack,
-write the file yourself and the ingestor leaves it alone. The allowlist then
-cannot be honoured, so it admits every announce rather than none — and warns once
-that it is doing so.
+**To ingest only from your radio**, set `RETICULUM_INTERFACES` to part of the
+interface name from `rnstatus` — matching is case-insensitive substring:
 
-`RETICULUM_INTERFACES` bounds what gets ingested. An RNS stack can carry LoRa
-and IP interfaces at once, and RNS's stock config enables an `AutoInterface`
-(IPv6 link-local multicast): so an unscoped listener files every announce on
-your LAN, not just your LoRa peers. Setting e.g. `RETICULUM_INTERFACES=rnode`
-restricts ingestion to announces whose path arrived on a matching interface.
-Leaving it empty ingests everything, which is the default. Reticulum exposes no
-"this peer is on LoRa" marker, so the interface a path arrived on is the only
-signal available.
+```bash
+RETICULUM_INTERFACES="RNode Reticulum Berlin"
+```
 
-Note that the RNS stack itself is not silent at the interface layer even though
-the ingestor is: an `AutoInterface` multicasts peer discovery, and a config with
-`enable_transport` set relays other nodes' traffic.
+Your own nodes are always ingested regardless of this setting. Everything
+further away is filtered by it.
+
+**To use a different RNS config**, set `RETICULUM_CONFIG_DIR`. Point it at the
+same directory your `rnsd` uses — interface filtering asks that instance which
+interface an announce came in on, and the request is rejected across directories.
+
+**In Docker**, the config dir is the `potatomesh_reticulum` volume, mounted at
+`/app/.config/potato-mesh/reticulum`. RNS writes its stock config there on first
+start, whose only interface is a link-local `AutoInterface`:
+
+- On the default bridge network that interface reaches no radio and usually no
+  peers, so the ingestor connects and hears nothing.
+- Add your interfaces to the volume's `config` file, then restart the ingestor:
+  `docker compose exec ingestor sh -c 'cat >> /app/.config/potato-mesh/reticulum/config'`
+- Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
+  and run the container with host networking.
+
+The ingestor derives its own node id from your **primary identity** — the one
+announcing the most destinations on this machine, which is the identity your
+LXMF and nomadnet addresses belong to. `INGESTOR_NODE_ID` overrides it.
+
+It reports the id it resolved at startup:
+
+```
+context=reticulum.connect ... node_id='!27716218' Reticulum announce listener registered
+```
+
+`node_id='pending'` means nothing local has been heard yet; the ingestor retries
+each loop and logs again once it resolves. It is **not** the transport identity,
+and not the hash `rnstatus` prints as "Transport Instance".
+
+**Changing the id strands the old row.** Setting, changing, or removing
+`INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
+`/api/ingestors` without heartbeats until it ages out. Leaving the variable
+as-is across upgrades is inert.
+
+A node appears once per announced destination, so one peer running LXMF and a
+nomadnet node shows up as two entries. `GET /api/destinations` lists them and
+groups them by identity.
+
+Announces carry no SNR, battery, or position, so those columns show dashes and
+Reticulum nodes stay off the map.
 
 ### Passive UDP transport
 
@@ -521,6 +540,17 @@ services.potato-mesh = {
   };
 };
 ```
+
+Every variable in the tables above has a module option, named in camelCase
+(`SITE_NAME` → `siteName`, `OG_IMAGE_URL` → `ogImageUrl`):
+
+- Web options sit at the top level; ingestor options sit under `ingestor`.
+- `PROTOCOL`, `TRANSPORT`, `INGESTOR_NODE_ID` → `ingestor.protocol`,
+  `ingestor.transport`, `ingestor.nodeId`.
+- `RETICULUM_CONFIG_DIR`, `RETICULUM_INTERFACES` → `ingestor.reticulumConfigDir`,
+  `ingestor.reticulumInterfaces`.
+- Options typed `nullOr` emit no variable when left `null`, so the app keeps its
+  own default.
 
 ## Docker
 
