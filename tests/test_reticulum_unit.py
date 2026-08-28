@@ -1197,6 +1197,50 @@ def test_connect_starts_reticulum_with_config_dir(monkeypatch):
     assert iface._rns is not None
 
 
+def test_connect_logs_pending_host_id_with_a_retry_note(monkeypatch):
+    """A startup line reading node_id=None reads as a failure, not a wait.
+
+    It printed ``None`` on *every* run, because it logged
+    ``iface.host_node_id`` -- a constant ``None`` -- rather than the resolved
+    id. The daemon retries each loop, so an unresolved id is a pending lookup
+    and the log now says so (review follow-up to SPEC RE8).
+    """
+    fake, _state = _fake_rns(existing_instance=object())
+    fake.Reticulum.get_instance = staticmethod(lambda: None)  # no path table
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    logs: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda msg, **kw: logs.append((msg, kw))
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    registered = [kw for msg, kw in logs if "listener registered" in msg]
+    assert registered and registered[0]["node_id"] == "pending"
+    assert any("retrying until a local destination is heard" in msg for msg, _ in logs)
+
+
+def test_connect_logs_the_resolved_host_id(monkeypatch):
+    """Once discovery answers, the startup line names the real id."""
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: _FIELD_PRIMARY},
+    )
+    monkeypatch.setattr(_mod.config, "INGESTOR_NODE_ID", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", "/tmp/rns-config")
+    logs: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda msg, **kw: logs.append((msg, kw))
+    )
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    registered = [kw for msg, kw in logs if "listener registered" in msg]
+    assert registered and registered[0]["node_id"] == "!27716218"
+    assert not any("retrying until" in msg for msg, _ in logs)
+
+
 def test_connect_reuses_running_instance(monkeypatch):
     """connect() attaches to an existing RNS instance without re-initialising."""
     existing = object()
@@ -1636,3 +1680,224 @@ def test_connection_never_becomes_the_reticulum_target(monkeypatch, tmp_path):
     _iface, target, _next = ReticulumProvider().connect(active_candidate=None)
 
     assert target == f"reticulum://{tmp_path}"
+
+
+# ---------------------------------------------------------------------------
+# Discovery failure paths (SPEC RE8)
+#
+# Every accessor these helpers call reaches a *running* RNS stack, which can be
+# absent, mid-shutdown, or answering over RPC. Each failure must degrade to
+# "nothing discovered" rather than kill the announce thread, so each branch is
+# exercised rather than assumed.
+# ---------------------------------------------------------------------------
+
+
+class _Boom:
+    """Namespace whose every accessor raises, standing in for a dead stack."""
+
+    def __getattr__(self, _name):
+        raise RuntimeError("stack is gone")
+
+
+def test_local_path_entries_survives_a_dead_or_silent_stack(monkeypatch):
+    """No instance, a raising accessor, or a non-list reply all yield []."""
+    import RNS
+
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: None))
+    assert _mod._local_path_entries() == []
+
+    def _raise():
+        raise RuntimeError("no instance")
+
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(_raise))
+    assert _mod._local_path_entries() == []
+
+    bad = types.SimpleNamespace(
+        get_path_table=lambda max_hops=None: (_ for _ in ()).throw(OSError("rpc down"))
+    )
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: bad))
+    assert _mod._local_path_entries() == []
+
+    not_a_list = types.SimpleNamespace(get_path_table=lambda max_hops=None: "nope")
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: not_a_list))
+    assert _mod._local_path_entries() == []
+
+
+def test_local_identity_destinations_skips_unusable_entries(monkeypatch):
+    """A malformed entry or an unrecallable destination is skipped, not fatal."""
+    import RNS
+
+    table = [
+        {"hash": "not-bytes", "hops": 0},
+        {"hash": bytes.fromhex(_FIELD_LXMF), "hops": 0},
+        {"hash": bytes.fromhex(_FIELD_NOMADNET), "hops": 0, "interface": "RNode[X]"},
+    ]
+    monkeypatch.setattr(
+        RNS.Reticulum,
+        "get_instance",
+        staticmethod(lambda: types.SimpleNamespace(get_path_table=lambda **_k: table)),
+    )
+    monkeypatch.setattr(
+        RNS.Transport,
+        "internal_identity",
+        staticmethod(lambda: _FakeIdentity(bytes.fromhex(_FIELD_TRANSPORT))),
+    )
+
+    def _recall(dh, **_k):
+        if bytes(dh).hex() == _FIELD_LXMF:
+            raise RuntimeError("unknown destination")
+        return _FakeIdentity(bytes.fromhex(_FIELD_PRIMARY))
+
+    monkeypatch.setattr(RNS.Identity, "recall", staticmethod(_recall))
+    groups = _mod._local_identity_destinations()
+    # Only the nomadnet entry survives, and it carries its interface.
+    assert groups == {_FIELD_PRIMARY: {_FIELD_NOMADNET: "RNode[X]"}}
+
+
+def test_local_identity_destinations_skips_an_unidentifiable_owner(monkeypatch):
+    """A recall returning no usable hash yields no group."""
+    import RNS
+
+    table = [{"hash": bytes.fromhex(_FIELD_LXMF), "hops": 0}]
+    monkeypatch.setattr(
+        RNS.Reticulum,
+        "get_instance",
+        staticmethod(lambda: types.SimpleNamespace(get_path_table=lambda **_k: table)),
+    )
+    monkeypatch.setattr(
+        RNS.Transport, "internal_identity", staticmethod(lambda: _FakeIdentity(b""))
+    )
+    monkeypatch.setattr(RNS.Identity, "recall", staticmethod(lambda _dh, **_k: None))
+    assert _mod._local_identity_destinations() == {}
+
+
+def test_recalled_display_name_is_none_when_the_stack_cannot_answer(monkeypatch):
+    """A raising recall_app_data degrades to the placeholder, not a crash."""
+    import RNS
+
+    def _raise(_dh, **_k):
+        raise RuntimeError("no app data")
+
+    monkeypatch.setattr(RNS.Identity, "recall_app_data", staticmethod(_raise))
+    assert _mod._recalled_display_name(_FIELD_LXMF) is None
+
+
+def test_aspect_destination_hex_rejects_a_malformed_aspect(monkeypatch):
+    """An aspect without an app/aspect split, or an unhashable identity, is None."""
+    assert _mod._aspect_destination_hex(_FIELD_PRIMARY, "nodots") is None
+    assert _mod._aspect_destination_hex(_FIELD_PRIMARY, "") is None
+    # A non-hex identity cannot be turned into hash material.
+    assert _mod._aspect_destination_hex("zzzz", "lxmf.delivery") is None
+
+
+def test_host_destination_nodes_none_without_a_usable_identity():
+    """An unusable identity hash yields no host records at all."""
+    assert _mod._host_destination_nodes("ab") == []
+
+
+def test_transport_enabled_is_false_when_the_stack_cannot_answer(monkeypatch):
+    """An unreadable stack reports transport off - the safe answer, since the
+    role is only emitted when transport is definitely on (SPEC RE9)."""
+    import RNS
+
+    def _raise():
+        raise RuntimeError("no config")
+
+    monkeypatch.setattr(RNS.Reticulum, "transport_enabled", staticmethod(_raise))
+    assert _mod._transport_enabled() is False
+
+
+def test_announce_interface_name_prefers_the_rpc_answer(monkeypatch):
+    """The shared instance's view wins over this process's path table (RE3)."""
+    import RNS
+
+    instance = types.SimpleNamespace(
+        get_next_hop_if_name=lambda _dh: "RNodeInterface[RNode Reticulum Berlin]"
+    )
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: instance))
+    assert (
+        _mod._announce_interface_name(bytes.fromhex(_FIELD_LXMF))
+        == "RNodeInterface[RNode Reticulum Berlin]"
+    )
+
+
+def test_announce_interface_name_falls_back_when_rpc_is_unavailable(monkeypatch):
+    """A dead instance or a blank RPC reply falls back to the local table."""
+    import RNS
+
+    def _raise():
+        raise RuntimeError("gone")
+
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(_raise))
+    monkeypatch.setattr(
+        RNS.Transport,
+        "next_hop_interface",
+        staticmethod(lambda _dh: "LocalInterface[x]"),
+    )
+    assert (
+        _mod._announce_interface_name(bytes.fromhex(_FIELD_LXMF)) == "LocalInterface[x]"
+    )
+
+    # Instance present but RPC raises, and separately returns nothing usable.
+    boom = types.SimpleNamespace(
+        get_next_hop_if_name=lambda _dh: (_ for _ in ()).throw(OSError("rpc"))
+    )
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: boom))
+    assert (
+        _mod._announce_interface_name(bytes.fromhex(_FIELD_LXMF)) == "LocalInterface[x]"
+    )
+
+    blank = types.SimpleNamespace(get_next_hop_if_name=lambda _dh: None)
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: blank))
+    assert (
+        _mod._announce_interface_name(bytes.fromhex(_FIELD_LXMF)) == "LocalInterface[x]"
+    )
+
+
+def test_snapshot_does_not_duplicate_a_host_destination_already_heard(monkeypatch):
+    """A host aspect that also arrived as an announce is listed once.
+
+    The host's records are folded into every snapshot, so without the guard a
+    destination the ingestor genuinely heard would be reported twice.
+    """
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY},
+        app_data={_FIELD_LXMF: b"Afri Nomad Orion"},
+    )
+    iface = _ReticulumInterface(target=None)
+    iface._update_node(
+        "!27716218",
+        {
+            "nodeId": "!27716218",
+            "protocol": "reticulum",
+            "destination": {"id": _FIELD_LXMF, "aspect": "lxmf.delivery"},
+            "user": {"longName": "Afri Nomad Orion"},
+        },
+    )
+    items = ReticulumProvider().node_snapshot_items(iface)
+    ids = [n.get("destination", {}).get("id") for _nid, n in items]
+    assert ids.count(_FIELD_LXMF) == 1
+
+
+def test_snapshot_includes_host_destinations_not_heard_as_announces(monkeypatch):
+    """The host's own aspects reach the snapshot even with nothing heard.
+
+    Nothing relays our own announce back to us, so without folding the
+    discovered records in, the ingestor's own node would never be reported
+    (SPEC RE8).
+    """
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: _FIELD_PRIMARY},
+        app_data={_FIELD_NOMADNET: b"Department of Decentralization"},
+    )
+    iface = _ReticulumInterface(target=None)
+    items = ReticulumProvider().node_snapshot_items(iface)
+    assert {nid for nid, _ in items} == {"!27716218"}
+    by_aspect = {n["destination"]["aspect"]: n for _nid, n in items}
+    assert set(by_aspect) == {"lxmf.delivery", "nomadnetwork.node"}
+    assert (
+        by_aspect["nomadnetwork.node"]["user"]["longName"]
+        == "Department of Decentralization"
+    )

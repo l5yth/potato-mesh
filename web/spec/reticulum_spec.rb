@@ -313,6 +313,37 @@ RSpec.describe "Reticulum protocol support" do
     end
   end
 
+  describe "GET /api/destinations?node_id=" do
+    it "filters to one node's destinations" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+      # A second node's destination, which the filter must exclude.
+      payload = {
+        RETICULUM_NODE_ID2 => reticulum_node_fixture(
+          last_heard: now - 20,
+          aspect: "nomadnetwork.node",
+          dest_id: RETICULUM_DEST_HASH2,
+          role: "NODE",
+        ),
+        "ingestor" => RETICULUM_INGESTOR_ID,
+        "protocol" => "reticulum",
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+
+      get "/api/destinations"
+      expect(JSON.parse(last_response.body).length).to eq(2)
+
+      get "/api/destinations?node_id=#{RETICULUM_NODE_ID2}"
+      expect(last_response.status).to eq(200)
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first).to include(
+        "id" => RETICULUM_DEST_HASH2,
+        "node_id" => RETICULUM_NODE_ID2,
+      )
+    end
+  end
+
   describe "POST /api/nodes" do
     it "stores reticulum nodes under their own protocol via the wrapper stamp" do
       register_reticulum_ingestor

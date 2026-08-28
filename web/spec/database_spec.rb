@@ -151,6 +151,41 @@ RSpec.describe PotatoMesh::App::Database do
     expect { harness_class.ensure_schema_upgrades }.not_to raise_error
   end
 
+  it "drops the legacy nodes.dest_hash column (SPEC RE2)" do
+    # #893 shipped dest_hash as a JSON column; the destinations table replaced
+    # it, and a column and a table modelling one relationship would drift.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT, dest_hash TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    columns = column_names_for("nodes")
+    expect(columns).not_to include("dest_hash")
+    expect(columns).to include("identity_hash")
+    expect { harness_class.ensure_schema_upgrades }.not_to raise_error
+  end
+
+  it "leaves dest_hash in place when SQLite is too old to drop it" do
+    # DROP COLUMN needs SQLite 3.35+. On anything older the column lingers
+    # unused rather than failing the boot, so the rescue must swallow it.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT, dest_hash TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+    end
+
+    original = SQLite3::Database.instance_method(:execute)
+    allow_any_instance_of(SQLite3::Database).to receive(:execute) do |db, sql, *rest|
+      raise SQLite3::SQLException, "near \"DROP\": syntax error" if sql.include?("DROP COLUMN dest_hash")
+
+      original.bind(db).call(sql, *rest)
+    end
+
+    expect { harness_class.ensure_schema_upgrades }.not_to raise_error
+    expect(column_names_for("nodes")).to include("dest_hash")
+  end
+
   it "backfills every extended telemetry metric column on an existing schema (TI-A2)" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       db.execute("CREATE TABLE nodes(node_id TEXT)")

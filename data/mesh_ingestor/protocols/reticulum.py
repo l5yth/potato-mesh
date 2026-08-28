@@ -721,9 +721,9 @@ def _local_identity_destinations() -> dict[str, dict[str, str | None]]:
         identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
         if identity_hash is None or identity_hash == transport:
             continue
+        # dest is already bytes here, and _reticulum_hash_hex always returns
+        # hex for bytes -- so no None guard, which would be unreachable.
         dest_hex = _reticulum_hash_hex(dest)
-        if dest_hex is None:
-            continue
         interface = entry.get("interface")
         groups.setdefault(identity_hash, {})[dest_hex] = (
             str(interface) if interface else None
@@ -961,14 +961,29 @@ class ReticulumProvider:
             iface._announce_handlers.append(handler)
 
         iface.isConnected = True
+        # Resolve the host id for the log rather than reading
+        # +iface.host_node_id+, which is a constant None: the startup line
+        # printed node_id=None on every run regardless of what discovery would
+        # have found, which reads as a failure rather than a pending lookup.
+        host_node_id = self.extract_host_node_id(iface)
         config._debug_log(
             "Reticulum announce listener registered",
             context="reticulum.connect",
             severity="info",
             aspects=list(_ANNOUNCE_ASPECTS),
             interfaces=list(config.RETICULUM_INTERFACES) or "all",
-            node_id=iface.host_node_id,
+            node_id=host_node_id or "pending",
         )
+        if not host_node_id:
+            # Say so explicitly: a fresh stack has nothing 0-hop in its path
+            # table yet, the daemon retries every loop, and an operator reading
+            # only the line above would otherwise think it had failed.
+            config._debug_log(
+                "Host node id not resolved yet; retrying until a local "
+                "destination is heard. Set INGESTOR_NODE_ID to pin it.",
+                context="reticulum.connect",
+                severity="info",
+            )
         return iface, target, active_candidate
 
     def extract_host_node_id(self, iface: object) -> str | None:

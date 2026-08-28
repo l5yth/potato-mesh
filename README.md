@@ -337,7 +337,7 @@ appear in the allowlist.
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast`: the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key: only the per-channel hash of *(name, key)* distinguishes them. |
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from the config dir's transport identity; set it there only to override that. |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
 | `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
@@ -443,16 +443,24 @@ start, whose only interface is a link-local `AutoInterface`:
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
   and run the container with host networking.
 
-The ingestor derives its own node id from the config dir's transport identity;
-`INGESTOR_NODE_ID` overrides it. To read the id it will use:
+The ingestor derives its own node id from your **primary identity** — the one
+announcing the most destinations on this machine, which is the identity your
+LXMF and nomadnet addresses belong to. `INGESTOR_NODE_ID` overrides it.
 
-```bash
-python -c "import RNS; RNS.Reticulum(configdir='$HOME/.reticulum'); \
-  print('!' + RNS.Transport.internal_identity().hash.hex()[:8])"
+It reports the id it resolved at startup:
+
+```
+context=reticulum.connect ... node_id='!27716218' Reticulum announce listener registered
 ```
 
-It is stable per config dir. This is not the hash `rnstatus` prints as
-"Transport Instance" unless `enable_transport` is set in your config.
+`node_id='pending'` means nothing local has been heard yet; the ingestor retries
+each loop and logs again once it resolves. It is **not** the transport identity,
+and not the hash `rnstatus` prints as "Transport Instance".
+
+**Changing the id strands the old row.** Setting, changing, or removing
+`INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
+`/api/ingestors` without heartbeats until it ages out. Leaving the variable
+as-is across upgrades is inert.
 
 A node appears once per announced destination, so one peer running LXMF and a
 nomadnet node shows up as two entries. `GET /api/destinations` lists them and
