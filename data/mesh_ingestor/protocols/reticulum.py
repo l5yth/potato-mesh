@@ -696,7 +696,7 @@ def _transport_identity_hash() -> str | None:
     return _reticulum_hash_hex(getattr(identity, "hash", None))
 
 
-def _local_identity_destinations() -> dict[str, set[str]]:
+def _local_identity_destinations() -> dict[str, dict[str, str | None]]:
     """Group local (0-hop) destinations by the identity that owns them.
 
     The transport identity is **excluded**: it fronts no destinations and is a
@@ -704,10 +704,12 @@ def _local_identity_destinations() -> dict[str, set[str]]:
     rule that picks the host's primary identity (SPEC RE8).
 
     Returns:
-        Mapping of identity hash hex to the set of its 0-hop destination hashes.
+        Mapping of identity hash hex to ``{destination hex: interface name}``.
+        The interface is the path-table entry's own, so a discovered host
+        destination records where it lives exactly like an announced one does.
     """
     transport = _transport_identity_hash()
-    groups: dict[str, set[str]] = {}
+    groups: dict[str, dict[str, str | None]] = {}
     for entry in _local_path_entries():
         dest = entry.get("hash")
         if not isinstance(dest, (bytes, bytearray)):
@@ -722,8 +724,34 @@ def _local_identity_destinations() -> dict[str, set[str]]:
         dest_hex = _reticulum_hash_hex(dest)
         if dest_hex is None:
             continue
-        groups.setdefault(identity_hash, set()).add(dest_hex)
+        interface = entry.get("interface")
+        groups.setdefault(identity_hash, {})[dest_hex] = (
+            str(interface) if interface else None
+        )
     return groups
+
+
+def _recalled_display_name(dest_hex: str) -> str | None:
+    """Return the display name last announced on a destination, if any.
+
+    The host's own announces are never delivered back to this ingestor, so a
+    discovered destination has no ``app_data`` of its own to decode — but the
+    stack kept the last one it heard, which is what ``rnsd`` recorded when the
+    local app announced.  Without this a discovered destination would carry
+    only the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline
+    rule, name the node with it (SPEC RE8).
+
+    Parameters:
+        dest_hex: Destination hash as hex.
+
+    Returns:
+        Decoded display name, or ``None`` when the stack has none.
+    """
+    try:
+        app_data = RNS.Identity.recall_app_data(bytes.fromhex(dest_hex))
+    except Exception:
+        return None
+    return _decode_display_name(app_data)
 
 
 def _primary_local_identity() -> str | None:
@@ -787,31 +815,36 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
     node_id = _reticulum_node_id(identity_hash)
     if node_id is None:
         return []
-    local = _local_identity_destinations().get(identity_hash, set())
+    local = _local_identity_destinations().get(identity_hash, {})
     now = int(time.time())
+    placeholder = f"Reticulum {node_id[-4:].upper()}"
     records: list[dict] = []
     for aspect in _ANNOUNCE_ASPECTS:
         dest_hex = _aspect_destination_hex(identity_hash, aspect)
         if dest_hex is None or dest_hex not in local:
             continue
-        records.append(
-            {
-                "nodeId": node_id,
-                "lastHeard": now,
-                "protocol": "reticulum",
-                "identityHash": identity_hash,
-                "destination": {
-                    "id": dest_hex,
-                    "aspect": aspect,
-                    "role": _ASPECT_ROLES.get(aspect),
-                },
-                "user": {
-                    "shortName": _reticulum_short_name(node_id),
-                    "longName": f"Reticulum {node_id[-4:].upper()}",
-                    "role": _ASPECT_ROLES.get(aspect),
-                },
-            }
-        )
+        record = {
+            "nodeId": node_id,
+            "lastHeard": now,
+            "protocol": "reticulum",
+            "identityHash": identity_hash,
+            "destination": {
+                "id": dest_hex,
+                "aspect": aspect,
+                "role": _ASPECT_ROLES.get(aspect),
+            },
+            "user": {
+                "shortName": _reticulum_short_name(node_id),
+                # A real announced name always wins; the placeholder is only
+                # for a destination the stack has never heard a name for.
+                "longName": _recalled_display_name(dest_hex) or placeholder,
+                "role": _ASPECT_ROLES.get(aspect),
+            },
+        }
+        interface = local.get(dest_hex)
+        if interface:
+            record["interface"] = interface
+        records.append(record)
     transport = _transport_identity_hash()
     if transport and _transport_enabled():
         records.append(
@@ -827,7 +860,7 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
                 },
                 "user": {
                     "shortName": _reticulum_short_name(node_id),
-                    "longName": f"Reticulum {node_id[-4:].upper()}",
+                    "longName": _recalled_display_name(transport) or placeholder,
                     "role": "TRANSPORT",
                 },
             }

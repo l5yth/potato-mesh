@@ -562,7 +562,14 @@ _FIELD_PROPAGATION = "fee521eb6fcd937cc519a1ec8c8b0b2a"
 _FIELD_NOMADNET = "9c59da5e1516745d74cc908243e0ba2b"
 
 
-def _local_stack(monkeypatch, dest_to_identity, *, transport_enabled=False):
+def _local_stack(
+    monkeypatch,
+    dest_to_identity,
+    *,
+    transport_enabled=False,
+    interfaces=None,
+    app_data=None,
+):
     """Point the real RNS at a synthetic 0-hop path table.
 
     Patches only the four stack accessors discovery uses, leaving
@@ -573,10 +580,23 @@ def _local_stack(monkeypatch, dest_to_identity, *, transport_enabled=False):
         monkeypatch: pytest fixture.
         dest_to_identity: ``{destination_hex: identity_hex}`` for 0-hop paths.
         transport_enabled: What ``RNS.Reticulum.transport_enabled`` reports.
+        interfaces: ``{destination_hex: interface name}`` for path entries.
+        app_data: ``{destination_hex: announce app_data bytes}`` the stack
+            remembers, as ``RNS.Identity.recall_app_data`` would return.
     """
     import RNS
 
-    table = [{"hash": bytes.fromhex(d), "hops": 0} for d in dest_to_identity]
+    interfaces = interfaces or {}
+    app_data = app_data or {}
+    table = [
+        {"hash": bytes.fromhex(d), "hops": 0, "interface": interfaces.get(d)}
+        for d in dest_to_identity
+    ]
+    monkeypatch.setattr(
+        RNS.Identity,
+        "recall_app_data",
+        staticmethod(lambda dh, **_k: app_data.get(bytes(dh).hex())),
+    )
     instance = types.SimpleNamespace(get_path_table=lambda max_hops=None: table)
     monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: instance))
     monkeypatch.setattr(
@@ -678,6 +698,53 @@ def test_host_destinations_label_every_announced_aspect(monkeypatch):
     # Transport is off by default, so its aspect is absent.
     assert _mod._TRANSPORT_ASPECT not in by_aspect
     assert all(r["identityHash"] == _FIELD_PRIMARY for r in records)
+
+
+def test_host_destinations_carry_their_interface_and_announced_name(monkeypatch):
+    """Field regression: discovered aspects lost both name and interface.
+
+    The host's own announces are never delivered back to this ingestor, so a
+    discovered destination has no ``app_data`` of its own -- but the stack kept
+    the last one it heard. Without recalling it every host destination stored
+    the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule,
+    named the node with it. The interface came straight from the path entry and
+    was simply dropped (SPEC RE8).
+    """
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: _FIELD_PRIMARY},
+        interfaces={
+            _FIELD_LXMF: "LocalInterface[rns/default]",
+            _FIELD_NOMADNET: "RNodeInterface[RNode Reticulum Berlin]",
+        },
+        app_data={
+            _FIELD_LXMF: b"Afri Nomad Orion",
+            _FIELD_NOMADNET: b"Department of Decentralization",
+        },
+    )
+    by_aspect = {
+        r["destination"]["aspect"]: r
+        for r in ReticulumProvider().host_destination_nodes()
+    }
+    lxmf = by_aspect["lxmf.delivery"]
+    nomad = by_aspect["nomadnetwork.node"]
+    assert lxmf["user"]["longName"] == "Afri Nomad Orion"
+    assert nomad["user"]["longName"] == "Department of Decentralization"
+    assert lxmf["interface"] == "LocalInterface[rns/default]"
+    assert nomad["interface"] == "RNodeInterface[RNode Reticulum Berlin]"
+
+
+def test_host_destination_falls_back_to_the_placeholder_without_a_name(monkeypatch):
+    """A destination the stack has never heard a name for keeps the placeholder.
+
+    The generic name is wanted -- it is the web upsert's recognised fallback
+    form -- but only where there is no real one to prefer.
+    """
+    _local_stack(monkeypatch, {_FIELD_LXMF: _FIELD_PRIMARY})
+    record = ReticulumProvider().host_destination_nodes()[0]
+    assert record["user"]["longName"] == "Reticulum 6218"
+    # No interface in the path entry -> the key is omitted, not set to None.
+    assert "interface" not in record
 
 
 def test_transport_aspect_is_gated_on_transport_enabled(monkeypatch):

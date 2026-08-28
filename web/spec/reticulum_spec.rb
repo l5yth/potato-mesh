@@ -197,10 +197,10 @@ RSpec.describe "Reticulum protocol support" do
             dest_id: aspect[:dest],
             role: aspect[:role],
           ).merge("user" => {
-            "longName" => aspect[:name],
-            "shortName" => "a1b2",
-            "publicKey" => RETICULUM_PUBLIC_KEY,
-          }),
+                    "longName" => aspect[:name],
+                    "shortName" => "a1b2",
+                    "publicKey" => RETICULUM_PUBLIC_KEY,
+                  }),
           "ingestor" => RETICULUM_INGESTOR_ID,
           "protocol" => "reticulum",
         }
@@ -244,6 +244,42 @@ RSpec.describe "Reticulum protocol support" do
       )
       expect(row["long_name"]).to eq("Propagation Store")
       expect(row["role"]).to eq("PROPAGATION")
+    end
+
+    it "keeps a real destination name when a placeholder arrives later" do
+      # Discovery re-emits the host's aspects on every snapshot, falling back to
+      # "Reticulum <SHORT>" when the stack remembers no app_data. Arriving after
+      # a real announce, that must not overwrite the stored name -- which would
+      # rename the node too, since RE10 derives the headline from these rows.
+      row = post_two_aspects(
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Department of Decentralization" },
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Reticulum C3D4" },
+      )
+      expect(row["long_name"]).to eq("Department of Decentralization")
+      with_db(readonly: true) do |db|
+        stored = db.execute(
+          "SELECT name FROM destinations WHERE id = ?", [RETICULUM_DEST_HASH]
+        ).first
+        expect(stored["name"]).to eq("Department of Decentralization")
+      end
+    end
+
+    it "stores a placeholder on a first sighting" do
+      # The generic name is wanted where there is no real one to prefer.
+      post_two_aspects(
+        { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
+          role: "NODE", name: "Reticulum C3D4" },
+        { aspect: "lxmf.propagation", dest: RETICULUM_DEST_HASH2,
+          role: "PROPAGATION", name: "Reticulum C3D4" },
+      )
+      with_db(readonly: true) do |db|
+        names = db.execute(
+          "SELECT name FROM destinations ORDER BY aspect",
+        ).map { |r| r["name"] }
+        expect(names).to eq(["Reticulum C3D4", "Reticulum C3D4"])
+      end
     end
 
     it "does not let a nameless higher aspect blank the headline" do

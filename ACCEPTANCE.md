@@ -5821,6 +5821,16 @@ follow-up RD4 recorded as a known limitation. Name and role resolve
 independently: a third example gives the top-ranked aspect no display name and
 expects the role to move while the headline name stays.
 
+A discovered host destination gets its name from
+`RNS.Identity.recall_app_data` — the host's own announces are never delivered
+back to this ingestor, so without recalling what the stack last heard every one
+of them stored the `Reticulum <SHORT>` placeholder and named the node with it.
+Its interface comes from the path-table entry. Both were dropped in the field
+(`interface: null`, `name: "Reticulum 6218"` on all three aspects of
+`!27716218`). A placeholder is still stored on a **first** sighting — it is what
+a reader sees until a real name turns up — but `upsert_destination` never lets
+one **replace** a real name, which would rename the node through the RE10 rule.
+
 **Note:** `clear_tables` in `spec/reticulum_spec.rb` must delete from
 `destinations`. It did not, and rows keyed on the destination hash accumulated
 across examples; the pre-existing tests hid it by reusing one hash, so only a

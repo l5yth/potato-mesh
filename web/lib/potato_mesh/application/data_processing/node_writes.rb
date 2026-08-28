@@ -253,7 +253,9 @@ module PotatoMesh
       # @param node_id [String] canonical id of the row this destination keys.
       # @param destination [Object] +destination+ block from the payload.
       # @param identity_hash [String, nil] identity the destination belongs to.
-      # @param name [String, nil] display name announced on this destination.
+      # @param name [String, nil] display name announced on this destination;
+      #   a generic +Reticulum <SHORT>+ placeholder is stored as +nil+ so it
+      #   cannot displace a real one.
       # @param interface [String, nil] interface the announce was heard on.
       # @param heard [Integer] unix seconds of receipt.
       # @return [void]
@@ -263,16 +265,27 @@ module PotatoMesh
         id = string_or_nil(destination["id"])&.downcase
         return unless id
 
+        # A generic "Reticulum <SHORT>" placeholder is still worth storing on a
+        # first sighting -- it is what the reader sees until a real name turns
+        # up -- but it must never *replace* one a real announce supplied. The
+        # host's own destinations are discovered rather than announced, so they
+        # fall back to the placeholder whenever the stack remembers no app_data,
+        # and since RE10 derives the node headline from these rows, letting that
+        # land on top of a real name would rename the node too.
+        stored_name = string_or_nil(name)
+        update_name = generic_fallback_name?(stored_name, node_id, "reticulum") ? nil : stored_name
+
         params = [
           id,
           node_id,
           identity_hash,
-          name,
+          stored_name,
           string_or_nil(destination["aspect"]),
           string_or_nil(destination["role"]),
           interface,
           heard,
           heard,
+          update_name,
         ]
         with_busy_retry do
           db.execute(<<~SQL, params)
@@ -282,7 +295,9 @@ module PotatoMesh
             ON CONFLICT(id) DO UPDATE SET
               node_id=excluded.node_id,
               identity_hash=COALESCE(excluded.identity_hash, destinations.identity_hash),
-              name=COALESCE(excluded.name, destinations.name),
+              -- ?10 is update_name: NULL when the incoming name is a generic
+              -- placeholder, so an existing real name survives it.
+              name=COALESCE(?, destinations.name),
               aspect=COALESCE(excluded.aspect, destinations.aspect),
               role=COALESCE(excluded.role, destinations.role),
               interface=COALESCE(excluded.interface, destinations.interface),
