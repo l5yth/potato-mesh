@@ -596,134 +596,82 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # the accepted MeshCore-inherited merge behaviour (CONTRACTS.md, "Reticulum
   # node id mapping").
   # ---------------------------------------------------------------------------
-  describe "#normalize_dest_hashes" do
-    it "returns nil when the record names no hash" do
-      # nil lets the upsert's conflict clause preserve whatever is stored.
-      expect(dp.normalize_dest_hashes(nil)).to be_nil
-      expect(dp.normalize_dest_hashes([])).to be_nil
-      expect(dp.normalize_dest_hashes(["", "   "])).to be_nil
-    end
-
-    it "accepts a bare string or a list" do
-      expect(JSON.parse(dp.normalize_dest_hashes("AABB"))).to eq(["aabb"])
-      expect(JSON.parse(dp.normalize_dest_hashes(%w[bbcc aabb]))).to eq(%w[aabb bbcc])
-    end
-
-    it "lowercases, de-dupes, and sorts for a stable stored array" do
-      # An unstable array would make every upsert look like a change.
-      expect(JSON.parse(dp.normalize_dest_hashes(%w[CCDD aabb ccdd AABB]))).to eq(%w[aabb ccdd])
-    end
-  end
-
-  describe "#upsert_node — dest_hash union (SPEC RN1)" do
+  describe "#upsert_destination (SPEC RE-A5)" do
     include_context "with isolated db"
 
-    def reticulum_record(hashes, last_heard: now)
+    def reticulum_record(dest_id, aspect:, role:, name:, last_heard: nil)
       {
-        "lastHeard" => last_heard,
-        "destHash" => hashes,
-        "user" => { "longName" => "Argos", "shortName" => "beef", "publicKey" => "ab" * 64 },
+        "lastHeard" => last_heard || now,
+        "identityHash" => "27716218762cfd2864141ef286c39940",
+        "interface" => "RNodeInterface[RNode Reticulum Berlin]",
+        "destination" => { "id" => dest_id, "aspect" => aspect, "role" => role },
+        "user" => { "longName" => name, "publicKey" => "ab" * 64, "role" => role },
       }
     end
 
-    it "unions stored and incoming hashes inside the write itself" do
+    it "gives each announced aspect its own node row and destination row" do
+      # The field test showed why: the aspects carry different names, so merging
+      # them produced a row named from one aspect and roled from another.
       db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb bbcc]), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd aabb]), protocol: "reticulum")
-      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
-      db.close
-      expect(JSON.parse(stored)).to eq(%w[aabb bbcc ccdd])
-    end
-
-    it "preserves the stored hashes when a record names none" do
-      db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", reticulum_record(nil), protocol: "reticulum")
-      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
-      db.close
-      expect(JSON.parse(stored)).to eq(%w[aabb])
-    end
-
-    it "re-seeds from the record when the stored value is not a JSON array" do
-      # A corrupt or hand-edited cell must never fail the whole node upsert.
-      db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
-      ["not json at all", '{"a":1}'].each do |corrupt|
-        db.execute("UPDATE nodes SET dest_hash = ? WHERE node_id = ?", [corrupt, "!beef0001"])
-        dp.upsert_node(db, "!beef0001", reticulum_record(%w[eeff]), protocol: "reticulum")
-        expect(JSON.parse(db.get_first_value(
-          "SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"]
-        ))).to eq(%w[eeff])
-      end
-      db.close
-    end
-
-    it "unions a hash carried by a STALE record (SPEC RN1)" do
-      # Two ingestors, and the second heard an older announce carrying a hash
-      # the first never saw. The upsert's freshness guard is right to skip
-      # timestamps and telemetry from a stale record, but dropping the hash
-      # breaks the cross-ingestor guarantee the union exists to provide.
-      db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now - 600),
-                     protocol: "reticulum")
-      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
-      db.close
-      expect(JSON.parse(stored)).to eq(%w[aabb ccdd])
-    end
-
-    it "does not let a stale record regress last_heard while unioning" do
-      # The union must ride *past* the freshness guard without dragging the
-      # guarded columns with it.
-      db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now - 600),
-                     protocol: "reticulum")
-      last_heard = db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?",
-                                      ["!beef0001"])
-      hashes = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?",
-                                  ["!beef0001"])
-      db.close
-      expect(last_heard).to eq(now)
-      expect(JSON.parse(hashes)).to include("ccdd")
-    end
-
-    it "does not let a generic fallback name overwrite a real one" do
-      # A Reticulum aspect carrying no app_data falls back to a placeholder
-      # name. It must be recognised as generic so it yields to a stored name.
-      db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]).merge(
-        "user" => { "longName" => "Kelly Street Node", "publicKey" => "ab" * 64 },
+      dp.upsert_node(db, "!aa11bb22", reticulum_record(
+        "aa11bb22" + "00" * 12, aspect: "lxmf.delivery", role: "PEER",
+                                name: "Afri Nomad Orion",
       ), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[ccdd], last_heard: now + 1).merge(
-        "user" => { "longName" => "Reticulum 0001", "publicKey" => "ab" * 64 },
+      dp.upsert_node(db, "!cc33dd44", reticulum_record(
+        "cc33dd44" + "00" * 12, aspect: "nomadnetwork.node", role: "NODE",
+                                name: "Department of Decentralization",
       ), protocol: "reticulum")
-      stored = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", ["!beef0001"])
+
+      nodes = db.execute("SELECT node_id, long_name, role, identity_hash FROM nodes ORDER BY node_id")
+      dests = db.execute("SELECT id, node_id, aspect, role, name FROM destinations ORDER BY aspect")
       db.close
-      expect(stored).to eq("Kelly Street Node")
+
+      expect(nodes.map { |r| r["long_name"] }).to eq(["Afri Nomad Orion", "Department of Decentralization"])
+      # Distinct rows, one identity — that is what groups them back into a peer.
+      expect(nodes.map { |r| r["identity_hash"] }.uniq.length).to eq(1)
+      expect(dests.map { |r| r["aspect"] }).to eq(["lxmf.delivery", "nomadnetwork.node"])
+      expect(dests.map { |r| r["role"] }).to eq(["PEER", "NODE"])
     end
 
-    it "does not let a synthetic placeholder touch a real row's hashes" do
-      # The union runs outside the upsert's DO UPDATE, so it has to repeat that
-      # statement's synthetic guard rather than inherit it.
+    it "records the interface an announce was heard on" do
       db = open_db
-      dp.upsert_node(db, "!beef0001", reticulum_record(%w[aabb]), protocol: "reticulum")
-      dp.upsert_node(db, "!beef0001", {
-        "lastHeard" => now + 1,
-        "destHash" => %w[deadbeef],
-        "user" => { "longName" => "Ghost", "synthetic" => true },
-      }, protocol: "reticulum")
-      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!beef0001"])
+      dp.upsert_node(db, "!aa11bb22", reticulum_record(
+        "aa11bb22" + "00" * 12, aspect: "lxmf.delivery", role: "PEER", name: "X",
+      ), protocol: "reticulum")
+      iface = db.get_first_value("SELECT interface FROM destinations WHERE node_id = ?", ["!aa11bb22"])
       db.close
-      expect(JSON.parse(stored)).to eq(%w[aabb])
+      expect(iface).to eq("RNodeInterface[RNode Reticulum Berlin]")
     end
 
-    it "leaves dest_hash NULL for protocols that carry no destination hashes" do
+    it "advances last_heard but never regresses it, and keeps the earliest first_heard" do
+      db = open_db
+      dest = "aa11bb22" + "00" * 12
+      dp.upsert_node(db, "!aa11bb22", reticulum_record(dest, aspect: "lxmf.delivery",
+                                                             role: "PEER", name: "X"), protocol: "reticulum")
+      dp.upsert_node(db, "!aa11bb22", reticulum_record(dest, aspect: "lxmf.delivery",
+                                                             role: "PEER", name: "X", last_heard: now - 600), protocol: "reticulum")
+      row = db.execute("SELECT first_heard, last_heard FROM destinations").first
+      db.close
+      expect(row["last_heard"]).to eq(now)
+      expect(row["first_heard"]).to eq(now - 600)
+    end
+
+    it "ignores a record carrying no destination block" do
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "user" => { "longName" => "MT" } })
-      stored = db.get_first_value("SELECT dest_hash FROM nodes WHERE node_id = ?", ["!aabbccdd"])
+      count = db.get_first_value("SELECT COUNT(*) FROM destinations")
       db.close
-      expect(stored).to be_nil
+      expect(count).to eq(0)
+    end
+
+    it "does not let a synthetic placeholder write a destination" do
+      db = open_db
+      rec = reticulum_record("aa11bb22" + "00" * 12, aspect: "lxmf.delivery", role: "PEER", name: "Ghost")
+      rec["user"]["synthetic"] = true
+      dp.upsert_node(db, "!aa11bb22", rec, protocol: "reticulum")
+      count = db.get_first_value("SELECT COUNT(*) FROM destinations")
+      db.close
+      expect(count).to eq(0)
     end
   end
 

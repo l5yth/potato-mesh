@@ -26,6 +26,10 @@ All code must be 100% unit tested — every line, branch, and code path must hav
 
 All code must be 100% documented according to the language's API-doc standard (PDoc for Python, RDoc for Ruby, JSDoc for JavaScript, rustdoc for Rust, dartdoc for Dart). Documentation must be sufficient to generate complete API docs from source. In addition to API-level docs, add inline comments wherever the logic is not immediately self-evident.
 
+**Operator-facing docs are task-oriented and short.** `README.md` and anything else an operator reads answers "do X to achieve Y" and stops. One or two sentences per setting: what to set, what happens, what breaks if you get it wrong. No mechanism, no rationale, no history, no reasoning about trade-offs, no explanation of *why* a default was chosen — that material belongs in API docs, inline comments, `SPEC.md`, or `CONTRACTS.md`, where the reader is a contributor rather than someone trying to get a radio working.
+
+This is a standing correction, not a style preference: generated documentation drifts long and explanatory by default, and every extra paragraph an operator has to read to find the one command they need is a defect. If a README passage explains a design decision, move it. If it hedges or covers a case the reader cannot act on, cut it. When in doubt, cut — the detail is recoverable from the linked SPEC/CONTRACTS entry.
+
 Every file in the repository must carry an Apache v2 license notice using the exact string `Copyright © 2025-26 l5yth & contributors`. **Source-code files** (`.rb`, `.py`, `.js`, `.rs`, `.dart`, etc.) must include the full Apache v2 license header block. **Non-source files** (docs, configs, YAML, TOML, Dockerfiles, etc.) must include a short 2-line Apache v2 notice (copyright line + license reference).
 
 Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code formatting.

@@ -18,8 +18,13 @@ x-web-base: &web-base
     APP_ENV: ${APP_ENV:-production}
     RACK_ENV: ${RACK_ENV:-production}
     SITE_NAME: ${SITE_NAME:-PotatoMesh Demo}
+    # Canonical names win; CHANNEL/FREQUENCY stay for existing .env files.
+    MESHTASTIC_PRESET: ${MESHTASTIC_PRESET:-}
+    MESHTASTIC_FREQ: ${MESHTASTIC_FREQ:-}
     CHANNEL: ${CHANNEL:-#LongFast}
     FREQUENCY: ${FREQUENCY:-915MHz}
+    MESHCORE_PRESET: ${MESHCORE_PRESET:-}
+    MESHCORE_FREQ: ${MESHCORE_FREQ:-}
     MAP_CENTER: ${MAP_CENTER:-38.761944,-27.090833}
     MAP_ZOOM: ${MAP_ZOOM:-}
     MAX_DISTANCE: ${MAX_DISTANCE:-42}
@@ -29,6 +34,13 @@ x-web-base: &web-base
     API_TOKEN: ${API_TOKEN}
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
     DEBUG: ${DEBUG:-0}
+    ANNOUNCEMENT: ${ANNOUNCEMENT:-}
+    EVENTS: ${EVENTS:-1}
+    OG_IMAGE_URL: ${OG_IMAGE_URL:-}
+    PAGES_DIR: ${PAGES_DIR:-/app/pages}
+    PROM_REPORT_IDS: ${PROM_REPORT_IDS:-}
+    ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-}
+    HIDDEN_CHANNELS: ${HIDDEN_CHANNELS:-}
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
@@ -56,9 +68,9 @@ x-ingestor-base: &ingestor-base
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN:-http://web:41447}
     DEBUG: ${DEBUG:-0}
     PROTOCOL: ${PROTOCOL:-meshtastic}
-    # PROTOCOL=reticulum only; the default keeps the ingestor's RNS config on
-    # the mounted potatomesh_config volume rather than in the container's
-    # ephemeral home (and never in the operator's ~/.reticulum).
+    # PROTOCOL=reticulum only. On bare metal this defaults to ~/.reticulum, the
+    # stack rnsd already uses; a container has no such stack, so it points at
+    # the volume that persists instead.
     RETICULUM_CONFIG_DIR: ${RETICULUM_CONFIG_DIR:-/app/.config/potato-mesh/reticulum}
     # NB: the default must be bare, not `""` — Compose substitutes the default
     # as literal text, so `:-""` yields a two-character value that parses as a
@@ -68,6 +80,15 @@ x-ingestor-base: &ingestor-base
     # heartbeat never registers and the protocol's packets/hour stays at zero.
     INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
     ENERGY_SAVING: ${ENERGY_SAVING:-0}
+    MESHCORE_SELF_TELEMETRY_SECONDS: ${MESHCORE_SELF_TELEMETRY_SECONDS:-3600}
+    MESHCORE_TELEMETRY_POLL_SECONDS: ${MESHCORE_TELEMETRY_POLL_SECONDS:-300}
+    # TRANSPORT=udp needs host networking; see "Passive UDP transport" in README.
+    TRANSPORT: ${TRANSPORT:-api}
+    PRIMARY_CHANNEL_ONLY: ${PRIMARY_CHANNEL_ONLY:-}
+    PRIMARY_CHANNEL_KEY: ${PRIMARY_CHANNEL_KEY:-}
+    PRIMARY_CHANNEL_NAME: ${PRIMARY_CHANNEL_NAME:-}
+    MESH_UDP_GROUP: ${MESH_UDP_GROUP:-}
+    MESH_UDP_PORT: ${MESH_UDP_PORT:-}
     TX_ENABLED: ${TX_ENABLED:-0}
     TX_ANNOUNCE: ${TX_ANNOUNCE:-0}
     FEDERATION: ${FEDERATION:-1}

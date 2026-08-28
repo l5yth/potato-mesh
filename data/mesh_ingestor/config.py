@@ -187,31 +187,22 @@ Accepted values are ``meshtastic`` (default), ``meshcore``, and ``reticulum``.
 def _resolve_reticulum_config_dir() -> str:
     """Resolve the Reticulum config directory for ``PROTOCOL=reticulum``.
 
-    The ingestor keeps its **own**, isolated Reticulum configuration rather
-    than inheriting the operator's ``~/.reticulum``.  Adopting that directory
-    would make the dashboard silently take on whatever transport
-    configuration the operator runs there — including ``enable_transport``
-    and every interface they have defined — which is never implied by
-    installing an ingestor (#888).
+    Defaults to RNS's own ``~/.reticulum`` — the stack the operator already
+    runs — with :envvar:`RETICULUM_CONFIG_DIR` as the override (``~`` expanded).
 
-    Resolution order:
-
-    1. :envvar:`RETICULUM_CONFIG_DIR` when set (``~`` is expanded), so an
-       operator who *does* want to share a stack can say so explicitly.
-    2. ``$XDG_CONFIG_HOME/potato-mesh/reticulum``.
-    3. ``~/.config/potato-mesh/reticulum``.
+    Sharing that directory is the point, not a hazard (SPEC RN3 as amended).
+    Interface scoping needs to ask the shared instance which interface an
+    announce arrived on, and that RPC authenticates with a key derived from the
+    config dir's own identity — so an ingestor with a *private* config dir
+    attaches to the operator's ``rnsd`` but cannot query it.
 
     Returns:
-        Absolute-ish path string suitable as :class:`RNS.Reticulum`'s
-        ``configdir``.  Never ``None`` and never ``~/.reticulum``.
+        Path string for :class:`RNS.Reticulum`'s ``configdir``.
     """
     explicit = os.environ.get("RETICULUM_CONFIG_DIR", "").strip()
     if explicit:
         return os.path.expanduser(explicit)
-    base = os.environ.get("XDG_CONFIG_HOME", "").strip() or os.path.join(
-        os.path.expanduser("~"), ".config"
-    )
-    return os.path.join(base, "potato-mesh", "reticulum")
+    return os.path.join(os.path.expanduser("~"), ".reticulum")
 
 
 RETICULUM_CONFIG_DIR = _resolve_reticulum_config_dir()

@@ -388,7 +388,7 @@ class TestChannelNameQuoting:
 
 
 class TestReticulumConfigDir:
-    """Tests for the isolated Reticulum config directory (#888)."""
+    """Tests for the Reticulum config directory (SPEC RN3 as amended)."""
 
     def test_explicit_env_wins_and_expands_tilde(self, monkeypatch):
         """An operator naming a directory gets exactly that directory."""
@@ -396,32 +396,32 @@ class TestReticulumConfigDir:
         monkeypatch.setenv("HOME", "/home/operator")
         assert config._resolve_reticulum_config_dir() == "/home/operator/shared/rns"
 
-    def test_defaults_under_xdg_config_home(self, monkeypatch):
-        """Without an explicit value, XDG_CONFIG_HOME roots an app-owned dir."""
+    def test_defaults_to_the_operators_own_stack(self, monkeypatch):
+        """Default is RNS's own ``~/.reticulum`` — the stack already running.
+
+        An earlier revision defaulted to a private, app-owned directory to avoid
+        adopting the operator's transport config. That turned out to be
+        counterproductive: interface scoping asks the shared instance which
+        interface an announce arrived on, and that RPC authenticates with a key
+        derived from the config dir's identity — so a private dir attaches to
+        the operator's ``rnsd`` but cannot query it (SPEC RE-A4).
+        """
+        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
+        monkeypatch.setenv("HOME", "/home/operator")
+        assert config._resolve_reticulum_config_dir() == "/home/operator/.reticulum"
+
+    def test_xdg_config_home_is_not_consulted(self, monkeypatch):
+        """The default is RNS's convention, not the XDG one."""
         monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
         monkeypatch.setenv("XDG_CONFIG_HOME", "/cfg")
-        assert config._resolve_reticulum_config_dir() == "/cfg/potato-mesh/reticulum"
-
-    def test_defaults_under_home_config_without_xdg(self, monkeypatch):
-        """With no XDG root either, the default lands under ~/.config."""
-        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", "/home/operator")
-        resolved = config._resolve_reticulum_config_dir()
-        assert resolved == "/home/operator/.config/potato-mesh/reticulum"
-
-    def test_never_resolves_to_the_operator_reticulum(self, monkeypatch):
-        """The dashboard never adopts the operator's own RNS stack (#888)."""
-        monkeypatch.delenv("RETICULUM_CONFIG_DIR", raising=False)
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        monkeypatch.setenv("HOME", "/home/operator")
-        assert not config._resolve_reticulum_config_dir().endswith("/.reticulum")
+        assert config._resolve_reticulum_config_dir() == "/home/operator/.reticulum"
 
     def test_blank_env_falls_back_to_the_default(self, monkeypatch):
         """A blank value is treated as unset, not as the current directory."""
         monkeypatch.setenv("RETICULUM_CONFIG_DIR", "   ")
-        monkeypatch.setenv("XDG_CONFIG_HOME", "/cfg")
-        assert config._resolve_reticulum_config_dir() == "/cfg/potato-mesh/reticulum"
+        monkeypatch.setenv("HOME", "/home/operator")
+        assert config._resolve_reticulum_config_dir() == "/home/operator/.reticulum"
 
 
 class TestReticulumInterfaces:

@@ -135,6 +135,22 @@ ENV RACK_ENV=production \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
     FERRUM_BROWSER_PATH=/usr/bin/chromium \
+    MESHTASTIC_PRESET="" \
+    MESHTASTIC_FREQ="" \
+    MESHCORE_PRESET="" \
+    MESHCORE_FREQ="" \
+    ANNOUNCEMENT="" \
+    EVENTS=1 \
+    OG_IMAGE_URL="" \
+    PAGES_DIR=/app/pages \
+    PROM_REPORT_IDS="" \
+    ALLOWED_CHANNELS="" \
+    HIDDEN_CHANNELS="" \
+    FEDERATION=1 \
+    PRIVATE=0 \
+    CONNECTION=/dev/ttyACM0 \
+    INSTANCE_DOMAIN="" \
+    API_TOKEN="" \
     DEBUG=0
 
 # Start the application

@@ -168,16 +168,29 @@ module PotatoMesh
             node_columns << "last_advert_heard"
           end
 
-          # Destination-hash back-reference (SPEC RN1): JSON array of the
-          # protocol-native destination hashes resolving to this node's
-          # identity.  Reticulum peers announce one destination per aspect, all
-          # derived from the single identity that keys the row.  NULL for
-          # protocols with no such indirection.  Added last so a database
-          # migrated from any prior version ends up with the same column order
-          # as a fresh one built from +data/nodes.sql+.
-          unless node_columns.include?("dest_hash")
-            db.execute("ALTER TABLE nodes ADD COLUMN dest_hash TEXT")
-            node_columns << "dest_hash"
+          # Identity back-reference (SPEC RE-A5).  A Reticulum row is keyed on
+          # one announced destination, and several such rows share an identity;
+          # this groups them back into one peer.  Supersedes the short-lived
+          # +dest_hash+ JSON column, which modelled the same relationship from
+          # the other side and is dropped below.  NULL for protocols with no
+          # such indirection.
+          unless node_columns.include?("identity_hash")
+            db.execute("ALTER TABLE nodes ADD COLUMN identity_hash TEXT")
+            node_columns << "identity_hash"
+          end
+
+          # +dest_hash+ shipped in #893 and is superseded by the +destinations+
+          # table.  A column and a table modelling the same relationship would
+          # drift, so the column goes.  Guarded because ALTER TABLE DROP COLUMN
+          # needs SQLite 3.35+; on anything older the column simply lingers
+          # unused rather than failing the boot.
+          if node_columns.include?("dest_hash")
+            begin
+              db.execute("ALTER TABLE nodes DROP COLUMN dest_hash")
+              node_columns.delete("dest_hash")
+            rescue SQLite3::SQLException
+              nil
+            end
           end
 
           if node_columns.include?("long_name")
@@ -575,6 +588,13 @@ module PotatoMesh
         if waypoint_tables.empty?
           waypoints_schema = File.expand_path("../../../../data/waypoints.sql", __dir__)
           db.execute_batch(File.read(waypoints_schema))
+        end
+
+        destination_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='destinations'").flatten
+        if destination_tables.empty?
+          destinations_schema = File.expand_path("../../../../data/destinations.sql", __dir__)
+          db.execute_batch(File.read(destinations_schema))
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

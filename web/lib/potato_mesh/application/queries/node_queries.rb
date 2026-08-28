@@ -318,6 +318,35 @@ module PotatoMesh
 
       # Per-protocol scopes counted alongside the unfiltered +total+, paired with
       # the short column-alias prefix used in the generated SQL.
+      # Fetch the destinations a node has announced on (SPEC RE-A6).
+      #
+      # A Reticulum identity announces on several destinations -- one per aspect
+      # -- and each is its own +nodes+ row, so this table is what lets a reader
+      # group those rows back into one peer via +identity_hash+.
+      #
+      # @param limit [Integer] maximum rows to return.
+      # @param node_id [String, nil] restrict to one node's destinations.
+      # @param db [SQLite3::Database, nil] optional open handle to reuse.
+      # @return [Array<Hash>] destination rows, most recently heard first.
+      def query_destinations(limit, node_id: nil, db: nil)
+        handle = db || open_database(readonly: true)
+        handle.results_as_hash = true
+        clauses = []
+        params = []
+        if node_id
+          clauses << "node_id = ?"
+          params << node_id
+        end
+        sql = +"SELECT id, node_id, identity_hash, name, aspect, role, interface, " \
+               "first_heard, last_heard, protocol FROM destinations"
+        sql << " WHERE #{clauses.join(" AND ")}" if clauses.any?
+        sql << " ORDER BY last_heard DESC LIMIT ?"
+        params << limit
+        with_busy_retry { handle.execute(sql, params) }
+      ensure
+        handle&.close unless db
+      end
+
       STATS_PROTOCOL_SCOPES = [["meshcore", "mc"], ["meshtastic", "mt"], ["reticulum", "rt"]].freeze
 
       # Return exact activity counts for /api/stats as a scope → metric → window

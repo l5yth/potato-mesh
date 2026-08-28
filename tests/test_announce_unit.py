@@ -605,3 +605,37 @@ class TestMaybeRunAnnouncements:
         assert result == 42.0
         assert ran == []
         assert f"blocked_by={expected_gate!r}" in capsys.readouterr().out
+
+
+def test_policy_is_named_only_when_it_blocks_a_due_announcement(monkeypatch):
+    """The suppression line fires on a real attempt, not on every loop (RE-A8).
+
+    An announcement is due at most once per 24 h, so checking the policy before
+    the due check logged one line a minute for something that was never going
+    to be sent. The startup "Transmit policy resolved" line already carries the
+    diagnosis this message was added for.
+    """
+    logged = []
+    monkeypatch.setattr(
+        announce.config,
+        "_debug_log",
+        lambda msg, **kw: (
+            logged.append(msg) if kw.get("context") == "announce.tx" else None
+        ),
+    )
+    monkeypatch.setattr(announce.tx_policy, "announcements_permitted", lambda: False)
+
+    # Not due yet: the gate is closed, but nothing was going to be sent.
+    monkeypatch.setattr(announce, "announce_due", lambda **_kw: False)
+    announce.maybe_run_announcements(
+        object(), object(), start_monotonic=0.0, last_announce=None, now=60.0
+    )
+    assert logged == []
+
+    # Due now: the gate is what stopped it, so name it.
+    monkeypatch.setattr(announce, "announce_due", lambda **_kw: True)
+    announce.maybe_run_announcements(
+        object(), object(), start_monotonic=0.0, last_announce=None, now=90_000.0
+    )
+    assert len(logged) == 1
+    assert "suppressed by transmit policy" in logged[0]

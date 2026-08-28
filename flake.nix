@@ -275,6 +275,60 @@
               description = "Group to run the service as";
             };
 
+            announcement = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Announcement banner text rendered above the header on every page";
+            };
+
+            ogImageUrl = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Absolute http(s) URL for the social preview image, replacing the generated /og-image.png";
+            };
+
+            pagesDir = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Directory of static custom-content pages served at /pages/:slug";
+            };
+
+            promReportIds = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Comma-separated node ids exported as per-node Prometheus gauges";
+            };
+
+            events = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Serve the live-update SSE stream at /api/events; when false clients poll instead";
+            };
+
+            meshtasticPreset = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Meshtastic radio preset for the join strip; overrides the deprecated channel option";
+            };
+
+            meshtasticFreq = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Meshtastic frequency for the join strip; overrides the deprecated frequency option";
+            };
+
+            meshcorePreset = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Meshcore radio preset; the join strip hides the Meshcore line until both Meshcore values are set";
+            };
+
+            meshcoreFreq = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Meshcore frequency; the join strip hides the Meshcore line until both Meshcore values are set";
+            };
+
             # Ingestor options
             ingestor = {
               enable = lib.mkEnableOption "PotatoMesh Python ingestor";
@@ -289,6 +343,90 @@
                 type = lib.types.str;
                 default = "/dev/ttyACM0";
                 description = "Connection target: serial port, IP:port for TCP, or Bluetooth address for BLE";
+              };
+
+              protocol = lib.mkOption {
+                type = lib.types.enum [ "meshtastic" "meshcore" "reticulum" ];
+                default = "meshtastic";
+                description = "Mesh protocol the ingestor reads";
+              };
+
+              transport = lib.mkOption {
+                type = lib.types.enum [ "api" "udp" ];
+                default = "api";
+                description = "Meshtastic transport: api (serial/TCP/BLE) or udp (passive LAN multicast)";
+              };
+
+              nodeId = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Host node id for the ingestor heartbeat; required for transport=udp, optional for protocol=reticulum";
+              };
+
+              channelIndex = lib.mkOption {
+                type = lib.types.int;
+                default = 0;
+                description = "Channel index to ingest from";
+              };
+
+              energySaving = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Sleep between ingestion cycles instead of holding the connection open";
+              };
+
+              reticulumConfigDir = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "RNS config directory for protocol=reticulum; defaults to ~/.reticulum. Point it at the directory rnsd uses so interface filtering resolves names";
+              };
+
+              reticulumInterfaces = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Comma-separated case-insensitive substrings of RNS interface names to ingest from; null ingests from every interface";
+              };
+
+              primaryChannelOnly = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Ingest only channel 0. Unconditional when transport=udp; this option affects the api transport only";
+              };
+
+              primaryChannelKey = lib.mkOption {
+                type = lib.types.str;
+                default = "AQ==";
+                description = "Base64 primary-channel PSK (Meshtastic default shown)";
+              };
+
+              primaryChannelName = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Name of channel 0, as shown by `meshtastic --info`. Required when transport=udp with primaryChannelOnly: it resolves the channel hash, and without it UDP mode drops all traffic (fail closed)";
+              };
+
+              meshUdpGroup = lib.mkOption {
+                type = lib.types.str;
+                default = "224.0.0.69";
+                description = "Multicast group for Meshtastic \"Mesh via UDP\"";
+              };
+
+              meshUdpPort = lib.mkOption {
+                type = lib.types.port;
+                default = 4403;
+                description = "Multicast port for Meshtastic \"Mesh via UDP\"";
+              };
+
+              meshcoreSelfTelemetrySeconds = lib.mkOption {
+                type = lib.types.int;
+                default = 3600;
+                description = "Seconds between Meshcore host self-telemetry reads over the companion link (no airtime); 0 disables";
+              };
+
+              meshcoreTelemetryPollSeconds = lib.mkOption {
+                type = lib.types.int;
+                default = 300;
+                description = "Seconds between Meshcore contact telemetry polls; requires txEnabled since polling transmits. 0 disables on-air polling";
               };
 
               txEnabled = lib.mkOption {
@@ -346,6 +484,23 @@
                 PRIVATE = if cfg.private then "1" else "0";
                 XDG_DATA_HOME = cfg.dataDir;
                 XDG_CONFIG_HOME = "${cfg.dataDir}/config";
+                EVENTS = if cfg.events then "1" else "0";
+              } // lib.optionalAttrs (cfg.announcement != null) {
+                ANNOUNCEMENT = cfg.announcement;
+              } // lib.optionalAttrs (cfg.ogImageUrl != null) {
+                OG_IMAGE_URL = cfg.ogImageUrl;
+              } // lib.optionalAttrs (cfg.pagesDir != null) {
+                PAGES_DIR = cfg.pagesDir;
+              } // lib.optionalAttrs (cfg.promReportIds != null) {
+                PROM_REPORT_IDS = cfg.promReportIds;
+              } // lib.optionalAttrs (cfg.meshtasticPreset != null) {
+                MESHTASTIC_PRESET = cfg.meshtasticPreset;
+              } // lib.optionalAttrs (cfg.meshtasticFreq != null) {
+                MESHTASTIC_FREQ = cfg.meshtasticFreq;
+              } // lib.optionalAttrs (cfg.meshcorePreset != null) {
+                MESHCORE_PRESET = cfg.meshcorePreset;
+              } // lib.optionalAttrs (cfg.meshcoreFreq != null) {
+                MESHCORE_FREQ = cfg.meshcoreFreq;
               } // lib.optionalAttrs (cfg.instanceDomain != null) {
                 INSTANCE_DOMAIN = cfg.instanceDomain;
               } // lib.optionalAttrs (cfg.mapZoom != null) {
@@ -384,6 +539,24 @@
                 XDG_DATA_HOME = cfg.dataDir;
                 TX_ENABLED = if cfg.ingestor.txEnabled then "1" else "0";
                 TX_ANNOUNCE = if cfg.ingestor.txAnnounce then "1" else "0";
+                PROTOCOL = cfg.ingestor.protocol;
+                TRANSPORT = cfg.ingestor.transport;
+                CHANNEL_INDEX = toString cfg.ingestor.channelIndex;
+                ENERGY_SAVING = if cfg.ingestor.energySaving then "1" else "0";
+                MESHCORE_SELF_TELEMETRY_SECONDS = toString cfg.ingestor.meshcoreSelfTelemetrySeconds;
+                MESHCORE_TELEMETRY_POLL_SECONDS = toString cfg.ingestor.meshcoreTelemetryPollSeconds;
+                PRIMARY_CHANNEL_ONLY = if cfg.ingestor.primaryChannelOnly then "1" else "0";
+                PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;
+                MESH_UDP_GROUP = cfg.ingestor.meshUdpGroup;
+                MESH_UDP_PORT = toString cfg.ingestor.meshUdpPort;
+              } // lib.optionalAttrs (cfg.ingestor.primaryChannelName != null) {
+                PRIMARY_CHANNEL_NAME = cfg.ingestor.primaryChannelName;
+              } // lib.optionalAttrs (cfg.ingestor.nodeId != null) {
+                INGESTOR_NODE_ID = cfg.ingestor.nodeId;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumConfigDir != null) {
+                RETICULUM_CONFIG_DIR = cfg.ingestor.reticulumConfigDir;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumInterfaces != null) {
+                RETICULUM_INTERFACES = cfg.ingestor.reticulumInterfaces;
               } // lib.optionalAttrs (cfg.allowedChannels != null) {
                 ALLOWED_CHANNELS = cfg.allowedChannels;
               } // lib.optionalAttrs (cfg.hiddenChannels != null) {

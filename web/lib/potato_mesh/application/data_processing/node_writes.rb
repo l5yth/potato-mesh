@@ -238,30 +238,59 @@ module PotatoMesh
         true
       end
 
-      # Normalise an inbound +destHash+ payload value into a stored JSON array.
+      # Record the destination an announce arrived for (SPEC RE-A5).
       #
-      # Only the *incoming* value is handled here; merging it with what is
-      # already stored happens in SQL, inside the upsert's conflict clause, so
-      # the union is atomic. Doing it in Ruby would mean a read-modify-write
-      # spanning two statements, and two ingestors upserting the same node
-      # concurrently could then lose one side's hashes — exactly the guarantee
-      # this column exists to provide (SPEC RN1).
+      # A Reticulum identity announces on several destinations -- one per aspect
+      # -- each with its own display name and implied role, so each is its own
+      # +nodes+ row *and* its own +destinations+ row. This table is what lets a
+      # reader group those rows back into one peer via +identity_hash+.
       #
-      # Values are lowercased, de-duplicated, and sorted so the stored JSON is
-      # stable; an unstable array would make every upsert look like a change to
-      # downstream diffing.
+      # Supersedes the +nodes.dest_hash+ JSON column: that modelled the same
+      # relationship from the node side and could not carry a per-destination
+      # name, aspect or role.
       #
-      # @param incoming [Object] +destHash+ from the payload: an array, a bare
-      #   string, or nil.
-      # @return [String, nil] JSON array to merge, or nil when the record names
-      #   no hashes (the conflict clause then preserves what is stored).
-      def normalize_dest_hashes(incoming)
-        values = incoming.is_a?(Array) ? incoming : [incoming]
-        normalized = values
-          .filter_map { |value| string_or_nil(value)&.downcase }
-          .uniq
-          .sort
-        normalized.empty? ? nil : JSON.generate(normalized)
+      # @param db [SQLite3::Database] open database handle.
+      # @param node_id [String] canonical id of the row this destination keys.
+      # @param destination [Object] +destination+ block from the payload.
+      # @param identity_hash [String, nil] identity the destination belongs to.
+      # @param name [String, nil] display name announced on this destination.
+      # @param interface [String, nil] interface the announce was heard on.
+      # @param heard [Integer] unix seconds of receipt.
+      # @return [void]
+      def upsert_destination(db, node_id, destination, identity_hash:, name:, interface:, heard:)
+        return unless destination.is_a?(Hash)
+
+        id = string_or_nil(destination["id"])&.downcase
+        return unless id
+
+        params = [
+          id,
+          node_id,
+          identity_hash,
+          name,
+          string_or_nil(destination["aspect"]),
+          string_or_nil(destination["role"]),
+          interface,
+          heard,
+          heard,
+        ]
+        with_busy_retry do
+          db.execute(<<~SQL, params)
+            INSERT INTO destinations(id, node_id, identity_hash, name, aspect, role, interface,
+                                     first_heard, last_heard)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              node_id=excluded.node_id,
+              identity_hash=COALESCE(excluded.identity_hash, destinations.identity_hash),
+              name=COALESCE(excluded.name, destinations.name),
+              aspect=COALESCE(excluded.aspect, destinations.aspect),
+              role=COALESCE(excluded.role, destinations.role),
+              interface=COALESCE(excluded.interface, destinations.interface),
+              -- first_heard is the earliest sighting; last_heard never regresses.
+              first_heard=MIN(COALESCE(destinations.first_heard, excluded.first_heard), excluded.first_heard),
+              last_heard=MAX(COALESCE(destinations.last_heard, 0), excluded.last_heard)
+          SQL
+        end
       end
 
       # Insert or update a node row from an inbound NodeInfo-style payload.
@@ -390,7 +419,7 @@ module PotatoMesh
             "COALESCE(excluded.long_name, nodes.long_name)"
           end
 
-        dest_hashes = normalize_dest_hashes(pick_alias(n, "destHash", "dest_hash"))
+        identity_hash = string_or_nil(pick_alias(n, "identityHash", "identity_hash"))&.downcase
 
         row = [
           node_id,
@@ -427,14 +456,14 @@ module PotatoMesh
           modem_preset,
           protocol,
           synthetic,
-          dest_hashes,
+          identity_hash,
         ]
         with_busy_retry do
           db.transaction do
             db.execute(<<~SQL, row)
               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                 hops_away,snr,rssi,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic,dest_hash)
+                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic,identity_hash)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(node_id) DO UPDATE SET
                 num=COALESCE(excluded.num, nodes.num),
@@ -444,6 +473,7 @@ module PotatoMesh
                 hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
                 role=COALESCE(excluded.role, nodes.role),
                 public_key=COALESCE(excluded.public_key, nodes.public_key),
+                identity_hash=COALESCE(excluded.identity_hash, nodes.identity_hash),
                 is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
                 rssi=COALESCE(excluded.rssi, nodes.rssi),
@@ -492,35 +522,19 @@ module PotatoMesh
               SQL
             end
 
-            # Destination-hash union (SPEC RN1).  Deliberately a separate,
-            # unguarded statement rather than a column in the upsert above, for
-            # the same reason as the keyed-evidence stamp below: that
-            # statement's freshness guard skips any record older than the
-            # stored +last_heard+, so a second ingestor posting an older
-            # announce that carries a hash the first never heard would have its
-            # whole update — and therefore that hash — dropped. The union is
-            # what makes the column correct across ingestors, so it must not
-            # depend on which of them happened to hear the newest announce.
-            # Guarded columns are untouched here, so a stale record still
-            # cannot regress +last_heard+.
-            # Synthetic chat placeholders never touch a real row's data — the
-            # upsert's own guard says so, and this statement sits outside it,
-            # so it repeats the condition rather than inheriting it.
-            if dest_hashes && synthetic.zero?
-              db.execute(<<~SQL, [dest_hashes, node_id])
-                UPDATE nodes SET dest_hash = CASE
-                  WHEN dest_hash IS NULL THEN ?1
-                  WHEN NOT json_valid(dest_hash) THEN ?1
-                  WHEN json_type(dest_hash) <> 'array' THEN ?1
-                  ELSE (SELECT json_group_array(v) FROM (
-                          SELECT DISTINCT value AS v FROM (
-                            SELECT value FROM json_each(dest_hash)
-                            UNION ALL
-                            SELECT value FROM json_each(?1))
-                          ORDER BY v))
-                END
-                WHERE node_id = ?2
-              SQL
+            # Destination row (SPEC RE-A5).  Deliberately outside the upsert's
+            # freshness guard, like the keyed-evidence stamp below: a second
+            # ingestor posting an older announce still carries a destination the
+            # first never heard, and dropping it would lose the relationship the
+            # table exists to record.
+            if synthetic.zero?
+              upsert_destination(
+                db, node_id, n["destination"],
+                identity_hash: identity_hash,
+                name: long_name,
+                interface: string_or_nil(n["interface"]),
+                heard: lh,
+              )
             end
 
             # Keyed-evidence stamp (SPEC MR1).  Deliberately a separate,
