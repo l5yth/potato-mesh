@@ -2972,14 +2972,24 @@ button.legend-item[aria-pressed="true"] {
    row. The hit area is restored on coarse pointers below, where it matters. */
 .node-extra-toggle,
 .identity-disclosure {
+  /* Explicitly square and flex-centred. The global
+     `button:not(.chat-tab):not(.sort-button)` rule applies `padding: 6px 10px`,
+     so resetting only the height left a stretched box with the glyph off its
+     centre line. A fixed box plus flex centring is independent of the glyph's
+     own metrics, which differ between `+`, `−`, `▸` and `▾`. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
   min-width: 0;
   min-height: 0;
-  height: 16px;
-  line-height: 16px;
-  padding: 0 4px;
+  padding: 0;
   border-radius: 4px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 12px;
+  line-height: 1;
   vertical-align: middle;
 }
 
