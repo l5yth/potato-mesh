@@ -184,6 +184,35 @@ RSpec.describe "Reticulum protocol support" do
     end
   end
 
+  describe "placeholder names agree with the ingestor (SPEC RA10)" do
+    # The ingestor builds "Reticulum <first four hex, upper>"; this guard is
+    # what stops such a name overwriting a real one. If the two rules drift the
+    # guard silently fails open, so assert the exact strings the ingestor emits
+    # (tests/test_reticulum_unit.py holds the mirror of this list).
+    {
+      "!27716218" => "Reticulum 2771",
+      "!0001beef" => "Reticulum 0001",
+      "!c0ffee00" => "Reticulum C0FF",
+      "!deadbeef" => "Reticulum DEAD",
+      "!fee521eb" => "Reticulum FEE5",
+    }.each do |node_id, placeholder|
+      it "recognises #{placeholder} as generic for #{node_id}" do
+        expect(generic_fallback_name?(placeholder, node_id, "reticulum")).to be(true)
+      end
+    end
+
+    it "does not treat the tail-derived form as generic any more" do
+      # The old rule named !27716218 "Reticulum 6218" while its badge read 2771.
+      expect(generic_fallback_name?("Reticulum 6218", "!27716218", "reticulum")).to be(false)
+    end
+
+    it "leaves meshtastic on the tail-derived short id" do
+      # A meshtastic node_id is a node num whose low bits are the conventional
+      # short id, so only reticulum moves to the head of the hash.
+      expect(generic_fallback_name?("Meshtastic C3D4", "!a1b2c3d4", "meshtastic")).to be(true)
+    end
+  end
+
   describe "headline aspect preference (SPEC RE10)" do
     # Post two aspects of ONE identity, in a given order, and read back the
     # node's headline fields. Both land on the same node row (SPEC RE7).
@@ -255,7 +284,7 @@ RSpec.describe "Reticulum protocol support" do
         { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
           role: "NODE", name: "Department of Decentralization" },
         { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
-          role: "NODE", name: "Reticulum C3D4" },
+          role: "NODE", name: "Reticulum A1B2" },
       )
       expect(row["long_name"]).to eq("Department of Decentralization")
       with_db(readonly: true) do |db|
@@ -270,15 +299,15 @@ RSpec.describe "Reticulum protocol support" do
       # The generic name is wanted where there is no real one to prefer.
       post_two_aspects(
         { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
-          role: "NODE", name: "Reticulum C3D4" },
+          role: "NODE", name: "Reticulum A1B2" },
         { aspect: "lxmf.propagation", dest: RETICULUM_DEST_HASH2,
-          role: "PROPAGATION", name: "Reticulum C3D4" },
+          role: "PROPAGATION", name: "Reticulum A1B2" },
       )
       with_db(readonly: true) do |db|
         names = db.execute(
           "SELECT name FROM destinations ORDER BY aspect",
         ).map { |r| r["name"] }
-        expect(names).to eq(["Reticulum C3D4", "Reticulum C3D4"])
+        expect(names).to eq(["Reticulum A1B2", "Reticulum A1B2"])
       end
     end
 

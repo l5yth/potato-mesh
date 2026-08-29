@@ -4443,13 +4443,13 @@ export function initializeApp(config) {
       const resolvedPreset = formatPresetDisplay(modemMetadata.modemPreset, modemMetadata.loraFreq);
       const modemPresetDisplay = resolvedPreset ? escapeHtml(resolvedPreset) : '';
       const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
-      // A grouped identity trades its tile glyph for the disclosure control,
-      // keeping the tile's violet inset via CSS so it still reads as Reticulum
-      // before it opens (SPEC RA1). A single-destination identity keeps the
-      // glyph and gets no caret.
-      const protocolIconCell = planned.isGroup
+      // Every row keeps its protocol tile: swapping the glyph for the caret
+      // cost Reticulum rows their only protocol marker in the table. The
+      // disclosure moves to the trailing cell instead, beside the `+`.
+      const protocolIconCell = protocolIconPrefixHtml(n.protocol);
+      const disclosureHtml = planned.isGroup
         ? disclosureCellHtml(planned.isExpanded, n.node_id)
-        : protocolIconPrefixHtml(n.protocol);
+        : '';
       // Role cell carries one chip per aspect for a group; everything else
       // keeps the plain role text it always had (Invariant IV).
       const roleCellHtml = planned.isGroup
@@ -4480,7 +4480,7 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--longitude num">${formatTableCell(longitudeDisplay)}</td>
         <td class="nodes-col nodes-col--altitude num">${formatTableCell(fmtAlt(n.altitude, "m"))}</td>
         ${timestampCells.lastPosition}
-        <td class="nodes-col nodes-col--more"><button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
+        <td class="nodes-col nodes-col--more">${disclosureHtml}<button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
 
       enhanceCoordinateCell({
         cell: tr.querySelector('.nodes-col--latitude'),

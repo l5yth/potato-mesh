@@ -3665,7 +3665,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(row["role"]).to eq("PEER")
         expect(row["protocol"]).to eq("reticulum")
-        expect(row["long_name"]).to eq("Reticulum 9999")
+        # Head of the hash, not the tail (SPEC RA10): a Reticulum id is the
+        # start of a 16-byte hash, and the badge shows the same four digits.
+        expect(row["long_name"]).to eq("Reticulum CAFE")
       end
     end
 

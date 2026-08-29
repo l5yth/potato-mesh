@@ -60,6 +60,10 @@ export function renderShortHtml(short, role, longName, nodeData = null) {
       shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
       longName: nodeData.long_name ?? longName ?? '',
       role: roleValue,
+      // Carry the protocol: the short-info overlay re-renders this badge from
+      // `data-node-info` alone, so without it a Reticulum or Meshcore badge was
+      // repainted in the Meshtastic palette (SPEC RA9/RD5).
+      protocol: nodeData.protocol ?? null,
       hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
       telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
     };

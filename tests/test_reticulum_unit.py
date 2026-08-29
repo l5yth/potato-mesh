@@ -460,14 +460,18 @@ def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
     attempt at this fix passed its own test while still clobbering names.
     """
     for node_id, expected in (
-        ("!beef0001", "Reticulum 0001"),  # digits only - matches even lower-cased
-        ("!c0ffee00", "Reticulum EE00"),
-        ("!beefcafe", "Reticulum CAFE"),
-        ("!deadbeef", "Reticulum BEEF"),
-        ("!0000000a", "Reticulum 000A"),
+        ("!0001beef", "Reticulum 0001"),  # digits only - matches even lower-cased
+        ("!c0ffee00", "Reticulum C0FF"),
+        ("!beefcafe", "Reticulum BEEF"),
+        ("!deadbeef", "Reticulum DEAD"),
+        ("!0000000a", "Reticulum 0000"),
     ):
         # The placeholder names the row, and the row is keyed on the
-        # identity — so walk identity hashes, not destinations.
+        # identity — so walk identity hashes, not destinations. The expected
+        # strings below are the *web tier's* rule (placeholder_short_id in
+        # identity.rb): first four hex, upper-cased, for reticulum. If the two
+        # sides drift, the web upsert stops recognising these as placeholders
+        # and they start overwriting real display names.
         idn = _FakeIdentity(bytes.fromhex(node_id[1:] + "11" * 12))
         node = _announce_to_node_dict(_DEST_HASH, None, identity=idn, last_heard=1)
         assert node["user"]["longName"] == expected, node_id
@@ -742,7 +746,9 @@ def test_host_destination_falls_back_to_the_placeholder_without_a_name(monkeypat
     """
     _local_stack(monkeypatch, {_FIELD_LXMF: _FIELD_PRIMARY})
     record = ReticulumProvider().host_destination_nodes()[0]
-    assert record["user"]["longName"] == "Reticulum 6218"
+    # Named from the *destination* hash, not the identity's: the field showed
+    # "Reticulum 6218" (the node) on destination !fee521eb.
+    assert record["user"]["longName"] == "Reticulum 4CF9"
     # No interface in the path entry -> the key is omitted, not set to None.
     assert "interface" not in record
 
@@ -888,7 +894,7 @@ def test_announce_to_node_dict_long_name_falls_back_to_the_node_placeholder():
     node = _announce_to_node_dict(
         _DEST_HASH, b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
     )
-    assert node["user"]["longName"] == "Reticulum 0001"
+    assert node["user"]["longName"] == "Reticulum BEEF"
 
 
 def test_announce_to_node_dict_omits_hops_when_unknown():
@@ -1397,7 +1403,7 @@ def test_node_snapshot_items_returns_heard_announces(monkeypatch):
     assert as_dict["!beef0001"]["user"]["longName"] == "Alice"
     # Name-less announce falls back to a placeholder built from its own node
     # id, so it can never carry another destination's hex.
-    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum EE00"
+    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum C0FF"
 
 
 def test_update_node_ignores_a_falsy_node_id():
@@ -1826,6 +1832,55 @@ def test_aspect_destination_hex_rejects_a_malformed_aspect(monkeypatch):
 def test_host_destination_nodes_none_without_a_usable_identity():
     """An unusable identity hash yields no host records at all."""
     assert _mod._host_destination_nodes("ab") == []
+
+
+def test_transport_enabled_asks_the_shared_instance(monkeypatch):
+    """Field regression: a client of a transport-enabled rnsd read False.
+
+    ``Reticulum.transport_enabled()`` answers "does *this process* route". On
+    connecting to a shared instance RNS forces the client's flag to False
+    whatever the config says, so an ingestor attached to rnsd never saw
+    ``enable_transport = Yes`` and its host never grew a TRANSPORT destination.
+    The stack's answer comes over RPC instead (SPEC RE9).
+    """
+    import RNS
+
+    monkeypatch.setattr(RNS.Reticulum, "transport_enabled", staticmethod(lambda: False))
+
+    # rnsd is routing: its interface stats carry a transport_id.
+    routing = types.SimpleNamespace(
+        get_interface_stats=lambda: {"transport_id": b"\x01" * 16}
+    )
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: routing))
+    assert _mod._transport_enabled() is True
+
+    # rnsd is not routing: no transport_id in the stats it returns.
+    quiet = types.SimpleNamespace(get_interface_stats=lambda: {"rxb": 0})
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: quiet))
+    assert _mod._transport_enabled() is False
+
+    # A stack that cannot be asked at all is not routing as far as we know.
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: None))
+    assert _mod._transport_enabled() is False
+
+    boom = types.SimpleNamespace(
+        get_interface_stats=lambda: (_ for _ in ()).throw(OSError("rpc down"))
+    )
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(lambda: boom))
+    assert _mod._transport_enabled() is False
+
+
+def test_transport_enabled_short_circuits_on_a_standalone_instance(monkeypatch):
+    """A standalone transport node answers for itself, with no RPC."""
+    import RNS
+
+    monkeypatch.setattr(RNS.Reticulum, "transport_enabled", staticmethod(lambda: True))
+
+    def _never():
+        raise AssertionError("must not consult the instance when we route ourselves")
+
+    monkeypatch.setattr(RNS.Reticulum, "get_instance", staticmethod(_never))
+    assert _mod._transport_enabled() is True
 
 
 def test_transport_enabled_is_false_when_the_stack_cannot_answer(monkeypatch):

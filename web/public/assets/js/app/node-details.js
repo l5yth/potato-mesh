@@ -15,6 +15,7 @@
  */
 
 import { extractModemMetadata } from './node-modem-metadata.js';
+import { defaultRoleFor } from './role-helpers.js';
 import { normalizeNodeSnapshot } from './node-snapshot-normalizer.js';
 import {
   SNAPSHOT_WINDOW,
@@ -447,7 +448,7 @@ export async function refreshNodeInformation(reference, options = {}) {
   }
 
   if (!node.role) {
-    node.role = 'CLIENT';
+    node.role = defaultRoleFor(node.protocol);
   }
 
   node.rawSources = {

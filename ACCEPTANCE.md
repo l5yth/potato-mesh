@@ -6130,6 +6130,70 @@ Reported from the field: a Meshcore node with no role read as a Meshtastic
 had the same gap — a Meshcore branch but no Reticulum one, so a Reticulum
 placeholder was written `CLIENT_HIDDEN`.
 
+### RA-A9 - Generic names use the head of the hash, and name their own row - RA10
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "fallback_name_matches or falls_back_to_the_placeholder" )
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "placeholder names agree with the ingestor" )
+```
+**Expected:** both pass. A Reticulum placeholder is `Reticulum <first four hex,
+upper-cased>` — the head of the hash, the same four digits the badge shows, so
+`!27716218` badges `2771` and reads `Reticulum 2771`. It previously took the
+tail and read `Reticulum 6218`, giving one row two names. Meshtastic keeps the
+tail: its `node_id` is a node num whose **low** bits are the conventional short
+id.
+
+A destination with no announced name is named from its **own** hash, not its
+identity's: destination `!fee521eb` reads `Reticulum FEE5`, where it previously
+borrowed `Reticulum 6218` from the node and named a different thing entirely.
+
+The two suites pin the **same fixture strings** on purpose. The web tier's
+`placeholder_short_id` is what recognises a placeholder so a real announced name
+is never overwritten by one; if the ingestor's rule drifts from it, that guard
+fails **open** and silently, which is why neither side may be changed alone.
+
+### RA-A10 - Row controls do not set row height; the caret sits with the + - RA11
+```bash
+git grep -n "min-height: 0" -- web/public/assets/styles/base.css
+git grep -n "identity-disclosure" -- web/public/assets/js/app/main.js
+git grep -c "background: #7b61ff" -- web/public/assets/styles/base.css
+```
+**Expected:** the first two hit; the third returns `0` for the disclosure rule.
+Both row controls sit inside the row's line box, so a Reticulum parent is the
+same height as every other row (a 24 px `min-height` made it ~33 px against
+~24 px); the 44 px touch target is restored on coarse pointers by a transparent
+`::after`, the pattern `.short-name` already uses.
+
+The caret renders in the **trailing** cell beside `+`, not in the protocol cell,
+which **restores the protocol tile** to Reticulum rows — swapping the glyph for
+the caret cost them their only protocol marker. The trailing column is therefore
+always present (a table column cannot be shown per row) while the `+` keeps its
+own responsive rule.
+
+The caret carries **no violet fill**: RD5 pins `#7b61ff` as failing the UX2
+4.5:1 floor behind text (4.39:1 at its best contrast), so a control that renders
+text on it cannot clear the floor. With the tile restored it does not need the
+colour. **Amends RA1**, whose "protocol cell becomes the disclosure" is
+superseded.
+
+### RA-A11 - The transport gate asks the stack, not the process - RA12
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "transport_enabled" )
+```
+**Expected:** pass. `RNS.Reticulum.transport_enabled()` answers "does **this
+process** route", and on connecting to a shared instance RNS *forces* the
+client's flag to `False` regardless of `~/.reticulum/config`. An ingestor
+attached to `rnsd` therefore read `False` with `enable_transport = Yes` set, and
+the operator's own host never grew its `TRANSPORT` destination — reported from
+the field.
+
+The stack's answer comes from `get_interface_stats`, which RPCs to the shared
+instance and reports a `transport_id` **only** when that instance is routing. A
+standalone transport node short-circuits on its own flag without an RPC. Four
+cases are covered: routing `rnsd`, non-routing `rnsd`, no instance, failing RPC.
+
+Any "is the stack doing X" question asked from a client process has this shape —
+`get_next_hop_if_name` (RE3) was the same trap with a different accessor.
+
 ### RA-R1 - Regression: prior acceptance still holds
 ```bash
 ( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )

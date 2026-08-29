@@ -2948,24 +2948,58 @@ button.legend-item[aria-pressed="true"] {
 /* Mobile disclosure column (UX9, D-007): hidden while every column fits,
    revealed as soon as the first responsive tier hides data. */
 .nodes-col--more {
-  width: 32px;
-  min-width: 32px;
+  width: 42px;
+  min-width: 42px;
   text-align: center;
-  display: none;
+  /* Always present: it now also carries the identity-group caret (SPEC RA1),
+     which must stay reachable at every width. A table column cannot be shown
+     per row, so the column is constant and the `+` keeps its own rule below. */
+  display: table-cell;
   padding-inline: 2px;
+  white-space: nowrap;
 }
 
-@media (max-width: 1679px) {
-  .nodes-col--more {
-    display: table-cell;
+/* The `+` still appears only once a responsive tier has hidden something —
+   unchanged behaviour, moved from the column to the control. */
+@media (min-width: 1680px) {
+  .node-extra-toggle {
+    display: none;
   }
 }
 
-.node-extra-toggle {
-  min-width: 24px;
-  min-height: 24px;
-  border-radius: 6px;
+/* Row controls sit inside the row's own line box: a 24 px min-height pushed a
+   ~24 px row to ~33 px, so a Reticulum parent stood taller than every other
+   row. The hit area is restored on coarse pointers below, where it matters. */
+.node-extra-toggle,
+.identity-disclosure {
+  min-width: 0;
+  min-height: 0;
+  height: 16px;
+  line-height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+@media (pointer: coarse) {
+  .node-extra-toggle,
+  .identity-disclosure {
+    position: relative;
+  }
+
+  /* Transparent 44 px target centred on the control, without affecting layout. */
+  .node-extra-toggle::after,
+  .identity-disclosure::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .node-extra > td {
@@ -3225,17 +3259,14 @@ button.legend-item[aria-pressed="true"] {
   appearance: none;
   border: 0;
   cursor: pointer;
-  width: 100%;
-  padding: 0;
   font: inherit;
-  line-height: 1;
-  /* #111418, the value getContrastTextColor('#7b61ff') returns: 4.39:1 against
-     the tile. White measured 4.20:1 -- below the UX2 floor and worse than the
-     4.39 RD-A5 already pins as failing, so the dark text is the better of the
-     two. The tile violet is a background here, not a badge fill, and RD5 keeps
-     it off badges for exactly this reason. */
-  color: #111418;
-  background: #7b61ff;
+  margin-right: 2px;
+  /* No violet fill. RD5 pins #7b61ff as failing the UX2 4.5:1 floor as a text
+     background (its best case is 4.39:1), and the row now keeps its protocol
+     tile, so the caret no longer needs to carry the protocol's colour. Plain
+     foreground-on-transparent clears the floor by the page's own contrast. */
+  color: var(--fg);
+  background: transparent;
   border-radius: 3px;
 }
 
@@ -3268,6 +3299,14 @@ button.legend-item[aria-pressed="true"] {
    the parent's hover affordance since they are not themselves navigable. */
 #nodes tbody tr.nodes-subrow > td {
   background: var(--card);
+}
+
+/* The row-hover rule does not exclude sub-rows and outranks the block above on
+   specificity, so a sub-row offered a pointer and a hover tint while the click
+   handler ignores it -- an affordance for something that does nothing. */
+#nodes tbody tr.nodes-subrow:hover > td {
+  background: var(--card);
+  cursor: default;
 }
 
 .nodes-subrow__spacer {

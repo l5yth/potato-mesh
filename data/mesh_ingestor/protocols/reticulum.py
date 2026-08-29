@@ -208,6 +208,26 @@ def _announce_node_id(identity: object, dest_hash: object) -> str | None:
     return _reticulum_node_id(dest_hash)
 
 
+def _reticulum_placeholder_name(node_id: str | None) -> str:
+    """Generic display name for a Reticulum row that announced none.
+
+    Built from the **first** four hex digits — the head of the hash, which is
+    what the badge shows and what identifies the row to a reader. The tail was
+    used previously, so ``!27716218`` badged ``2771`` while its name read
+    ``Reticulum 6218``.
+
+    Must stay in lockstep with the web tier's ``placeholder_short_id``: that is
+    what recognises a placeholder so a real name is never overwritten by one.
+
+    Parameters:
+        node_id: Canonical ``!xxxxxxxx`` id of the row being named.
+
+    Returns:
+        ``Reticulum XXXX``.
+    """
+    return f"Reticulum {_reticulum_short_name(node_id).upper()}"
+
+
 def _reticulum_short_name(node_id: str | None) -> str:
     """Derive a four-character short name from a canonical node ID.
 
@@ -472,7 +492,7 @@ def _announce_to_node_dict(
     display_name = _decode_display_name(app_data)
     user: dict = {
         "longName": (
-            display_name if display_name else f"Reticulum {node_id[-4:].upper()}"
+            display_name if display_name else _reticulum_placeholder_name(node_id)
         ),
         "shortName": _reticulum_short_name(node_id),
         "publicKey": _identity_public_key_hex(identity),
@@ -817,7 +837,13 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
         return []
     local = _local_identity_destinations().get(identity_hash, {})
     now = int(time.time())
-    placeholder = f"Reticulum {node_id[-4:].upper()}"
+
+    # A destination's generic name derives from the *destination* hash, not the
+    # identity's: the field showed "Reticulum 6218" (the node) on destination
+    # !fee521eb, which names the wrong thing entirely.
+    def _destination_placeholder(dest_hex: str) -> str:
+        return _reticulum_placeholder_name(_reticulum_node_id(dest_hex))
+
     records: list[dict] = []
     for aspect in _ANNOUNCE_ASPECTS:
         dest_hex = _aspect_destination_hex(identity_hash, aspect)
@@ -837,7 +863,8 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
                 "shortName": _reticulum_short_name(node_id),
                 # A real announced name always wins; the placeholder is only
                 # for a destination the stack has never heard a name for.
-                "longName": _recalled_display_name(dest_hex) or placeholder,
+                "longName": _recalled_display_name(dest_hex)
+                or _destination_placeholder(dest_hex),
                 "role": _ASPECT_ROLES.get(aspect),
             },
         }
@@ -860,7 +887,8 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
                 },
                 "user": {
                     "shortName": _reticulum_short_name(node_id),
-                    "longName": _recalled_display_name(transport) or placeholder,
+                    "longName": _recalled_display_name(transport)
+                    or _destination_placeholder(transport),
                     "role": "TRANSPORT",
                 },
             }
@@ -875,13 +903,32 @@ def _transport_enabled() -> bool:
     but only a transport-enabled one actually relays, so reporting the role
     unconditionally would assert something false (SPEC RE8).
 
+    ``Reticulum.transport_enabled()`` answers "does **this process** route",
+    not "does this stack route": on connecting to a shared instance RNS forces
+    the client's flag to ``False`` regardless of the config file (the
+    ``is_connected_to_shared_instance`` branch of ``Reticulum.__init__``).  An
+    ingestor attached to ``rnsd`` therefore always read ``False`` even with
+    ``enable_transport = Yes`` set.  The stack's own answer comes from
+    ``get_interface_stats``, which RPCs to the shared instance and reports a
+    ``transport_id`` **only** when that instance is routing.
+
     Returns:
-        ``True`` when RNS reports transport enabled.
+        ``True`` when the running stack relays other nodes' traffic.
     """
     try:
-        return bool(RNS.Reticulum.transport_enabled())
+        if RNS.Reticulum.transport_enabled():
+            return True
     except Exception:
         return False
+    # Not this process -- but it may be a client of a transport-enabled one.
+    try:
+        instance = RNS.Reticulum.get_instance()
+        if instance is None:
+            return False
+        stats = instance.get_interface_stats()
+    except Exception:
+        return False
+    return bool(isinstance(stats, dict) and stats.get("transport_id"))
 
 
 class ReticulumProvider:

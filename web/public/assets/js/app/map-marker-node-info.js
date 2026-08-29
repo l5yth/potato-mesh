@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { defaultRoleFor } from './role-helpers.js';
+
 /**
  * Determine whether the provided value behaves like a plain object.
  *
@@ -63,7 +65,11 @@ function normaliseNeighbor(entry) {
   if (!neighborId) return null;
   const neighborShort = toTrimmedString(entry.neighbor_short_name ?? entry.neighborShortName ?? entry.short_name ?? entry.shortName);
   const neighborLong = toTrimmedString(entry.neighbor_long_name ?? entry.neighborLongName ?? entry.long_name ?? entry.longName);
-  const neighborRole = toTrimmedString(entry.neighbor_role ?? entry.neighborRole ?? entry.role) || 'CLIENT';
+  // The neighbour's own protocol when it carries one, else the parent node's:
+  // a Meshcore neighbour must not fall back to a Meshtastic role (SPEC RA9).
+  const neighborProtocol = entry.neighbor_protocol ?? entry.protocol ?? null;
+  const neighborRole = toTrimmedString(entry.neighbor_role ?? entry.neighborRole ?? entry.role)
+    || defaultRoleFor(neighborProtocol);
   const node = {
     node_id: neighborId,
     short_name: neighborShort ?? '',
