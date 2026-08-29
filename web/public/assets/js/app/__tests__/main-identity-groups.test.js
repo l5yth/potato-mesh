@@ -87,6 +87,22 @@ const settle = (ms = 40) => new Promise(r => setTimeout(r, ms));
 const rowFor = (tbody, nodeId) =>
   tbody.childNodes.find(n => n && n.dataset && n.dataset.nodeRow === nodeId);
 
+/**
+ * Invoke an element's recorded click listeners.
+ *
+ * `MockElement` records handlers but implements no `dispatchEvent`, and the
+ * delegated nodes-table listener is attached to the tbody rather than the
+ * document — so the handler is called directly rather than widening the shared
+ * mock for one test.
+ */
+function fireClick(element, target) {
+  const handlers = (element._listeners && element._listeners.get('click')) || [];
+  for (const handler of handlers) {
+    handler({ type: 'click', target, preventDefault() {}, stopPropagation() {} });
+  }
+  return handlers.length;
+}
+
 /** Count occurrences of a class inside a row's serialised markup. */
 const occurrences = (html, needle) => (String(html).match(new RegExp(needle, 'g')) || []).length;
 
@@ -98,6 +114,11 @@ async function renderWith(destinations) {
   const env = createDomEnvironment({ includeBody: true });
   const tbody = env.document.createElement('tbody');
   env.document.querySelector = selector => (selector === '#nodes tbody' ? tbody : null);
+  // The delegated click listener attaches to `#nodes`'s own tbody, so the
+  // element has to exist for the caret handler to be wired at all.
+  const nodesTable = env.document.createElement('table', 'nodes');
+  nodesTable.querySelector = selector => (selector === 'tbody' ? tbody : null);
+  env.registerElement('nodes', nodesTable);
 
   const nodes = [
     { node_id: IDENTITY, last_heard: NOW - 130, short_name: '2771',
@@ -224,5 +245,95 @@ test('the legend and toggle read identities (destinations) once loaded (SPEC RA3
     assert.ok(legend && toggle);
   } finally {
     cleanup();
+  }
+});
+
+test('clicking the caret toggles the group and re-renders (SPEC RA1)', async () => {
+  // The disclosure is handled by the delegated tbody listener, which re-renders
+  // through the normal path so sub-rows are built by the same plan that ordered
+  // the parents rather than being spliced into the DOM out of band.
+  const { tbody, t, nodes, cleanup } = await renderWith(DESTINATIONS);
+  try {
+    t.renderTable(nodes, NOW);
+    assert.equal(t.getExpandedIdentities().has(IDENTITY), false);
+
+    const clickCaret = () => fireClick(tbody, {
+      closest: sel => (sel === '.identity-disclosure'
+        ? { dataset: { identity: IDENTITY } }
+        : null),
+    });
+    assert.ok(clickCaret() > 0, 'the delegated click listener is wired');
+    await settle();
+    assert.equal(t.getExpandedIdentities().has(IDENTITY), true, 'the caret opens the group');
+    assert.ok(tbody.querySelectorAll('.nodes-subrow').length > 0, 'sub-rows appear');
+
+    clickCaret();
+    await settle();
+    assert.equal(t.getExpandedIdentities().has(IDENTITY), false, 'the caret closes it again');
+    assert.equal(tbody.querySelectorAll('.nodes-subrow').length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a sub-row is not treated as a navigable node row', async () => {
+  // The row-activation handler must ignore sub-rows: they are aspects of the
+  // identity above them, not nodes with pages of their own.
+  const { tbody, t, nodes, cleanup } = await renderWith(DESTINATIONS);
+  try {
+    t.getExpandedIdentities().add(IDENTITY);
+    t.renderTable(nodes, NOW);
+    const before = globalThis.window && globalThis.window.location
+      ? globalThis.window.location.href : null;
+    fireClick(tbody, {
+      closest: sel => (sel === 'tr'
+        ? { classList: { contains: c => c === 'nodes-subrow' } }
+        : null),
+    });
+    await settle();
+    const after = globalThis.window && globalThis.window.location
+      ? globalThis.window.location.href : null;
+    assert.equal(after, before, 'a sub-row click navigates nowhere');
+  } finally {
+    cleanup();
+  }
+});
+
+test('destinations loaded in the background group the table without a manual push', async () => {
+  // The real RA8 path: the table first renders from /api/nodes alone, then the
+  // background walk delivers destinations and the groups appear. No test hook
+  // is used to inject the index here — the loader has to do it.
+  const env = createDomEnvironment({ includeBody: true });
+  const tbody = env.document.createElement('tbody');
+  env.document.querySelector = selector => (selector === '#nodes tbody' ? tbody : null);
+
+  const nodes = [
+    { node_id: IDENTITY, last_heard: NOW - 130, short_name: '2771',
+      long_name: 'Department of Decentralization', role: 'NODE', protocol: 'reticulum' },
+  ];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = url => {
+    const u = String(url);
+    if (u.startsWith('/api/nodes/')) return jsonResponse(null);
+    if (u.startsWith('/api/nodes')) return jsonResponse(nodes);
+    // One short page: the walk takes it and stops.
+    if (u.startsWith('/api/destinations')) return jsonResponse(DESTINATIONS);
+    return jsonResponse([]);
+  };
+  try {
+    const { _testUtils: t } = initializeApp(BASE_CONFIG);
+    await t.initialLoad;
+    await settle(80);
+
+    t.getExpandedIdentities().add(IDENTITY);
+    t.renderTable(nodes, NOW);
+    assert.equal(
+      tbody.querySelectorAll('.nodes-subrow').length, DESTINATIONS.length,
+      'the background walk populated the index the table renders from',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.cleanup();
   }
 });

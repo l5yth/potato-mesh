@@ -17,7 +17,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchMessages, fetchNodesById, fetchTracesForNode } from '../node-page-data.js';
+import {
+  fetchDestinationsForNode,
+  fetchMessages,
+  fetchNodesById,
+  fetchTracesForNode,
+} from '../node-page-data.js';
 
 // ---------------------------------------------------------------------------
 // fetchMessages
@@ -267,4 +272,39 @@ test('fetchNodesById issues a request with the configured limit', async () => {
   await fetchNodesById({ fetchImpl });
   assert.equal(calls.length, 1);
   assert.ok(calls[0].startsWith('/api/nodes?limit='), 'should call /api/nodes with a limit query');
+});
+
+
+test('fetchDestinationsForNode requests one identity\'s destinations (SPEC RA5)', async () => {
+  const calls = [];
+  const rows = [{ id: 'a'.repeat(32), node_id: '!27716218', aspect: 'lxmf.delivery' }];
+  const result = await fetchDestinationsForNode('!27716218', {
+    fetchImpl: async url => {
+      calls.push(url);
+      return { ok: true, status: 200, json: async () => rows };
+    },
+  });
+  assert.deepEqual(result, rows);
+  assert.match(calls[0], /^\/api\/destinations\?node_id=!27716218&limit=\d+$/);
+});
+
+test('fetchDestinationsForNode fails soft, so the section is simply absent', async () => {
+  // Every failure yields [] rather than throwing: the node page must render
+  // without a Destinations section, not error. This is also how the section
+  // stays invisible for Meshtastic and Meshcore nodes.
+  const nope = async () => ({ ok: false, status: 500 });
+  assert.deepEqual(await fetchDestinationsForNode('!x', { fetchImpl: nope }), []);
+  assert.deepEqual(
+    await fetchDestinationsForNode('!x', { fetchImpl: async () => { throw new Error('offline'); } }),
+    [],
+  );
+  assert.deepEqual(
+    await fetchDestinationsForNode('!x', {
+      fetchImpl: async () => ({ ok: true, json: async () => ({ not: 'array' }) }),
+    }),
+    [],
+  );
+  // No identifier, and no fetch implementation at all.
+  assert.deepEqual(await fetchDestinationsForNode(null, { fetchImpl: nope }), []);
+  assert.deepEqual(await fetchDestinationsForNode('!x', { fetchImpl: null }), []);
 });

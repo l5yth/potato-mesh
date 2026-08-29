@@ -139,3 +139,23 @@ test('the spec sheet still renders for a node with no destinations', () => {
   assert.match(html, /<dt>Role<\/dt>/);
   assert.doesNotMatch(html, /27716218/);
 });
+
+test('the Destinations section is pushed into the node detail (SPEC RA5)', async () => {
+  // detail-html composes optional sections; this pins that destinations reach
+  // it and that a node without them leaves the section out entirely.
+  const { renderNodeDetailHtml } = await import('../detail-html.js');
+  const node = { nodeId: '!27716218', node_id: '!27716218', role: 'NODE', last_heard: NOW - 130 };
+  const withDestinations = renderNodeDetailHtml(node, {
+    destinations: DESTINATIONS,
+    renderShortHtml: () => '',
+    chartNowMs: NOW * 1000,
+  });
+  assert.match(withDestinations, /node-detail__destinations/);
+  assert.match(withDestinations, /9c59da5e1516745d74cc908243e0ba2b/);
+
+  const without = renderNodeDetailHtml(node, {
+    renderShortHtml: () => '',
+    chartNowMs: NOW * 1000,
+  });
+  assert.doesNotMatch(without, /node-detail__destinations/);
+});
