@@ -4512,7 +4512,13 @@ export function initializeApp(config) {
       // muted dash, because a destination has no radio, battery or position.
       for (const destination of planned.subRows) {
         const subRow = document.createElement('tr');
-        subRow.className = 'nodes-subrow';
+        // classList, matching the parent row above: some consumers (and the
+        // test DOM) read classList rather than the className string.
+        if (subRow.classList && typeof subRow.classList.add === 'function') {
+          subRow.classList.add('nodes-subrow');
+        } else {
+          subRow.className = 'nodes-subrow';
+        }
         subRow.innerHTML = subRowCellsHtml(
           destination,
           n.node_id,
@@ -5936,6 +5942,17 @@ export function initializeApp(config) {
   return {
     _testUtils: {
       buildMapPopupHtml,
+      /**
+       * Identity-group state (SPEC RA1/RA3). Exposed so the render path can be
+       * driven from tests: the index and the expanded set are closure-private,
+       * which left the sub-row emission, the disclosure toggle and the
+       * `identities (destinations)` legend branch unreachable and untested.
+       */
+      setDestinationIndex: index => { destinationIndex = index; },
+      getExpandedIdentities: () => expandedIdentities,
+      renderTable,
+      updateLegendProtocolCounts,
+      updateProtocolToggleCounts,
       /** Short-info overlay HTML builder — carries the RT1 "Last seen" tick line. */
       buildShortInfoOverlayHtml,
       /** The app's shared relative-time ticker handle (SPEC RT1–RT3). */
