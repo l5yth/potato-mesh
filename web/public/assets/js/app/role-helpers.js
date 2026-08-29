@@ -279,17 +279,43 @@ export function translateRoleId(role) {
   return role;
 }
 
+export const DEFAULT_ROLES = Object.freeze({
+  meshtastic: 'CLIENT',
+  meshcore: 'COMPANION',
+  reticulum: 'PEER',
+});
+
+/**
+ * The role a node of *protocol* falls back to when it reports none.
+ *
+ * `CLIENT` is a **Meshtastic** role, so using it everywhere labelled a Meshcore
+ * node as something Meshcore has no concept of, and a Reticulum node likewise.
+ * Each protocol falls back to its own base role instead: the plain participant
+ * that carries no additional function.
+ *
+ * @param {string|null|undefined} protocol Protocol string from the API.
+ * @returns {string} Default role identifier for that protocol.
+ */
+export function defaultRoleFor(protocol) {
+  if (isMeshcoreProtocol(protocol)) return DEFAULT_ROLES.meshcore;
+  if (isReticulumProtocol(protocol)) return DEFAULT_ROLES.reticulum;
+  return DEFAULT_ROLES.meshtastic;
+}
+
 /**
  * Normalise role strings so lookups remain consistent.
  *
  * @param {*} role Raw role value from the API.
- * @returns {string} Uppercase role identifier with a fallback of ``CLIENT``.
+ * @param {string|null|undefined} [protocol] Protocol whose base role applies
+ *   when the value is absent; omitted keeps the Meshtastic default.
+ * @returns {string} Uppercase role identifier with a protocol-aware fallback.
  */
-export function normalizeRole(role) {
+export function normalizeRole(role, protocol = null) {
+  const fallback = defaultRoleFor(protocol);
   const translated = translateRoleId(role);
-  if (translated == null) return 'CLIENT';
+  if (translated == null) return fallback;
   const str = String(translated).trim();
-  return str.length ? str : 'CLIENT';
+  return str.length ? str : fallback;
 }
 
 /**
@@ -298,8 +324,8 @@ export function normalizeRole(role) {
  * @param {*} role Raw role value from the API.
  * @returns {string} Canonical role identifier.
  */
-export function getRoleKey(role) {
-  const normalized = normalizeRole(role);
+export function getRoleKey(role, protocol = null) {
+  const normalized = normalizeRole(role, protocol);
   if (roleColors[normalized]) return normalized;
   const upper = normalized.toUpperCase();
   if (roleColors[upper]) return upper;
@@ -320,8 +346,11 @@ export function getRoleKey(role) {
  */
 export function getRoleColor(role, protocol = null) {
   const colors = getRoleColors(protocol);
-  const key = getRoleKey(role);
-  return colors[key] || roleColors.CLIENT || '#3388ff';
+  const key = getRoleKey(role, protocol);
+  // Fall back within the node's own palette before the Meshtastic one, so a
+  // role-less Meshcore or Reticulum node takes its protocol's base colour
+  // rather than Meshtastic blue.
+  return colors[key] || colors[defaultRoleFor(protocol)] || roleColors.CLIENT || '#3388ff';
 }
 
 /**

@@ -30,6 +30,7 @@ import { renderTelemetryCharts } from './telemetry-charts.js';
 import { renderMessages } from './messages.js';
 import { renderTraceroutes } from './traces.js';
 import { renderWaypointsSection } from './waypoints.js';
+import { renderDestinationsSection } from './destinations.js';
 
 /**
  * Render the node detail layout to an HTML fragment.
@@ -52,6 +53,7 @@ export function renderNodeDetailHtml(node, {
   messages = [],
   traces = [],
   waypoints = [],
+  destinations = [],
   renderShortHtml,
   roleIndex = null,
   chartNowMs = Date.now(),
@@ -68,7 +70,7 @@ export function renderNodeDetailHtml(node, {
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const nodeProtocol = stringOrNull(node.protocol) ?? null;
-  const tableHtml = renderSingleNodeTable(node, renderShortHtml);
+  const tableHtml = renderSingleNodeTable(node, renderShortHtml, undefined, { destinations });
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
@@ -77,8 +79,17 @@ export function renderNodeDetailHtml(node, {
     nowSeconds: Math.floor(chartNowMs / 1000),
   });
   const messagesHtml = renderMessages(messages, renderShortHtml, node, nodesById);
+  // Destinations (SPEC RA5): the only view showing full 32-hex destination
+  // hashes. Empty for every non-Reticulum node, so the section is absent by the
+  // same mechanism every other optional section uses.
+  const destinationsHtml = renderDestinationsSection(destinations, {
+    nowSeconds: Math.floor(chartNowMs / 1000),
+  });
 
   const sections = [];
+  if (destinationsHtml) {
+    sections.push(destinationsHtml);
+  }
   if (neighborsHtml) {
     sections.push(neighborsHtml);
   }

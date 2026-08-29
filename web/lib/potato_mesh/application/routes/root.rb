@@ -112,6 +112,32 @@ module PotatoMesh
           # @param node_ref [Object] raw node identifier from the request.
           # @return [Hash, nil] structured node reference payload or nil when
           #   the node cannot be located.
+          # Resolve a Reticulum destination reference to the node that owns it.
+          #
+          # The Destinations table shows full destination hashes and links each
+          # to +/nodes/!<short>+; those are not node rows, so without this the
+          # page 404s (SPEC RA5). Matches either the canonical +!xxxxxxxx+ form
+          # or a full destination hash prefix.
+          #
+          # @param reference [String, nil] destination reference from the URL.
+          # @return [String, nil] owning +node_id+, or nil when unknown.
+          def destination_owner_node_id(reference)
+            text = string_or_nil(reference)&.delete_prefix("!")&.downcase
+            return nil if text.nil? || text.length < 8
+
+            handle = open_database(readonly: true)
+            handle.results_as_hash = true
+            row = with_busy_retry do
+              handle.get_first_row(
+                "SELECT node_id FROM destinations WHERE LOWER(id) = ? OR LOWER(SUBSTR(id, 1, 8)) = ? LIMIT 1",
+                [text, text[0, 8]],
+              )
+            end
+            string_or_nil(row && row["node_id"])
+          ensure
+            handle&.close
+          end
+
           def build_node_detail_reference(node_ref)
             tokens = canonical_node_parts(node_ref)
             search_ref = tokens ? tokens.first : node_ref
@@ -119,6 +145,24 @@ module PotatoMesh
             node_row = query_nodes(1, node_ref: search_ref).first
             telemetry_row = query_telemetry(1, node_ref: search_ref).first
             position_row = query_positions(1, node_ref: search_ref).first
+
+            # A Reticulum destination is not a node row -- since RE7 the node is
+            # the *identity* -- so /nodes/!<destination> would 404 despite being
+            # a link the Destinations table invites (SPEC RA5). Resolve it to
+            # the identity that owns it and continue with that node.
+            if node_row.nil? && telemetry_row.nil? && position_row.nil?
+              # Use the *raw* reference: canonical_node_parts truncates a
+              # 32-hex value the Meshtastic way, which is the wrong end of a
+              # destination hash and would never match.
+              owner = destination_owner_node_id(node_ref) ||
+                      destination_owner_node_id(search_ref)
+              if owner
+                search_ref = owner
+                node_row = query_nodes(1, node_ref: search_ref).first
+                telemetry_row = query_telemetry(1, node_ref: search_ref).first
+                position_row = query_positions(1, node_ref: search_ref).first
+              end
+            end
 
             candidates = [node_row, telemetry_row, position_row].compact
             return nil if candidates.empty?

@@ -3643,7 +3643,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "falls back to CLIENT_HIDDEN for an unknown protocol" do
+    it "falls back to PEER for a reticulum placeholder (SPEC RA9)" do
+      # This example used reticulum as a stand-in for "unknown protocol" because
+      # reticulum had no branch. It has one now: CLIENT_HIDDEN is a Meshtastic
+      # role, and a Reticulum node has no concept of it.
       with_db do |db|
         created = ensure_unknown_node(db, "!cafe9999", nil, protocol: "reticulum")
         expect(created).to be_truthy
@@ -3660,9 +3663,24 @@ RSpec.describe "Potato Mesh Sinatra app" do
           ["!cafe9999"],
         )
 
-        expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["role"]).to eq("PEER")
         expect(row["protocol"]).to eq("reticulum")
         expect(row["long_name"]).to eq("Reticulum 9999")
+      end
+    end
+
+    it "falls back to CLIENT_HIDDEN for a genuinely unknown protocol" do
+      # The case the example above was named for: a protocol with no branch of
+      # its own keeps the historical Meshtastic default, so nothing that never
+      # named a protocol changes.
+      with_db do |db|
+        expect(ensure_unknown_node(db, "!cafe8888", nil, protocol: "nonsense")).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT role FROM nodes WHERE node_id = ?", ["!cafe8888"])
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
       end
     end
 

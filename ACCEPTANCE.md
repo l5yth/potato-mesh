@@ -6000,3 +6000,147 @@ passes have broken them before: **SB-A6** (dual-CDN egress disclosure, which the
 README refactor had dropped), **RV-A4** (`potatomesh_reticulum`, likewise
 dropped), **TX-A6**, **RD-A2/RD-A7** (badge greps), and the `RETICULUM_CONFIG_DIR`
 counts in RN-A5.
+
+## Feature: Reticulum aspects — identity groups and the identity page
+
+### RA-A1 - Identities are parent rows; destinations are sub-rows - RA1/RA2
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/identity-groups.test.js )
+```
+**Expected:** pass. A Reticulum identity with several destinations renders one
+parent row plus one sub-row per destination. The parent carries the identity's
+`!xxxxxxxx`, the `long_name` **the API served** (never re-ranked in the browser,
+or the table and RE10 could drift), and the newest `last_heard` across its
+destinations. Its protocol cell is the `▸`/`▾` disclosure keeping the tile's
+violet inset, not the tile glyph.
+
+An identity with **one** destination renders flat, with **no caret**: a
+disclosure that opens onto a single row misrepresents depth. Sub-rows lead with
+the aspect in place of the first two columns, keep a per-destination role badge
+from `reticulumRoleColors`, carry the destination's own name and `[!id]` in
+`Long Name`, and report `—` everywhere else. Sorting orders **parents**;
+sub-rows follow their parent, so no sort interleaves two identities' addresses.
+
+Meshtastic and Meshcore rows keep their ordinary structure — no caret, no
+chips, no sub-rows (Invariant IV). They are **not** byte-identical: RA9 changes
+a role-less Meshcore row's Role cell from `CLIENT` to `COMPANION`, deliberately,
+because `CLIENT` is a Meshtastic role. Structure is unchanged; that one value is
+corrected.
+
+### RA-A2 - Counts read identities (destinations) - RA3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/identity-groups.test.js )
+( cd web && node --test public/assets/js/app/__tests__/main-update-counts.test.js )
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "GET /api/stats" )
+```
+**Expected:** pass. The Reticulum protocol toggle and the legend's Reticulum
+column read `identities (destinations)` — `3 (8)`. Meshtastic and Meshcore keep
+a **bare** count: the bracket marks a real distinction (only Reticulum holds
+several addresses per node) rather than decorating every protocol. The first
+number is the existing node count and is unchanged by this feature — the stats
+spec is the guard that it did not move.
+
+### RA-A3 - The destinations collection pages like its siblings - RA8
+```bash
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "destinations pagination" )
+git grep -n "api/destinations" -- data/mesh_ingestor/CONTRACTS.md
+```
+**Expected:** pass, and CONTRACTS documents the parameters. `GET
+/api/destinations` accepts `?limit=`, `?since=` and `?before=`, bounding
+`last_heard` — its primary sort column — with the **inclusive** `<=` boundary
+BP1 specifies, so walking newest → oldest repeats exactly one row per page break
+and skips none. `?node_id=` composes with all three. A non-positive or
+non-integer `before` is ignored. This route holds no `ApiCache` layer, so unlike
+`/api/waypoints` there is no cached path to bypass; the weak ETag varies with the
+cursor because it is hashed from the body the cursor produced.
+
+The point is consistency: an endpoint that pages differently from the seven
+bulk collections is a trap for every client that has learned the others.
+
+### RA-A4 - A large destination set never blocks the table - RA8
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/destination-index.test.js )
+```
+**Expected:** pass. The table renders from `/api/nodes` alone and gains chips,
+counts and sub-rows as destination pages arrive in the background after first
+paint. A slow, failing, or truncated destinations fetch degrades to a table
+without groups — never a stalled one, and never a thrown error. This is the
+criterion that fails if the join is ever moved into the blocking load path.
+
+### RA-A5 - The identity page renders only what Reticulum can fill - RA5
+```bash
+( cd web && node --test public/assets/js/app/node-page/__tests__/destinations.test.js )
+```
+**Expected:** pass. `/nodes/:id` for a Reticulum identity renders Identity (full
+32-hex identity hash, destination count, interface) and Activity (first heard,
+last seen, role) and **no other group**. The Destinations table carries the full
+32-hex destination hashes — the only place they appear, since they are what a
+reader needs to message the peer — with aspect, name, role, interface, first and
+last heard. A destination's own `/nodes/!id` canonicalises to its identity's
+page: `build_node_detail_reference` falls back to the `destinations` table when
+a reference matches no node row, accepting both the full 32-hex hash and the
+truncated `!xxxxxxxx` form the table links to. An unknown reference still 404s —
+the fallback must not turn every miss into a page. Covered by
+`rspec spec/reticulum_spec.rb -e "canonicalises to its identity page"`.
+
+### RA-A6 - Detail views drop the dash; the table keeps it - RA6 (amends UX4 and PD1)
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/table-empty-state.test.js )
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "degenerate-state" )
+```
+**Expected:** both pass. **UX4 and PD1 are amended, not discarded** — PD1
+restated the dash rule for this very sheet, so amending only UX4 would have left
+the second copy reinstating it. A detail view
+renders a field only when it has a value and a group only when a field survives,
+with a single muted `No telemetry reported.` — the `.node-extra__empty` voice —
+when none do. The **nodes table keeps its dashes**: `renderTable` still formats
+a null telemetry cell as a muted `—` distinct from `''`, because at table width
+a dash separates "not reported" from "still loading" — a distinction a detail
+view does not need, since it renders after its data.
+
+UX4's `<noscript>` block, the server-rendered `nodes-empty-row`, and the
+map placeholder are **unchanged**; only the overlay-parity clause moved.
+
+### RA-A7 - rns.transport stays in the data and hides in the view - RA7/RE9
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "transport_aspect_is_gated" )
+( cd web && node --test public/assets/js/app/node-page/__tests__/destinations.test.js )
+```
+**Expected:** both pass. The ingestor still emits `rns.transport` and the API
+still serves it — it is what maps the row to the `TRANSPORT` role (RE9), so
+removing it would break the role, not just the label. The **view** renders that
+aspect as "no aspect". A display rule, not a data change: the two tests are
+deliberately on opposite sides of the wire so neither can be satisfied by
+changing the other.
+
+### RA-A8 - Role fallbacks are protocol-native - RA9
+```bash
+( cd web && node --test public/assets/js/app/__tests__/role-helpers.test.js )
+git grep -n "when \"reticulum\" then \"PEER\"" -- web/lib/potato_mesh/application/data_processing/node_writes.rb
+```
+**Expected:** pass, and the grep hits. `defaultRoleFor` resolves `meshtastic →
+CLIENT`, `meshcore → COMPANION`, `reticulum → PEER`; an unknown or absent
+protocol keeps `CLIENT` so nothing protocol-less changes. `getRoleColor` falls
+back within the node's **own** palette first, so an unrecognised Meshcore role
+takes `COMPANION`'s colour rather than Meshtastic blue — the previous criterion
+asserted the opposite and was the bug, not the contract.
+
+Reported from the field: a Meshcore node with no role read as a Meshtastic
+`CLIENT`, a role its protocol does not have. The ingest-side placeholder default
+had the same gap — a Meshcore branch but no Reticulum one, so a Reticulum
+placeholder was written `CLIENT_HIDDEN`.
+
+### RA-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**UX-A2** (amended by RA-A6 — its table half must still pass unchanged);
+**UX-A7** (nodes-table IA, now carrying a row hierarchy); **PD-A1**, whose
+title and Expected still describe the dash RA6 removed from this sheet — its
+command block passes only because the grep matches prose em-dashes in the
+JSDoc, so it should be re-worded to RA6's rule rather than trusted as-is; **RD-A5/UX-A1** (the
+violet ramp and WCAG floor, now with several badges per row); **RD-A6/RD-A7**
+(shape channel and legend column, whose header string changes); **RD-A8** (the
+scope boundary — panel 2d stays out); and **RE-A5/RE-A11** (identity keying and
+headline preference, which the parent row reads rather than re-derives).

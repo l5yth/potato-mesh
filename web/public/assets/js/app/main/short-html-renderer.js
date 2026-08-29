@@ -46,7 +46,12 @@ import {
 export function renderShortHtml(short, role, longName, nodeData = null) {
   const safeTitle = longName ? escapeHtml(String(longName)) : '';
   const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
-  const roleValue = normalizeRole(role != null && role !== '' ? role : (nodeData && nodeData.role));
+  // Pass the protocol so a role-less node takes its own base role rather than
+  // Meshtastic's CLIENT (SPEC RA9); the overlay hook carries this value.
+  const roleValue = normalizeRole(
+    role != null && role !== '' ? role : (nodeData && nodeData.role),
+    nodeData?.protocol ?? null,
+  );
   let infoAttr = '';
   if (nodeData && typeof nodeData === 'object') {
     const info = {

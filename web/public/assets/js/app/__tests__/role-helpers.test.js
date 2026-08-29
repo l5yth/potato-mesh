@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  defaultRoleFor,
   getRoleColor,
   getRoleFlashColor,
   hexToRgba,
@@ -199,8 +200,30 @@ test('getRoleColor uses meshtastic palette when protocol is null', () => {
   assert.equal(getRoleColor('CLIENT', null), roleColors.CLIENT);
 });
 
-test('getRoleColor falls back to CLIENT color for unknown meshcore role', () => {
-  assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshcore'), roleColors.CLIENT);
+test('an unknown role falls back within its own protocol palette (SPEC RA9)', () => {
+  // Previously every unknown role took the Meshtastic CLIENT colour, so a
+  // Meshcore node was painted as something Meshcore has no concept of. Each
+  // protocol now falls back to its own base role.
+  assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshcore'), meshcoreRoleColors.COMPANION);
+  assert.equal(getRoleColor('UNKNOWN_ROLE', 'reticulum'), reticulumRoleColors.PEER);
+  assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshtastic'), roleColors.CLIENT);
+});
+
+test('defaultRoleFor names each protocol base role (SPEC RA9)', () => {
+  assert.equal(defaultRoleFor('meshtastic'), 'CLIENT');
+  assert.equal(defaultRoleFor('meshcore'), 'COMPANION');
+  assert.equal(defaultRoleFor('reticulum'), 'PEER');
+  // An unknown or absent protocol keeps the historical Meshtastic default.
+  assert.equal(defaultRoleFor(null), 'CLIENT');
+  assert.equal(defaultRoleFor('nonsense'), 'CLIENT');
+});
+
+test('normalizeRole applies the protocol base role when none is reported', () => {
+  assert.equal(normalizeRole(null, 'meshcore'), 'COMPANION');
+  assert.equal(normalizeRole('', 'reticulum'), 'PEER');
+  assert.equal(normalizeRole(null), 'CLIENT');
+  // A reported role is never overridden by the fallback.
+  assert.equal(normalizeRole('REPEATER', 'meshcore'), 'REPEATER');
 });
 
 // SPEC UX2 (audit D-008): text colour is computed from the badge background's

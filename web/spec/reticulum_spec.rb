@@ -344,6 +344,90 @@ RSpec.describe "Reticulum protocol support" do
     end
   end
 
+  describe "destinations pagination (SPEC RA8)" do
+    # Three aspects of one identity at distinct last_heard values, newest first,
+    # so a cursor walk has real page breaks to cross.
+    ASPECT_TIMES = [
+      { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH, role: "NODE", offset: 10 },
+      { aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2, role: "PEER", offset: 20 },
+      {
+        aspect: "lxmf.propagation",
+        dest: "aa00bb11cc22dd33ee44ff5566778899",
+        role: "PROPAGATION",
+        offset: 30,
+      },
+    ].freeze
+
+    def seed_destinations
+      register_reticulum_ingestor
+      ASPECT_TIMES.each do |a|
+        payload = {
+          RETICULUM_NODE_ID => reticulum_node_fixture(
+            last_heard: now - a[:offset], aspect: a[:aspect],
+            dest_id: a[:dest], role: a[:role],
+          ),
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+        }
+        post "/api/nodes", payload.to_json, auth_headers
+      end
+    end
+
+    def destination_ids(query = "")
+      get "/api/destinations#{query}"
+      expect(last_response.status).to eq(200)
+      JSON.parse(last_response.body).map { |r| r["id"] }
+    end
+
+    it "orders newest first and honours ?limit=" do
+      seed_destinations
+      all = destination_ids
+      expect(all).to eq([RETICULUM_DEST_HASH, RETICULUM_DEST_HASH2, ASPECT_TIMES[2][:dest]])
+      expect(destination_ids("?limit=2").length).to eq(2)
+    end
+
+    it "raises the lower bound with ?since= and lowers the upper with ?before=" do
+      seed_destinations
+      # since excludes the oldest; before excludes the newest.
+      expect(destination_ids("?since=#{now - 25}")).to eq(
+        [RETICULUM_DEST_HASH, RETICULUM_DEST_HASH2],
+      )
+      expect(destination_ids("?before=#{now - 15}")).to eq(
+        [RETICULUM_DEST_HASH2, ASPECT_TIMES[2][:dest]],
+      )
+    end
+
+    it "walks every row across page breaks with a one-row overlap" do
+      # The BP1 contract a paging client depends on: the <= boundary repeats the
+      # boundary row so none is skipped, and id-dedup collapses the overlap.
+      seed_destinations
+      seen = []
+      cursor = nil
+      4.times do
+        query = cursor ? "?limit=2&before=#{cursor}" : "?limit=2"
+        get "/api/destinations#{query}"
+        page = JSON.parse(last_response.body)
+        break if page.empty?
+
+        seen.concat(page.map { |r| r["id"] })
+        break if page.length < 2
+
+        cursor = page.last["last_heard"]
+      end
+      expect(seen.length).to be > seen.uniq.length # the deliberate overlap
+      expect(seen.uniq).to match_array(ASPECT_TIMES.map { |a| a[:dest] })
+    end
+
+    it "ignores a non-positive or non-integer before, and composes with node_id" do
+      seed_destinations
+      expect(destination_ids("?before=0")).to eq(destination_ids)
+      expect(destination_ids("?before=abc")).to eq(destination_ids)
+      expect(destination_ids("?before=-5")).to eq(destination_ids)
+      filtered = destination_ids("?node_id=#{RETICULUM_NODE_ID}&before=#{now - 15}")
+      expect(filtered).to eq([RETICULUM_DEST_HASH2, ASPECT_TIMES[2][:dest]])
+    end
+  end
+
   describe "POST /api/nodes" do
     it "stores reticulum nodes under their own protocol via the wrapper stamp" do
       register_reticulum_ingestor
@@ -516,6 +600,33 @@ RSpec.describe "Reticulum protocol support" do
       payload = JSON.parse(last_response.body)
       expect(payload["reticulum"]["packets"]).to eq("hour" => 30) # 720 / 24
       expect(payload["total"]["packets"]).to eq("hour" => 30)
+    end
+  end
+
+  describe "a destination reference canonicalises to its identity page (SPEC RA5)" do
+    it "resolves a full destination hash to the owning identity" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+
+      get "/nodes/#{RETICULUM_DEST_HASH}"
+      expect(last_response.status).to eq(200)
+      expect(last_response.body).to include(RETICULUM_NODE_ID)
+    end
+
+    it "resolves the truncated !xxxxxxxx form of a destination" do
+      # This is the form the Destinations table links to.
+      register_reticulum_ingestor
+      post_reticulum_nodes
+
+      get "/nodes/!#{RETICULUM_DEST_HASH[0, 8]}"
+      expect(last_response.status).to eq(200)
+      expect(last_response.body).to include(RETICULUM_NODE_ID)
+    end
+
+    it "still 404s an unknown reference" do
+      # The fallback must not turn every miss into a page.
+      get "/nodes/!deadbeef"
+      expect(last_response.status).to eq(404)
     end
   end
 

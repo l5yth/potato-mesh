@@ -3215,3 +3215,98 @@ button.legend-item[aria-pressed="true"] {
 #nodes tbody tr.node-extra > td {
   background: var(--card);
 }
+
+/* --- Reticulum identity groups (SPEC RA1/RA2) ---------------------------- */
+
+/* The disclosure replaces the tile glyph on a grouped identity, so it carries
+   the tile's violet inset itself: a collapsed group must still read as
+   Reticulum before it opens (RA1). */
+.identity-disclosure {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  line-height: 1;
+  /* #111418, the value getContrastTextColor('#7b61ff') returns: 4.39:1 against
+     the tile. White measured 4.20:1 -- below the UX2 floor and worse than the
+     4.39 RD-A5 already pins as failing, so the dark text is the better of the
+     two. The tile violet is a background here, not a badge fill, and RD5 keeps
+     it off badges for exactly this reason. */
+  color: #111418;
+  background: #7b61ff;
+  border-radius: 3px;
+}
+
+.identity-disclosure:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+/* One chip per aspect on a parent row's Role cell. Colours are inlined from
+   reticulumRoleColors (RD5) with their computed contrast text (UX2); only the
+   box belongs here. */
+.role-chip {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 2px;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* The overflow chip counts roles the budget hid, so it stays neutral rather
+   than borrowing any one role's colour. */
+.role-chip--overflow {
+  background: var(--card);
+  color: var(--muted);
+  border: 1px solid var(--muted);
+}
+
+/* Sub-rows sit visually inside their parent: indented, quieter, and without
+   the parent's hover affordance since they are not themselves navigable. */
+#nodes tbody tr.nodes-subrow > td {
+  background: var(--card);
+}
+
+.nodes-subrow__spacer {
+  border-left: 2px solid #7b61ff;
+}
+
+.nodes-subrow__aspect {
+  color: var(--fg);
+  padding-left: 8px;
+}
+
+.nodes-subrow__id {
+  color: var(--muted);
+}
+
+/* Destinations table on the identity page (SPEC RA5). The full 32-hex hashes
+   are long, so the table scrolls inside its own container rather than forcing
+   the page to. */
+.node-detail__destinations {
+  overflow-x: auto;
+}
+
+.destinations {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.destinations th,
+.destinations td {
+  text-align: left;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.destinations th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.destinations__id {
+  font-size: 0.9em;
+}

@@ -408,13 +408,18 @@ test('renderSingleNodeTable timestamp fields opt into the live tick (SPEC RT1/RT
   );
 });
 
-test('renderSingleNodeTable without timestamps renders the dash, no tick hooks (SPEC RT4/PD1)', () => {
+test('renderSingleNodeTable without timestamps emits no tick hooks (SPEC RT4)', () => {
   const html = renderSingleNodeTable({ nodeId: '!abcd' }, short => `<span>${short}</span>`, 10_000);
   assert.equal(html.includes('data-ts-ago'), false, 'no tick hook without a timestamp');
+  // SPEC RA6 amends PD1 here: a detail view renders a field only when it has a
+  // value, so an all-absent sheet is one honest line rather than sixteen
+  // dashes. The blank-cell half PD1 fixed is still fixed -- the page says what
+  // it knows -- it just no longer says it with a dash per empty field.
   assert.ok(
-    html.includes('<dd><span class="cell-empty">—</span></dd>'),
-    'absent Last Seen / Last Position render the muted dash, not a blank',
+    html.includes('No telemetry reported.'),
+    'an all-absent sheet states that, rather than rendering a dash per field',
   );
+  assert.equal(html.includes('cell-empty'), false, 'no dashes survive in a detail view');
 });
 
 // --- Post-Deploy review 01: the /nodes/:id detail view must not reuse the
@@ -431,12 +436,25 @@ test('the node detail view carries no responsive-hide column classes (no data lo
   );
 });
 
-test('the node detail view renders the muted dash for absent telemetry, not a blank', () => {
-  const html = renderSingleNodeTable({ nodeId: '!abcd' }, short => `<span>${short}</span>`, 10_000);
-  assert.ok(
-    html.includes('—'),
-    'absent fields must read as the muted em-dash, not an indistinguishable blank cell',
+test('the node detail view never renders an indistinguishable blank (SPEC RA6, amending PD1)', () => {
+  // The intent PD1 encoded survives the amendment: absent telemetry must never
+  // read as an empty cell the reader cannot interpret. It is now stated once,
+  // in words, instead of once per field as a dash.
+  const empty = renderSingleNodeTable({ nodeId: '!abcd' }, short => `<span>${short}</span>`, 10_000);
+  assert.match(empty, /class="node-extra__empty"/);
+  assert.match(empty, /No telemetry reported\./);
+
+  // A partially reported node keeps its reported fields and drops the rest --
+  // group and all -- so no group renders with nothing in it.
+  const partial = renderSingleNodeTable(
+    { nodeId: '!abcd', battery: 66 },
+    short => `<span>${short}</span>`,
+    10_000,
   );
+  assert.match(partial, /<dt>Battery<\/dt>/);
+  assert.doesNotMatch(partial, /<dt>Temperature<\/dt>/);
+  assert.doesNotMatch(partial, /Environment/);
+  assert.equal(partial.includes('cell-empty'), false);
 });
 
 test('renderTelemetryCharts renders condensed scatter charts when telemetry exists', () => {
