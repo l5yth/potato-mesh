@@ -37,7 +37,9 @@ import {
   formatVoltage,
 } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
+import { identitySummary } from './destinations.js';
 import { formatTableCell } from '../main/table-cell-format.js';
+import { isReportedField } from '../main/nodes-table-ia.js';
 import { tickAttributes, TICK_FORMAT_RELATIVE } from '../main/relative-time-ticker.js';
 
 /**
@@ -51,7 +53,18 @@ import { tickAttributes, TICK_FORMAT_RELATIVE } from '../main/relative-time-tick
  */
 function specField(label, value, ddAttrs = '') {
   const valueHtml = formatTableCell(escapeHtml(value == null ? '' : String(value)));
-  return `<dt>${label}</dt><dd${ddAttrs ? ' ' + ddAttrs : ''}>${valueHtml}</dd>`;
+  return { label, valueHtml, ddAttrs };
+}
+
+/**
+ * Render one filtered `<dt>/<dd>` pair.
+ *
+ * @param {{label: string, valueHtml: string, ddAttrs: string}} entry Field.
+ * @returns {string} Definition-list markup.
+ */
+function specFieldHtml(entry) {
+  const attrs = entry.ddAttrs ? ' ' + entry.ddAttrs : '';
+  return `<dt>${entry.label}</dt><dd${attrs}>${entry.valueHtml}</dd>`;
 }
 
 /**
@@ -75,12 +88,17 @@ function specField(label, value, ddAttrs = '') {
  *   metrics.
  * @returns {string} HTML markup for the node spec sheet, or an empty string.
  */
-export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.now() / 1000) {
+export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.now() / 1000, { destinations = [] } = {}) {
   if (!node || typeof node !== 'object' || typeof renderShortHtml !== 'function') {
     return '';
   }
 
-  const role = stringOrNull(node.role) ?? 'CLIENT';
+  // Not defaulted to CLIENT here, unlike the nodes table: a detail view states
+  // what the node reported, and a synthesised role is exactly the stand-in
+  // SPEC RA6 argues against. It is also what makes the all-absent fallback
+  // reachable -- with a default, Activity always survived and the honest
+  // "No telemetry reported." line could never render.
+  const role = stringOrNull(node.role);
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
   const battery = formatBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
@@ -104,8 +122,20 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
 
   // Grouped by the same seven groups the nodes table uses (SPEC UX9); Identity
   // and the long name are in the page header, so the sheet omits them.
+  // Identity (SPEC RA5): only Reticulum fills this, and it comes from the
+  // destination rows because /api/nodes deliberately does not serve
+  // identity_hash (CONTRACTS). An identity with no destinations contributes
+  // nothing, so the group collapses away for every other protocol.
+  const identity = identitySummary(destinations);
+  const firstHeardTs = numberOrNull(node?.first_heard ?? node?.firstHeard);
   const groups = [
+    ['Identity', [
+      specField('Identity hash', identity.identityHash),
+      specField('Destinations', identity.count > 0 ? identity.count : null),
+      specField('Interface', identity.interface),
+    ]],
     ['Activity', [
+      specField('First Heard', firstHeardTs == null ? null : formatRelativeSeconds(firstHeardTs, referenceSeconds)),
       specField('Last Seen', lastSeen, lastSeenAttrs),
       specField('Role', role),
     ]],
@@ -132,11 +162,29 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
     ]],
   ];
 
-  const groupsHtml = groups
+  // A detail view renders a field only when it has a value, and a group only
+  // when a field survives (SPEC RA6, amending UX4's overlay-parity clause). The
+  // nodes table keeps its dashes: at table width a dash separates "not reported"
+  // from "still loading", a distinction a detail view does not need because it
+  // renders after its data. `isReportedField` is the table's own classifier, so
+  // honest zeros (0%, 0 V) survive here exactly as they do there.
+  const reported = groups
+    .map(([title, fields]) => [title, fields.filter(isReportedField)])
+    .filter(([, fields]) => fields.length > 0);
+
+  if (reported.length === 0) {
+    return (
+      '<div class="node-detail-sheet" aria-label="Selected node details">' +
+      '<p class="node-extra__empty">No telemetry reported.</p>' +
+      '</div>'
+    );
+  }
+
+  const groupsHtml = reported
     .map(([title, fields]) =>
       `<section class="node-detail-sheet__group">` +
       `<h3 class="node-detail-sheet__group-title">${title}</h3>` +
-      `<dl class="node-detail__row">${fields.join('')}</dl>` +
+      `<dl class="node-detail__row">${fields.map(specFieldHtml).join('')}</dl>` +
       `</section>`,
     )
     .join('');

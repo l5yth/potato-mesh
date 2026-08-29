@@ -168,7 +168,19 @@ import {
   mergePositionsIntoNodes,
   mergeTelemetryIntoNodes,
 } from './main/data-merge.js';
+import { defaultRoleFor } from './role-helpers.js';
 import { renderShortHtml } from './main/short-html-renderer.js';
+import { loadDestinationIndex } from './main/destination-index.js';
+import {
+  aspectLabel,
+  countDestinations,
+  disclosureCellHtml,
+  formatProtocolCount,
+  newestLastHeard,
+  planIdentityRows,
+  roleChipsHtml,
+  subRowCellsHtml,
+} from './main/identity-groups.js';
 import {
   NODE_LIMIT,
   NODE_TABLE_RENDER_CAP,
@@ -472,6 +484,11 @@ export function initializeApp(config) {
    * refreshes keep showing every row.
    */
   let nodeTableExpanded = false;
+  // Reticulum destinations, joined into the table by node_id (SPEC RA4). Loaded
+  // in the background after first paint, so both start empty and the table
+  // simply renders without groups until pages arrive (RA8).
+  let destinationIndex = new Map();
+  const expandedIdentities = new Set();
   /** Number of node rows the last {@link renderTable} actually rendered (test hook). */
   let lastRenderedNodeCount = 0;
 
@@ -866,6 +883,24 @@ export function initializeApp(config) {
   if (nodesTbody && typeof nodesTbody.addEventListener === 'function') {
     nodesTbody.addEventListener('click', event => {
       const target = event && event.target ? event.target : null;
+      // Identity disclosure (SPEC RA1): toggling re-renders through the normal
+      // path so sub-rows are built by the same plan that ordered the parents,
+      // rather than being spliced into the DOM out of band.
+      const identityToggle = target && typeof target.closest === 'function'
+        ? target.closest('.identity-disclosure')
+        : null;
+      if (identityToggle) {
+        const identity = identityToggle.dataset ? identityToggle.dataset.identity : '';
+        if (identity) {
+          if (expandedIdentities.has(identity)) {
+            expandedIdentities.delete(identity);
+          } else {
+            expandedIdentities.add(identity);
+          }
+          applyFilter();
+        }
+        return;
+      }
       const toggle = target && typeof target.closest === 'function'
         ? target.closest('.node-extra-toggle')
         : null;
@@ -881,6 +916,7 @@ export function initializeApp(config) {
       }
       const row = target && typeof target.closest === 'function' ? target.closest('tr') : null;
       if (!row || !row.classList || row.classList.contains('node-extra') ||
+          row.classList.contains('nodes-subrow') ||
           row.classList.contains('nodes-empty-row')) {
         return;
       }
@@ -2543,7 +2579,7 @@ export function initializeApp(config) {
       lines.push(`Model: ${escapeHtml(hardwareText)}`);
     }
 
-    const roleValue = node?.role || 'CLIENT';
+    const roleValue = node?.role || defaultRoleFor(node?.protocol);
     if (roleValue) {
       lines.push(`Role: ${escapeHtml(roleValue)}`);
     }
@@ -2703,7 +2739,7 @@ export function initializeApp(config) {
       merged.neighbors = neighborList;
     }
     if (!merged.role || merged.role === '') {
-      merged.role = 'CLIENT';
+      merged.role = defaultRoleFor(merged.protocol);
     }
     return merged;
   }
@@ -2743,7 +2779,7 @@ export function initializeApp(config) {
     if (!target || !info) return;
     const overlayInfo = normalizeOverlaySource(info);
     if (!overlayInfo.role || overlayInfo.role === '') {
-      overlayInfo.role = 'CLIENT';
+      overlayInfo.role = defaultRoleFor(overlayInfo.protocol);
     }
     overlayStack.render(target, buildShortInfoOverlayHtml(overlayInfo));
   }
@@ -2792,7 +2828,7 @@ export function initializeApp(config) {
     if (modemDisplay) {
       lines.push(escapeHtml(modemDisplay));
     }
-    const roleValue = shortInfoValueOrDash(overlayInfo.role || 'CLIENT');
+    const roleValue = shortInfoValueOrDash(overlayInfo.role || defaultRoleFor(overlayInfo.protocol));
     if (roleValue !== '—') {
       lines.push(`Role: ${escapeHtml(roleValue)}`);
     }
@@ -4360,7 +4396,18 @@ export function initializeApp(config) {
     const { renderNodes, capped } = capNodesForRender(nodes, NODE_TABLE_RENDER_CAP, nodeTableExpanded);
     lastRenderedNodeCount = renderNodes.length;
     let rowIndex = 0;
-    for (const n of renderNodes) {
+    // Identity groups (SPEC RA1/RA2): parents keep the active sort order and
+    // each group's destinations follow the identity they belong to, so no sort
+    // interleaves one identity's addresses with another's.
+    const rowPlan = planIdentityRows(renderNodes, destinationIndex, expandedIdentities);
+    for (const planned of rowPlan) {
+      // A grouped parent reports the newest announce across its destinations
+      // (SPEC RA1). Resolved here, before anything reads last_heard, so the
+      // freshness bucket and the Last Seen cell agree.
+      const groupLastHeard = planned.isGroup ? newestLastHeard(planned.destinations) : null;
+      const n = groupLastHeard == null
+        ? planned.node
+        : { ...planned.node, last_heard: groupLastHeard };
       const tr = document.createElement('tr');
       // Zebra striping is stamped per node row because the hidden disclosure
       // rows (SPEC UX9) would otherwise consume every even nth-child slot.
@@ -4396,7 +4443,18 @@ export function initializeApp(config) {
       const resolvedPreset = formatPresetDisplay(modemMetadata.modemPreset, modemMetadata.loraFreq);
       const modemPresetDisplay = resolvedPreset ? escapeHtml(resolvedPreset) : '';
       const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+      // Every row keeps its protocol tile: swapping the glyph for the caret
+      // cost Reticulum rows their only protocol marker in the table. The
+      // disclosure moves to the trailing cell instead, beside the `+`.
       const protocolIconCell = protocolIconPrefixHtml(n.protocol);
+      const disclosureHtml = planned.isGroup
+        ? disclosureCellHtml(planned.isExpanded, n.node_id)
+        : '';
+      // Role cell carries one chip per aspect for a group; everything else
+      // keeps the plain role text it always had (Invariant IV).
+      const roleCellHtml = planned.isGroup
+        ? roleChipsHtml(planned.destinations, n.protocol)
+        : escapeHtml(n.role || defaultRoleFor(n.protocol));
       // Measurement cells render the muted dash for absent values (SPEC UX4)
       // and honest numbers (SPEC UX10); `num` columns right-align in the mono
       // face via CSS.
@@ -4408,7 +4466,7 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--frequency num">${formatTableCell(loraFrequencyDisplay)}</td>
         <td class="nodes-col nodes-col--modem-preset">${formatTableCell(modemPresetDisplay)}</td>
         ${timestampCells.lastSeen}
-        <td class="nodes-col nodes-col--role">${escapeHtml(n.role || "CLIENT")}</td>
+        <td class="nodes-col nodes-col--role">${roleCellHtml}</td>
         <td class="nodes-col nodes-col--hw-model">${formatTableCell(escapeHtml(fmtHw(n.hw_model)))}</td>
         <td class="nodes-col nodes-col--battery num">${formatTableCell(fmtBattery(n.battery_level))}</td>
         <td class="nodes-col nodes-col--voltage num">${formatTableCell(fmtVoltage(n.voltage))}</td>
@@ -4422,7 +4480,7 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--longitude num">${formatTableCell(longitudeDisplay)}</td>
         <td class="nodes-col nodes-col--altitude num">${formatTableCell(fmtAlt(n.altitude, "m"))}</td>
         ${timestampCells.lastPosition}
-        <td class="nodes-col nodes-col--more"><button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
+        <td class="nodes-col nodes-col--more">${disclosureHtml}<button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
 
       enhanceCoordinateCell({
         cell: tr.querySelector('.nodes-col--latitude'),
@@ -4448,6 +4506,28 @@ export function initializeApp(config) {
       });
       frag.appendChild(tr);
 
+      // Destination sub-rows (SPEC RA2). The aspect takes over the first two
+      // columns as its own leading cell -- the one thing a destination has that
+      // its identity does not -- and every column past Long Name reports the
+      // muted dash, because a destination has no radio, battery or position.
+      for (const destination of planned.subRows) {
+        const subRow = document.createElement('tr');
+        // classList, matching the parent row above: some consumers (and the
+        // test DOM) read classList rather than the className string.
+        if (subRow.classList && typeof subRow.classList.add === 'function') {
+          subRow.classList.add('nodes-subrow');
+        } else {
+          subRow.className = 'nodes-subrow';
+        }
+        subRow.innerHTML = subRowCellsHtml(
+          destination,
+          n.node_id,
+          buildNodeRowTimestampCellsHtml({ last_heard: destination.last_heard }, nowSec).lastSeen,
+          renderShortHtml,
+        );
+        frag.appendChild(subRow);
+      }
+
       // Hidden-field disclosure row (SPEC UX9): the `+` cell reveals every
       // field the smallest responsive tier hides, so the mobile view loses
       // nothing permanently. Values reuse the display strings computed above.
@@ -4459,7 +4539,7 @@ export function initializeApp(config) {
           { label: 'Node ID', valueHtml: formatTableCell(escapeHtml(n.node_id || '')) },
           { label: 'Frequency', valueHtml: formatTableCell(loraFrequencyDisplay) },
           { label: 'LoRa Preset', valueHtml: formatTableCell(modemPresetDisplay) },
-          { label: 'Role', valueHtml: escapeHtml(n.role || 'CLIENT') },
+          { label: 'Role', valueHtml: escapeHtml(n.role || defaultRoleFor(n.protocol)) },
           { label: 'HW Model', valueHtml: formatTableCell(escapeHtml(fmtHw(n.hw_model))) },
           { label: 'Voltage', valueHtml: formatTableCell(fmtVoltage(n.voltage)) },
           { label: 'Uptime', valueHtml: formatTableCell(timeHum(n.uptime_seconds)) },
@@ -5716,7 +5796,18 @@ export function initializeApp(config) {
     if (!meshcoreCountEl && !meshtasticCountEl && !reticulumCountEl) return;
     if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${stats?.meshcore?.week ?? 0})`;
     if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${stats?.meshtastic?.week ?? 0})`;
-    if (reticulumCountEl) reticulumCountEl.textContent = ` (${stats?.reticulum?.week ?? 0})`;
+    // Reticulum alone can hold several addresses per node, so only it carries
+    // the bracketed destination count (SPEC RA3).
+    if (reticulumCountEl) {
+      // The legend brackets a bare count itself (" (26)"), so a destination
+      // count must not be bracketed twice -- that rendered "Reticulum (3 (8))".
+      // With no destinations loaded the column is byte-identical to before.
+      const destinationTotal = countDestinations(destinationIndex) || null;
+      const reticulumWeek = stats?.reticulum?.week ?? 0;
+      reticulumCountEl.textContent = destinationTotal
+        ? ` ${formatProtocolCount(reticulumWeek, destinationTotal)}`
+        : ` (${reticulumWeek})`;
+    }
   }
 
   /**
@@ -5738,7 +5829,8 @@ export function initializeApp(config) {
       protocolToggleMeshtasticCount.textContent = String(stats?.meshtastic?.week ?? 0);
     }
     if (protocolToggleReticulumCount) {
-      protocolToggleReticulumCount.textContent = String(stats?.reticulum?.week ?? 0);
+      protocolToggleReticulumCount.textContent =
+        formatProtocolCount(stats?.reticulum?.week ?? 0, countDestinations(destinationIndex) || null);
     }
   }
 
@@ -5818,6 +5910,23 @@ export function initializeApp(config) {
     });
   }
 
+  // Reticulum destinations load in the background after first paint (SPEC RA8).
+  // The table is already rendering from /api/nodes by now; each page that lands
+  // repaints it with more groups, and a failing or slow walk simply leaves the
+  // table ungrouped rather than blocking it. `loadDestinationIndex` never
+  // rejects, so this needs no catch of its own.
+  // Gated on the same +runsOwnPageModule+ guard as the rest of the data
+  // pipeline: /charts, /federation and the node-detail view run their own page
+  // modules and must issue no dashboard fetches at all (frontend perf).
+  if (!runsOwnPageModule) {
+    void loadDestinationIndex({
+      onUpdate: index => {
+        destinationIndex = index;
+        applyFilter();
+      },
+    });
+  }
+
   // One shared presentation clock keeps every data-ts-ago field counting up
   // between data refreshes (SPEC RT1/RT2): no fetch, no refresh-cadence change,
   // in-place text writes only. It ignores the play/pause toggle and idles
@@ -5833,6 +5942,17 @@ export function initializeApp(config) {
   return {
     _testUtils: {
       buildMapPopupHtml,
+      /**
+       * Identity-group state (SPEC RA1/RA3). Exposed so the render path can be
+       * driven from tests: the index and the expanded set are closure-private,
+       * which left the sub-row emission, the disclosure toggle and the
+       * `identities (destinations)` legend branch unreachable and untested.
+       */
+      setDestinationIndex: index => { destinationIndex = index; },
+      getExpandedIdentities: () => expandedIdentities,
+      renderTable,
+      updateLegendProtocolCounts,
+      updateProtocolToggleCounts,
       /** Short-info overlay HTML builder — carries the RT1 "Last seen" tick line. */
       buildShortInfoOverlayHtml,
       /** The app's shared relative-time ticker handle (SPEC RT1–RT3). */

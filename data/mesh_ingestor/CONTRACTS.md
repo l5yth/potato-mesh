@@ -335,9 +335,9 @@ The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_wee
 
 ### GET endpoint backward pagination (`?before=`)
 
-The seven bulk collection endpoints — `GET /api/nodes`, `/api/positions`,
-`/api/telemetry`, `/api/neighbors`, `/api/traces`, `/api/ingestors`, and
-`/api/waypoints` — plus the
+The eight bulk collection endpoints — `GET /api/nodes`, `/api/positions`,
+`/api/telemetry`, `/api/neighbors`, `/api/traces`, `/api/ingestors`,
+`/api/waypoints`, and `/api/destinations` — plus the
 pre-existing `GET /api/messages` cursor accept an optional `?before=<unix_seconds>`
 **inclusive upper-bound cursor** for backward pagination. It is the companion to
 `?since=`: where `since` raises the lower bound of the window, `before` lowers the
@@ -354,6 +354,7 @@ already orders by, newest first:
 | `GET /api/traces` | `rx_time` |
 | `GET /api/ingestors` | `last_seen_time` |
 | `GET /api/waypoints` | `rx_time` |
+| `GET /api/destinations` | `last_heard` |
 
 To page backward through more than one `limit`-sized response (the per-request cap
 is `MAX_QUERY_LIMIT` = 1000), walk newest → oldest: fetch a page, then re-request
@@ -391,7 +392,15 @@ node snapshot.
 
 One row per announced destination, newest `last_heard` first.
 
-- Query params: `?limit=` (capped like other collections), `?node_id=` to filter to one node.
+- Query params: `?limit=` (capped like other collections), `?since=` and
+  `?before=` bounding `last_heard` exactly as the other bulk collections do
+  (SPEC RA8), and `?node_id=` to filter to one node. All four compose.
+- **No retention floor.** A destination is a relationship, not an event, and the
+  nodes it belongs to already clamp their own window — a floor here would hide
+  the addresses of a node the table is still showing.
+- This route holds no response cache, so `since`/`before` have no cached path to
+  bypass; the weak ETag varies with the cursor because it is hashed from the
+  body the cursor produced.
 - Fields: `id` (destination hash, hex), `node_id`, `identity_hash`, `name`,
   `aspect`, `role`, `interface`, `first_heard`, `last_heard`, `protocol`.
 - `identity_hash` groups rows belonging to one peer; several rows share it when

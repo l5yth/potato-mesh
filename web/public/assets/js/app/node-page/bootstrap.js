@@ -22,7 +22,7 @@
 
 import { escapeHtml } from '../utils.js';
 import { refreshNodeInformation } from '../node-details.js';
-import { fetchMessages, fetchNodesById, fetchTracesForNode, fetchWaypointsForNode } from '../node-page-data.js';
+import { fetchDestinationsForNode, fetchMessages, fetchNodesById, fetchTracesForNode, fetchWaypointsForNode } from '../node-page-data.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { buildNeighborRoleIndex } from './role-index.js';
 import { buildTraceRoleIndex } from './traces.js';
@@ -127,7 +127,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
   // the page's own node — without it, mention badges silently degrade to
   // plain ``@[Name]`` text and leading-mention replies don't surface as
   // ``[in reply to ...]`` prefixes.
-  const [messages, traces, waypoints, nodesById] = await Promise.all([
+  const [messages, traces, waypoints, nodesById, destinations] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
@@ -138,6 +138,9 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
       privateMode: options.privateMode === true,
     }),
     fetchNodesById({ fetchImpl: options.fetchImpl }),
+    // Destinations for the identity page (SPEC RA5); empty for every
+    // non-Reticulum node, which is what keeps the section absent there.
+    fetchDestinationsForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
   ]);
   const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
   return renderNodeDetailHtml(node, {
@@ -145,6 +148,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     messages,
     traces,
     waypoints,
+    destinations,
     renderShortHtml,
     roleIndex,
     nodesById,

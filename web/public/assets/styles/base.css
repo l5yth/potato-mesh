@@ -2948,24 +2948,68 @@ button.legend-item[aria-pressed="true"] {
 /* Mobile disclosure column (UX9, D-007): hidden while every column fits,
    revealed as soon as the first responsive tier hides data. */
 .nodes-col--more {
-  width: 32px;
-  min-width: 32px;
+  width: 42px;
+  min-width: 42px;
   text-align: center;
-  display: none;
+  /* Always present: it now also carries the identity-group caret (SPEC RA1),
+     which must stay reachable at every width. A table column cannot be shown
+     per row, so the column is constant and the `+` keeps its own rule below. */
+  display: table-cell;
   padding-inline: 2px;
+  white-space: nowrap;
 }
 
-@media (max-width: 1679px) {
-  .nodes-col--more {
-    display: table-cell;
+/* The `+` still appears only once a responsive tier has hidden something —
+   unchanged behaviour, moved from the column to the control. */
+@media (min-width: 1680px) {
+  .node-extra-toggle {
+    display: none;
   }
 }
 
-.node-extra-toggle {
-  min-width: 24px;
-  min-height: 24px;
-  border-radius: 6px;
+/* Row controls sit inside the row's own line box: a 24 px min-height pushed a
+   ~24 px row to ~33 px, so a Reticulum parent stood taller than every other
+   row. The hit area is restored on coarse pointers below, where it matters. */
+.node-extra-toggle,
+.identity-disclosure {
+  /* Explicitly square and flex-centred. The global
+     `button:not(.chat-tab):not(.sort-button)` rule applies `padding: 6px 10px`,
+     so resetting only the height left a stretched box with the glyph off its
+     centre line. A fixed box plus flex centring is independent of the glyph's
+     own metrics, which differ between `+`, `−`, `▸` and `▾`. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 4px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+@media (pointer: coarse) {
+  .node-extra-toggle,
+  .identity-disclosure {
+    position: relative;
+  }
+
+  /* Transparent 44 px target centred on the control, without affecting layout. */
+  .node-extra-toggle::after,
+  .identity-disclosure::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .node-extra > td {
@@ -3214,4 +3258,104 @@ button.legend-item[aria-pressed="true"] {
 
 #nodes tbody tr.node-extra > td {
   background: var(--card);
+}
+
+/* --- Reticulum identity groups (SPEC RA1/RA2) ---------------------------- */
+
+/* The disclosure replaces the tile glyph on a grouped identity, so it carries
+   the tile's violet inset itself: a collapsed group must still read as
+   Reticulum before it opens (RA1). */
+.identity-disclosure {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  margin-right: 2px;
+  /* No violet fill. RD5 pins #7b61ff as failing the UX2 4.5:1 floor as a text
+     background (its best case is 4.39:1), and the row now keeps its protocol
+     tile, so the caret no longer needs to carry the protocol's colour. Plain
+     foreground-on-transparent clears the floor by the page's own contrast. */
+  color: var(--fg);
+  background: transparent;
+  border-radius: 3px;
+}
+
+.identity-disclosure:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+/* One chip per aspect on a parent row's Role cell. Colours are inlined from
+   reticulumRoleColors (RD5) with their computed contrast text (UX2); only the
+   box belongs here. */
+.role-chip {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 2px;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* The overflow chip counts roles the budget hid, so it stays neutral rather
+   than borrowing any one role's colour. */
+.role-chip--overflow {
+  background: var(--card);
+  color: var(--muted);
+  border: 1px solid var(--muted);
+}
+
+/* Sub-rows sit visually inside their parent: indented, quieter, and without
+   the parent's hover affordance since they are not themselves navigable. */
+#nodes tbody tr.nodes-subrow > td {
+  background: var(--card);
+}
+
+/* The row-hover rule does not exclude sub-rows and outranks the block above on
+   specificity, so a sub-row offered a pointer and a hover tint while the click
+   handler ignores it -- an affordance for something that does nothing. */
+#nodes tbody tr.nodes-subrow:hover > td {
+  background: var(--card);
+  cursor: default;
+}
+
+.nodes-subrow__spacer {
+  border-left: 2px solid #7b61ff;
+}
+
+.nodes-subrow__aspect {
+  color: var(--fg);
+  padding-left: 8px;
+}
+
+.nodes-subrow__id {
+  color: var(--muted);
+}
+
+/* Destinations table on the identity page (SPEC RA5). The full 32-hex hashes
+   are long, so the table scrolls inside its own container rather than forcing
+   the page to. */
+.node-detail__destinations {
+  overflow-x: auto;
+}
+
+.destinations {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.destinations th,
+.destinations td {
+  text-align: left;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.destinations th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.destinations__id {
+  font-size: 0.9em;
 }

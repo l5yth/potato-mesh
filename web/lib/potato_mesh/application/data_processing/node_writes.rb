@@ -88,9 +88,17 @@ module PotatoMesh
         )
         return if existing
 
-        long_name = "#{protocol_display_label(protocol)} #{short_id}"
+        # Protocol-scoped so the placeholder matches the badge and the guard
+        # that recognises it (see +placeholder_short_id+).
+        long_name = "#{protocol_display_label(protocol)} #{placeholder_short_id(node_id, protocol)}"
+        # Each protocol falls back to its own base role: CLIENT is a Meshtastic
+        # role, so using it everywhere labelled a Meshcore or Reticulum node as
+        # something its protocol has no concept of. Meshtastic keeps
+        # CLIENT_HIDDEN for synthetic placeholders so they stay off the map
+        # until the node is actually heard from.
         default_role = case protocol
           when "meshcore" then "COMPANION"
+          when "reticulum" then "PEER"
           else "CLIENT_HIDDEN"
           end
         heard_time = coerce_integer(heard_time)

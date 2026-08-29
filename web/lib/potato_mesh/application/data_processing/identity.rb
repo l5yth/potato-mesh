@@ -166,11 +166,36 @@ module PotatoMesh
       def generic_fallback_name?(long_name, node_id, protocol)
         return false unless long_name && !long_name.empty?
 
-        parts = canonical_node_parts(node_id)
-        return false unless parts
+        short_id = placeholder_short_id(node_id, protocol)
+        return false unless short_id
 
-        short_id = parts[2]
         long_name == "#{protocol_display_label(protocol)} #{short_id}"
+      end
+
+      # The four hex digits a generic placeholder name is built from.
+      #
+      # Protocol-scoped because the two id spaces read from opposite ends. A
+      # Meshtastic +node_id+ is a node num whose **low** bits are the
+      # conventional short id, and the badge shows those. A Reticulum id is the
+      # **head** of a 16-byte hash, and its badge shows the head -- so building
+      # the placeholder from the tail made the badge and the name disagree
+      # (+!27716218+ badged +2771+ but named +Reticulum 6218+).
+      #
+      # Must stay in lockstep with the ingestor's own placeholder: this method
+      # is what recognises a placeholder so a real name is never overwritten by
+      # one, and a mismatch would silently break that guard.
+      #
+      # @param node_id [String, nil] canonical node identifier.
+      # @param protocol [String, nil] protocol the placeholder belongs to.
+      # @return [String, nil] upper-case four-hex short id, or nil.
+      def placeholder_short_id(node_id, protocol)
+        parts = canonical_node_parts(node_id)
+        return nil unless parts
+
+        return parts[2] unless protocol.to_s == "reticulum"
+
+        hex = parts[0].to_s.delete_prefix("!")
+        hex.length >= 4 ? hex[0, 4].upcase : parts[2]
       end
 
       # Resolve a raw node reference to its canonical row in the +nodes+ table.

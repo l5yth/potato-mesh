@@ -147,6 +147,38 @@ export async function fetchWaypointsForNode(identifier, { fetchImpl, privateMode
   return Array.isArray(payload) ? payload : [];
 }
 
+/** Maximum destinations to request for one identity's page (SPEC RA5). */
+const DESTINATION_LIMIT = 200;
+
+/**
+ * Fetch the destinations announced by one identity, for the node page's
+ * Destinations section (SPEC RA5).
+ *
+ * Fails soft like the waypoints fetcher: a 404, a non-2xx, or an unusable body
+ * yields `[]`, so the section is simply absent rather than the page erroring.
+ * This is also what keeps the section invisible for Meshtastic and Meshcore
+ * nodes, which have no destinations at all.
+ *
+ * @param {string|number} identifier Canonical node identifier.
+ * @param {{ fetchImpl?: Function }} [options] Fetch options.
+ * @returns {Promise<Array<Object>>} Destination rows, or `[]`.
+ */
+export async function fetchDestinationsForNode(identifier, { fetchImpl } = {}) {
+  if (identifier == null) return [];
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') return [];
+  const encodedId = encodeURIComponent(String(identifier));
+  const url = `/api/destinations?node_id=${encodedId}&limit=${DESTINATION_LIMIT}`;
+  try {
+    const response = await fetchFn(url, DEFAULT_FETCH_OPTIONS);
+    if (!response || !response.ok) return [];
+    const payload = await response.json();
+    return Array.isArray(payload) ? payload : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Fetch traceroute records for a node reference.
  *

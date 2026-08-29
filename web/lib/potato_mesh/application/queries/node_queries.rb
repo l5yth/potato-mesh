@@ -326,9 +326,12 @@ module PotatoMesh
       #
       # @param limit [Integer] maximum rows to return.
       # @param node_id [String, nil] restrict to one node's destinations.
+      # @param since [Object] inclusive lower bound on +last_heard+.
+      # @param before [Object] inclusive upper-bound cursor on +last_heard+
+      #   (SPEC RA8); non-positive or non-integer values are ignored.
       # @param db [SQLite3::Database, nil] optional open handle to reuse.
       # @return [Array<Hash>] destination rows, most recently heard first.
-      def query_destinations(limit, node_id: nil, db: nil)
+      def query_destinations(limit, node_id: nil, since: 0, before: nil, db: nil)
         handle = db || open_database(readonly: true)
         handle.results_as_hash = true
         clauses = []
@@ -337,6 +340,17 @@ module PotatoMesh
           clauses << "node_id = ?"
           params << node_id
         end
+        # +since+/+before+ bound +last_heard+, this route's primary sort column,
+        # matching the seven bulk collections (SPEC RA8/BP1). No retention floor
+        # is imposed: a destination is a relationship, not an event, and the
+        # nodes it belongs to already clamp their own window -- a floor here
+        # would hide the addresses of a node the table is still showing.
+        threshold = normalize_since_threshold(since)
+        if threshold.positive?
+          clauses << "last_heard >= ?"
+          params << threshold
+        end
+        append_before_filter(clauses, params, before, column: "last_heard")
         sql = +"SELECT id, node_id, identity_hash, name, aspect, role, interface, " \
                "first_heard, last_heard, protocol FROM destinations"
         sql << " WHERE #{clauses.join(" AND ")}" if clauses.any?
