@@ -312,7 +312,12 @@ export function subRowCellsHtml(destination, parentNodeId, lastSeenCellHtml, ren
   const name = typeof destination?.name === 'string' ? destination.name.trim() : '';
   const nameCell = [
     name ? escapeHtml(name) : formatTableCell(''),
-    shortId ? `<span class="nodes-subrow__id mono">[${escapeHtml(shortId)}]</span>` : '',
+    // A link, not decoration (SPEC RL5): /nodes/!<destination> canonicalises to
+    // the owning identity (RA5), and until this existed the route was reachable
+    // only by typing a URL.
+    shortId
+      ? `<a class="nodes-subrow__id mono" href="/nodes/${encodeURIComponent(shortId)}#dest-${escapeHtml(destinationId.slice(0, 8))}">[${escapeHtml(shortId)}]</a>`
+      : '',
   ].filter(Boolean).join(' ');
   const blank = formatTableCell('');
   const blanks = [
@@ -332,7 +337,12 @@ export function subRowCellsHtml(destination, parentNodeId, lastSeenCellHtml, ren
     `<td class="nodes-col nodes-col--long-name">${nameCell}</td>` +
     blanks +
     lastSeenCellHtml +
-    `<td class="nodes-col nodes-col--role">${formatTableCell(escapeHtml(destination?.role || ''))}</td>` +
+    // The role renders as a chip in its protocol colour, exactly as it does on
+    // the parent row -- a sub-row that spells its role in plain text while the
+    // row above it uses colour reads as two different kinds of value.
+    `<td class="nodes-col nodes-col--role">${
+      destination?.role ? roleChipsHtml([destination], 'reticulum') : formatTableCell('')
+    }</td>` +
     trailing +
     '<td class="nodes-col nodes-col--more"></td>'
   );

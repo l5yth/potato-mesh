@@ -381,6 +381,18 @@
                 description = "RNS config directory for protocol=reticulum; defaults to ~/.reticulum. Point it at the directory rnsd uses so interface filtering resolves names";
               };
 
+              reticulumFreq = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Frequency shown for Reticulum nodes; overrides the value read from the RNS config";
+              };
+
+              reticulumPreset = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Radio preset shown for Reticulum nodes; overrides the value derived from the RNS config's bandwidth/spreading factor/coding rate";
+              };
+
               reticulumInterfaces = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
@@ -555,6 +567,10 @@
                 INGESTOR_NODE_ID = cfg.ingestor.nodeId;
               } // lib.optionalAttrs (cfg.ingestor.reticulumConfigDir != null) {
                 RETICULUM_CONFIG_DIR = cfg.ingestor.reticulumConfigDir;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumFreq != null) {
+                RETICULUM_FREQ = cfg.ingestor.reticulumFreq;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumPreset != null) {
+                RETICULUM_PRESET = cfg.ingestor.reticulumPreset;
               } // lib.optionalAttrs (cfg.ingestor.reticulumInterfaces != null) {
                 RETICULUM_INTERFACES = cfg.ingestor.reticulumInterfaces;
               } // lib.optionalAttrs (cfg.allowedChannels != null) {

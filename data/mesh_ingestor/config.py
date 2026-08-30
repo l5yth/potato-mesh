@@ -275,6 +275,21 @@ lowercased substring of the interface's string form, e.g. ``rnode``).
 **Empty (the default) ingests every interface**, preserving the behaviour the
 provider shipped with (#888)."""
 
+RETICULUM_FREQ: str | None = (
+    _clean_env_fragment(os.environ.get("RETICULUM_FREQ", "")) or None
+)
+"""Operator override for the Reticulum LoRa frequency (SPEC RL1).
+
+Wins over the value parsed from the RNS config, mirroring how
+:envvar:`FREQUENCY` overrides the auto-detected :data:`LORA_FREQ`.
+"""
+
+RETICULUM_PRESET: str | None = (
+    _clean_env_fragment(os.environ.get("RETICULUM_PRESET", "")) or None
+)
+"""Operator override for the Reticulum radio preset label (SPEC RL1)."""
+
+
 _raw_transport = os.environ.get("TRANSPORT", "api").strip().lower()
 if _raw_transport not in ("api", "udp"):
     raise ValueError(f"Unknown TRANSPORT={_raw_transport!r}. Valid options: api, udp")
@@ -625,7 +640,9 @@ __all__ = [
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
     "RETICULUM_CONFIG_DIR",
+    "RETICULUM_FREQ",
     "RETICULUM_INTERFACES",
+    "RETICULUM_PRESET",
     "TX_ENABLED",
     "TX_ANNOUNCE",
     "RX_ONLY",

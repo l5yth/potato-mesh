@@ -97,11 +97,20 @@ export function renderDestinationsSection(destinations, { nowSeconds = Date.now(
   const body = rows.map(row => {
     const label = aspectLabel(row?.aspect);
     const id = typeof row?.id === 'string' ? row.id.trim() : '';
+    // The anchor a destination link targets, so arriving from a sub-row lands
+    // on the row it names rather than the top of the table.
+    const anchor = id ? ` id="dest-${escapeHtml(id.slice(0, 8))}"` : '';
     return (
-      '<tr>' +
+      `<tr${anchor}>` +
       `<td class="destinations__aspect">${label ? escapeHtml(label) : EMPTY_CELL_HTML}</td>` +
       // The full hash, deliberately: this is the one view that shows it.
-      `<td class="destinations__id mono">${id ? escapeHtml(id) : EMPTY_CELL_HTML}</td>` +
+      // The full hash links to its own /nodes/!<short>, which canonicalises
+      // back to this page and lands on this row's anchor (SPEC RL5).
+      `<td class="destinations__id mono">${
+        id
+          ? `<a href="/nodes/!${escapeHtml(id.slice(0, 8))}">${escapeHtml(id)}</a>`
+          : EMPTY_CELL_HTML
+      }</td>` +
       `<td class="destinations__name">${cell(row?.name)}</td>` +
       `<td class="destinations__role">${cell(row?.role)}</td>` +
       `<td class="destinations__interface">${cell(row?.interface)}</td>` +

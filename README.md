@@ -339,6 +339,8 @@ appear in the allowlist.
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
+| `RETICULUM_FREQ` | _from RNS config_ | Frequency shown for Reticulum nodes. Overrides the value read from your `RNodeInterface` section. |
+| `RETICULUM_PRESET` | _from RNS config_ | Radio preset shown for Reticulum nodes. Overrides the value derived from your bandwidth/spreading-factor/coding-rate. |
 | `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
@@ -461,6 +463,15 @@ and not the hash `rnstatus` prints as "Transport Instance".
 `INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
 `/api/ingestors` without heartbeats until it ages out. Leaving the variable
 as-is across upgrades is inert.
+
+**Frequency and preset** are read from the first `RNodeInterface` in your RNS
+config; `RETICULUM_FREQ` and `RETICULUM_PRESET` override them. A preset whose
+bandwidth, spreading factor and coding rate match a Meshtastic preset shows that
+name — it describes the radio settings, not compatibility with a Meshtastic
+mesh — otherwise it shows `SF8/BW125/CR5`.
+
+The values are read once at startup. Change them in the RNS config and restart
+the ingestor, or the dashboard keeps showing the old ones.
 
 A node appears once per announced destination, so one peer running LXMF and a
 nomadnet node shows up as two entries. `GET /api/destinations` lists them and

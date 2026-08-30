@@ -159,3 +159,61 @@ test('the Destinations section is pushed into the node detail (SPEC RA5)', async
   });
   assert.doesNotMatch(without, /node-detail__destinations/);
 });
+
+test('a destination hash links to its identity page and its row is anchored (SPEC RL5)', () => {
+  // RA5 specified that /nodes/!<destination> canonicalises to the owning
+  // identity, and the route does — but nothing in the interface ever emitted
+  // the link, so the behaviour was reachable only by typing a URL. A spec claim
+  // no interface exercises is indistinguishable from one that is false.
+  const html = renderDestinationsSection(DESTINATIONS, { nowSeconds: NOW });
+  for (const d of DESTINATIONS) {
+    const short = d.id.slice(0, 8);
+    assert.ok(
+      html.includes(`<a href="/nodes/!${short}">${d.id}</a>`),
+      `${d.id} is not a link to its identity page`,
+    );
+    assert.ok(html.includes(`<tr id="dest-${short}">`), `${d.id} has no anchor`);
+  }
+});
+
+test('a destination with no id renders neither a link nor an anchor', () => {
+  const html = renderDestinationsSection(
+    [{ node_id: '!27716218', aspect: 'lxmf.delivery', role: 'PEER', name: null }],
+    { nowSeconds: NOW },
+  );
+  assert.doesNotMatch(html, /<a href="\/nodes\//);
+  assert.doesNotMatch(html, /<tr id="dest-/);
+});
+
+test('the fragment is re-targeted after the table renders (SPEC RL5)', async () => {
+  // The destinations table is built after several awaited fetches, so the
+  // browser resolved `#dest-…` against a page that did not yet contain the row.
+  // Without this the link resolved but landed at the top of the page — the
+  // "lands on the row it names" half of RL5 silently did nothing.
+  const { scrollToHashTarget } = await import('../bootstrap.js');
+  const scrolled = [];
+  const doc = {
+    location: { hash: '#dest-4cf985bf' },
+    getElementById: id => (id === 'dest-4cf985bf'
+      ? { scrollIntoView: () => scrolled.push(id) }
+      : null),
+  };
+  assert.equal(scrollToHashTarget(doc), true);
+  assert.deepEqual(scrolled, ['dest-4cf985bf']);
+});
+
+test('re-targeting is a no-op without a fragment or a matching row', async () => {
+  const { scrollToHashTarget } = await import('../bootstrap.js');
+  const missing = { location: { hash: '#dest-nope' }, getElementById: () => null };
+  assert.equal(scrollToHashTarget(missing), false);
+  assert.equal(
+    scrollToHashTarget({ location: { hash: '' }, getElementById: () => ({}) }),
+    false,
+  );
+  // An element without scrollIntoView (or no document at all) must not throw.
+  assert.equal(
+    scrollToHashTarget({ location: { hash: '#x' }, getElementById: () => ({}) }),
+    false,
+  );
+  assert.equal(scrollToHashTarget(null), false);
+});

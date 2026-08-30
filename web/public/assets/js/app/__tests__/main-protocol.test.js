@@ -392,3 +392,54 @@ test('renderShortHtml adds single space padding for plain 2-char name', () => {
     assert.ok(html.includes('&nbsp;ab&nbsp;'), '2-char name should have one space on each side');
   });
 });
+
+// --- SPEC RL3: the chat/log tags fill from the node's own radio metadata ---
+
+test('a Reticulum node announcement fills its frequency and preset tags', () => {
+  // The reported symptom was two empty brackets on every Reticulum line:
+  //   [18:53:11][   ][  ] 2771 ☀️ New node: …
+  // No renderer needed a Reticulum branch — the tags were always driven by the
+  // node's lora_freq/modem_preset, which the provider simply never sent.
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
+      timestampSeconds: 1000,
+      shortName: '2771',
+      longName: 'Department of Decentralization',
+      role: 'NODE',
+      metadataSource: {
+        protocol: 'reticulum',
+        // Integer MHz: `nodes.lora_freq` is an INTEGER column and the field
+        // orients a reader in a band rather than stating an exact frequency.
+        lora_freq: 867,
+        modem_preset: 'LongFast',
+      },
+      nodeData: null,
+      messageHtml: 'New node',
+    });
+    const html = innerHtml(div);
+    // Assert the values, not the absence of blanks: an empty slot serialises as
+    // `&nbsp;` entities, so a /\s/-based "not blank" check can never fail and
+    // pinned nothing at all.
+    assert.match(html, /\[867\]/, `frequency slot not filled: ${html}`);
+    assert.match(html, /\[LF\]/, `preset slot not filled: ${html}`);
+  });
+});
+
+test('a Reticulum announcement without radio metadata keeps its empty slots', () => {
+  // Absent stays absent: the slots hold their width rather than inventing a
+  // number, exactly as they do for any other protocol that reported none.
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
+      timestampSeconds: 1000,
+      shortName: '2771',
+      longName: 'Department of Decentralization',
+      role: 'NODE',
+      metadataSource: { protocol: 'reticulum' },
+      nodeData: null,
+      messageHtml: 'New node',
+    });
+    const html = innerHtml(div);
+    assert.doesNotMatch(html, /867/);
+    assert.doesNotMatch(html, /\[LF\]/);
+  });
+});

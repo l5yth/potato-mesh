@@ -1687,7 +1687,7 @@ body.view-chat .page-shell {
   outline-offset: 2px;
 }
 
-button:not(.chat-tab):not(.sort-button) {
+button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure) {
   padding: 6px 10px;
   border: 1px solid #ccc;
   background: #333;
@@ -1743,7 +1743,7 @@ button:not(.chat-tab):not(.sort-button) {
   transition: filter 0.15s ease;
 }
 
-button:not(.chat-tab):not(.sort-button):hover {
+button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure):hover {
   background: #444;
 }
 
@@ -2848,6 +2848,12 @@ button.legend-item[aria-pressed="true"] {
 /* Absent table values render the overlay's muted dash (UX4, D-020). */
 .cell-empty {
   color: var(--muted);
+  /* Pin the font: `#nodes td.num` is monospace while every other column is the
+     body sans, so the identical em dash rendered as two visibly different
+     glyphs down the same table. The placeholder has no number to align, so it
+     loses nothing by leaving the tabular face. */
+  font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+  font-variant-numeric: normal;
 }
 
 /* Freshness buckets (UX5, D-005): stale rows dim, live rows carry a 3 px
@@ -2991,6 +2997,15 @@ button.legend-item[aria-pressed="true"] {
   font-size: 12px;
   line-height: 1;
   vertical-align: middle;
+  border: 1px solid #444;
+  background: #333;
+  color: #eee;
+  cursor: pointer;
+}
+
+.node-extra-toggle:hover,
+.identity-disclosure:hover {
+  background: #444;
 }
 
 @media (pointer: coarse) {
@@ -3275,8 +3290,6 @@ button.legend-item[aria-pressed="true"] {
      background (its best case is 4.39:1), and the row now keeps its protocol
      tile, so the caret no longer needs to carry the protocol's colour. Plain
      foreground-on-transparent clears the floor by the page's own contrast. */
-  color: var(--fg);
-  background: transparent;
   border-radius: 3px;
 }
 
@@ -3358,4 +3371,19 @@ button.legend-item[aria-pressed="true"] {
 
 .destinations__id {
   font-size: 0.9em;
+}
+
+/* Destination identifiers are links (SPEC RL5) but sit inside dense table
+   cells, so they stay quiet until hovered rather than painting every row with
+   link colour. */
+.nodes-subrow__id,
+.destinations__id a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.nodes-subrow__id:hover,
+.destinations__id a:hover {
+  color: var(--fg);
+  text-decoration: underline;
 }

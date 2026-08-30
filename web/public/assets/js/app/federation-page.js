@@ -39,6 +39,32 @@ import {
 let relativeTimeTicker = null;
 
 /**
+ * Render one protocol node-count cell (SPEC RL4).
+ *
+ * Three states, one rule for every protocol:
+ *
+ * - **absent** (`null`) — a muted em dash: the instance reported nothing.
+ * - **zero** — a muted `0` with **no** tile. Zero is a fact and reads as one,
+ *   but the tile is a protocol marker beside a count that carries no
+ *   information, and during rollout most instances report zero.
+ * - **non-zero** — the protocol tile followed by the count.
+ *
+ * Reticulum's `normalize_instance_row` serves its count as `|| 0` so a crawler
+ * re-verifying a relayed record rebuilds the canonical the sender signed (FS2),
+ * so that column shows a zero where the others may show a dash. That is the
+ * data differing, not the rule.
+ *
+ * @param {?number} value Coerced count, or `null` when absent.
+ * @param {Function} iconHtml Protocol tile renderer.
+ * @returns {string} Cell markup.
+ */
+export function renderProtocolCountCell(value, iconHtml) {
+  if (value == null) return '<em>—</em>';
+  if (!value) return '<span class="cell-empty">0</span>';
+  return `${iconHtml()} ${escapeHtml(String(value))}`;
+}
+
+/**
  * Expose the page's ticker handle for unit tests (SPEC RT5).
  *
  * @returns {?{tick: Function, stop: Function, running: Function}} The live
@@ -518,20 +544,21 @@ export async function initializeFederationPage(options = {}) {
       const contactHtml = renderContactHtml(instance.contact_link ?? instance.contactLink);
       const nodesCountValue = toFiniteNumber(instance.nodes_count ?? instance.nodesCount);
       const nodesCountText = nodesCountValue == null ? '<em>—</em>' : escapeHtml(String(nodesCountValue));
-      const mcNodesVal = toFiniteNumber(instance.meshcore_nodes_count ?? instance.meshcoreNodesCount);
-      const mcNodesText = mcNodesVal == null ? '<em>—</em>' : `${meshcoreIconHtml()} ${escapeHtml(String(mcNodesVal))}`;
-      const mtNodesVal = toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount);
-      const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
-      // Reticulum alone treats 0 as "nothing to show" (SPEC RD8). Its two
-      // siblings can distinguish absent from zero, but `normalize_instance_row`
-      // serves `reticulum_nodes_count` as `|| 0` so a crawler re-verifying a
-      // relayed v2 record rebuilds the canonical the sender signed (FS2) — so on
-      // this column the two are indistinguishable, and every federated instance
-      // would otherwise show a violet tile beside a 0. During rollout nearly all
-      // of them are exactly that, which would make the column read as broken
-      // rather than as new.
-      const rtNodesVal = toFiniteNumber(instance.reticulum_nodes_count ?? instance.reticulumNodesCount);
-      const rtNodesText = !rtNodesVal ? '<em>—</em>' : `${reticulumIconHtml()} ${escapeHtml(String(rtNodesVal))}`;
+      // One rule for all three protocol columns (SPEC RL4). Previously MeshCore
+      // and Meshtastic tested `== null` (so a real 0 drew a tile) while
+      // Reticulum tested `!value` (so 0 and absent were indistinguishable).
+      const mcNodesText = renderProtocolCountCell(
+        toFiniteNumber(instance.meshcore_nodes_count ?? instance.meshcoreNodesCount),
+        meshcoreIconHtml,
+      );
+      const mtNodesText = renderProtocolCountCell(
+        toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount),
+        meshtasticIconHtml,
+      );
+      const rtNodesText = renderProtocolCountCell(
+        toFiniteNumber(instance.reticulum_nodes_count ?? instance.reticulumNodesCount),
+        reticulumIconHtml,
+      );
 
       // Cell order mirrors `_instances_table.erb`'s traveler-first header
       // order (SPEC UX9/UX12): where + settings + alive lead; coordinates
