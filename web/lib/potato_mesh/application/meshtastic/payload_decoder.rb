@@ -63,7 +63,11 @@ module PotatoMesh
         # @return [String, nil] python path or nil when missing.
         def python_executable_path
           configured = ENV[PYTHON_ENV_KEY]
-          return configured if configured && !configured.strip.empty?
+          if configured && !configured.strip.empty?
+            return configured if File.file?(configured) && File.executable?(configured)
+
+            return nil
+          end
 
           candidate = File.expand_path(DEFAULT_PYTHON_RELATIVE, repo_root)
           return candidate if File.exist?(candidate)
