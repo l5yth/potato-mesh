@@ -6317,6 +6317,21 @@ example; until now nothing in the interface emitted the link, so the behaviour
 was reachable only by typing a URL — a spec claim no interface exercises is
 indistinguishable from one that is false.
 
+### RL-A6 - A destination never outlives its node - RL6
+```bash
+( cd web && bundle exec rspec spec/retention_spec.rb )
+git grep -n '\["destinations", "last_heard"\]' -- web/lib/potato_mesh/application/retention.rb
+```
+**Expected:** pass, and the grep hits. `destinations` is a retention target keyed
+on `last_heard`, the same column its node uses, so the two age out together.
+
+The table carries **no foreign key** (`data/destinations.sql`), so nothing
+cascades when a node is purged: without this a destination row survived its node
+indefinitely, invisible to every view except an unfiltered
+`GET /api/destinations`, in a table that only ever grew. The spec seeds one
+fresh and one stale destination so the sweep is shown to keep one and drop the
+other rather than emptying the table.
+
 ### RL-R1 - Regression: prior acceptance still holds
 ```bash
 ( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )

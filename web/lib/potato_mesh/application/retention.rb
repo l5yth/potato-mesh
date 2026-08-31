@@ -54,6 +54,12 @@ module PotatoMesh
         ["ingestor_activity", "at"],
         ["waypoints", "rx_time"],
         ["nodes", "last_heard"],
+        # A destination outlives the node it belongs to otherwise: the table
+        # carries no foreign key, so nothing cascades when its node is purged
+        # and the row is invisible to every view except an unfiltered
+        # /api/destinations. Keyed on the same column as its node, so the two
+        # age out together.
+        ["destinations", "last_heard"],
       ].freeze
 
       # Run a single retention sweep, deleting rows older than +cutoff+ from
