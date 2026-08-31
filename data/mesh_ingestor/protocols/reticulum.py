@@ -95,6 +95,7 @@ web upsert refuses to overwrite a real name with.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 import time
@@ -506,6 +507,11 @@ def _announce_to_node_dict(
         "protocol": "reticulum",
         "user": user,
     }
+    # Radio metadata rides on the node record (SPEC RL3). The web upsert already
+    # reads these keys; a Reticulum node never received them because the other
+    # protocols stamp them from position and telemetry payloads, and an announce
+    # carries neither -- so the table's Frequency and LoRa Preset columns and the
+    # chat/log tags all rendered blanks.
     identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
     if identity_hash:
         node["identityHash"] = identity_hash
@@ -517,6 +523,9 @@ def _announce_to_node_dict(
         node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
     if interface:
         node["interface"] = interface
+    # After the interface is known: the values describe the host's LoRa radio
+    # only, so a peer heard over an IP interface must not be stamped with them.
+    _attach_radio_metadata(node)
     if hops is not None:
         node["hopsAway"] = hops
     return node
@@ -676,6 +685,252 @@ class _ReticulumInterface:
                 RNS.Transport.deregister_announce_handler(handler)
             except Exception:
                 pass
+
+
+_MESHTASTIC_PRESETS: dict[tuple[int, int, int], str] = {
+    # (bandwidth kHz, spreading factor, coding-rate denominator) -> preset name.
+    #
+    # Hand-maintained (SPEC RL2): the Meshtastic Python package defines the
+    # preset *enum* but not its radio parameters, which live in firmware, so
+    # nothing in the dependency tree can verify this table.  Values are the
+    # region-independent modem settings each preset selects.  A mismatch with
+    # upstream firmware is a bug in this table, not in the test that pins it.
+    (250, 7, 5): "ShortFast",
+    (250, 8, 5): "ShortSlow",
+    (250, 9, 5): "MediumFast",
+    (250, 10, 5): "MediumSlow",
+    (250, 11, 5): "LongFast",
+    (125, 12, 8): "LongSlow",
+    (125, 11, 8): "LongModerate",
+    (500, 7, 5): "ShortTurbo",
+}
+"""Meshtastic modem presets keyed on their (BW kHz, SF, CR) triple.
+
+**Deliberately partial.** The firmware enum carries fourteen presets
+(``meshtastic.protobuf.config_pb2``); this table holds the eight whose radio
+parameters could be stated with confidence.  Everything else -- ``LongTurbo``,
+the ``Lite*`` and ``Narrow*`` families, and ``VeryLongSlow`` (whose 62.5 kHz
+bandwidth does not key cleanly on integer kHz) -- falls through to the
+``SF/BW/CR`` form, which is never *wrong*, only less friendly.  Adding a row
+whose parameters cannot be verified would be worse than the fallback: it would
+put a confident wrong name on a radio.
+"""
+
+
+def _reticulum_preset_label(
+    bandwidth_khz: object, sf: object, cr: object
+) -> str | None:
+    """Name a radio configuration, preferring a Meshtastic preset (SPEC RL2).
+
+    An **exact** parameter match yields that preset's name; anything else falls
+    back to ``SF{sf}/BW{bw}/CR{cr}``, the format
+    :func:`~data.mesh_ingestor.interfaces.radio._custom_preset_label` already
+    produces, so no second radio-parameter format enters the codebase.
+
+    The name is a label, **not** an interoperability claim: a Reticulum radio on
+    ``LongFast`` parameters cannot talk to a Meshtastic ``LongFast`` mesh.
+
+    Parameters:
+        bandwidth_khz: Bandwidth in kHz.
+        sf: Spreading factor.
+        cr: Coding-rate denominator.
+
+    Returns:
+        Preset name, ``SF/BW/CR`` string, or ``None`` when a value is missing.
+    """
+    try:
+        bw_i, sf_i, cr_i = int(bandwidth_khz), int(sf), int(cr)
+    except (TypeError, ValueError):
+        return None
+    if not (bw_i and sf_i and cr_i):
+        return None
+    preset = _MESHTASTIC_PRESETS.get((bw_i, sf_i, cr_i))
+    if preset:
+        return preset
+    return f"SF{sf_i}/BW{bw_i}/CR{cr_i}"
+
+
+def _parse_rnode_radio_config(text: str) -> dict | None:
+    """Extract radio parameters from the first ``RNodeInterface`` in *text*.
+
+    Parses the RNS config's indented ``[[name]]`` interface blocks looking for
+    ``type = RNodeInterface`` and its ``frequency`` / ``bandwidth`` /
+    ``spreadingfactor`` / ``codingrate`` keys.  **Only those four keys are
+    read** — the file also holds the shared-instance RPC key, which must never
+    be logged or carried anywhere (SPEC RL1).
+
+    RNS stores both frequencies in **Hz** (its own annotated example reads
+    ``frequency = 867200000`` for 867.2 MHz and ``bandwidth = 125000`` for
+    125 kHz), so they are converted to MHz and kHz here.
+
+    Parameters:
+        text: Contents of the RNS config file.
+
+    Returns:
+        ``{"frequency_mhz", "bandwidth_khz", "sf", "cr"}`` for the first
+        RNodeInterface found, or ``None`` when there is none.
+    """
+    current: dict = {}
+    best: dict | None = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("["):
+            # A new section ends the one being collected.
+            if current.get("_is_rnode") and best is None:
+                best = current
+            current = {}
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip().lower(), value.strip()
+        if key == "type":
+            current["_is_rnode"] = value == "RNodeInterface"
+        elif key in ("frequency", "bandwidth", "spreadingfactor", "codingrate"):
+            try:
+                current[key] = int(value)
+            except ValueError:
+                continue
+    if current.get("_is_rnode") and best is None:
+        best = current
+    if not best:
+        return None
+    frequency = best.get("frequency")
+    bandwidth = best.get("bandwidth")
+    return {
+        # Integer MHz, floored. `nodes.lora_freq` and `ingestors.lora_freq` are
+        # INTEGER columns and the field orients a reader in a band (433 vs 868)
+        # rather than stating an exact frequency -- MeshCore's 869.525 is
+        # likewise stored as 869. A float here was silently truncated on write.
+        "frequency_mhz": int(frequency // 1_000_000) if frequency else None,
+        "bandwidth_khz": int(bandwidth / 1000) if bandwidth else None,
+        "sf": best.get("spreadingfactor"),
+        "cr": best.get("codingrate"),
+    }
+
+
+def _coerce_band_mhz(value: object) -> int | None:
+    """Coerce an operator-supplied frequency to floored integer MHz.
+
+    Accepts a bare number or one carrying a unit suffix (``867.2MHz``), because
+    that is the form the other frequency settings are written in and the form
+    documented for this one.  Both floor to the same band: the column is
+    ``INTEGER`` and a non-integer value was silently stored as ``NULL``, so the
+    documented override did nothing at all.
+
+    Parameters:
+        value: Raw :envvar:`RETICULUM_FREQ` value.
+
+    Returns:
+        Integer MHz, or ``None`` when nothing usable was supplied.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    for suffix in ("mhz", "m"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+            break
+    try:
+        parsed = float(text)
+    except ValueError:
+        return None
+    if not math.isfinite(parsed) or parsed <= 0:
+        return None
+    return int(parsed)
+
+
+def _read_reticulum_radio_metadata() -> tuple[object, str | None]:
+    """Resolve the Reticulum frequency and preset label (SPEC RL1).
+
+    Precedence: :envvar:`RETICULUM_FREQ` / :envvar:`RETICULUM_PRESET`, then the
+    shared RNS config, then ``None`` — mirroring how :envvar:`FREQUENCY`
+    overrides the auto-detected :data:`~data.mesh_ingestor.config.LORA_FREQ`.
+
+    The config *file* is the only source available: ``get_interface_stats``
+    carries no radio parameters at all, and a shared-instance client's own
+    ``Transport.interfaces`` holds only its local-client interface.  It is
+    therefore a snapshot, and goes stale if ``rnsd`` is reconfigured without
+    restarting the ingestor (the RA12 caveat, with no RPC alternative).
+
+    Returns:
+        ``(frequency, preset)``, either of which may be ``None``.
+    """
+    frequency: object = _coerce_band_mhz(config.RETICULUM_FREQ)
+    preset: str | None = config.RETICULUM_PRESET
+    if frequency is not None and preset is not None:
+        return frequency, preset
+    parsed = None
+    config_dir = config.RETICULUM_CONFIG_DIR
+    if isinstance(config_dir, str) and config_dir.strip():
+        try:
+            path = os.path.join(os.path.expanduser(config_dir), "config")
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                parsed = _parse_rnode_radio_config(handle.read())
+        except OSError:
+            # Absent or unreadable config: every downstream field keeps its
+            # dash rather than inventing a number.
+            parsed = None
+    if parsed:
+        if frequency is None:
+            frequency = parsed["frequency_mhz"]
+        if preset is None:
+            preset = _reticulum_preset_label(
+                parsed["bandwidth_khz"], parsed["sf"], parsed["cr"]
+            )
+    return frequency, preset
+
+
+def _is_lora_interface(interface: object) -> bool:
+    """Report whether an interface name denotes the host's own LoRa radio.
+
+    The resolved frequency and preset describe **one** interface -- the
+    ``RNodeInterface`` they were parsed from.  A peer heard over
+    ``AutoInterface``, ``TCPInterface`` or ``LocalInterface`` reached us with no
+    LoRa involved, so attributing the operator's radio settings to it would
+    publish (and federate) a claim about that peer that is simply untrue.
+
+    Parameters:
+        interface: Interface string an announce arrived on, if known.
+
+    Returns:
+        ``True`` only for an RNode interface.
+    """
+    return isinstance(interface, str) and "rnode" in interface.lower()
+
+
+def _attach_radio_metadata(node: dict) -> None:
+    """Stamp the resolved LoRa frequency and preset onto a node record.
+
+    The other protocols reach ``nodes.lora_freq`` / ``nodes.modem_preset``
+    through their position and telemetry payloads; a Reticulum announce carries
+    neither, so without this the values the ingestor resolved (SPEC RL1/RL2)
+    never left the heartbeat and every per-node radio field stayed blank.
+
+    Applied **only** to a record that arrived over the host's LoRa radio: these
+    values describe that one interface, and an RNS stack routinely carries IP
+    interfaces alongside it.  A record with no interface at all is the host's
+    own (its destinations are discovered, not heard), so it keeps them.
+
+    Mutates *node* in place, omitting either key that is unresolved so an absent
+    value keeps its dash rather than being written as null.
+
+    Parameters:
+        node: Node dict destined for ``POST /api/nodes``.
+    """
+    interface = node.get("interface")
+    if interface is not None and not _is_lora_interface(interface):
+        return
+    frequency = getattr(config, "LORA_FREQ", None)
+    preset = getattr(config, "MODEM_PRESET", None)
+    if frequency is not None:
+        node["lora_freq"] = frequency
+    if preset is not None:
+        node["modem_preset"] = preset
 
 
 def _local_path_entries() -> list[dict]:
@@ -871,6 +1126,7 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
         interface = local.get(dest_hex)
         if interface:
             record["interface"] = interface
+        _attach_radio_metadata(record)
         records.append(record)
     transport = _transport_identity_hash()
     if transport and _transport_enabled():
@@ -893,6 +1149,7 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
                 },
             }
         )
+        _attach_radio_metadata(records[-1])
     return records
 
 
@@ -1008,6 +1265,14 @@ class ReticulumProvider:
             iface._announce_handlers.append(handler)
 
         iface.isConnected = True
+        # Radio metadata (SPEC RL1): Reticulum has no equivalent of the
+        # Meshtastic localConfig read, so the shared RNS config supplies the
+        # frequency and preset the heartbeat and every downstream column need.
+        radio_freq, radio_preset = _read_reticulum_radio_metadata()
+        if radio_freq is not None and getattr(config, "LORA_FREQ", None) is None:
+            config.LORA_FREQ = radio_freq
+        if radio_preset is not None and getattr(config, "MODEM_PRESET", None) is None:
+            config.MODEM_PRESET = radio_preset
         # Resolve the host id for the log rather than reading
         # +iface.host_node_id+, which is a constant None: the startup line
         # printed node_id=None on every run regardless of what discovery would

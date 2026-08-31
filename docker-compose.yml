@@ -76,6 +76,9 @@ x-ingestor-base: &ingestor-base
     # as literal text, so `:-""` yields a two-character value that parses as a
     # one-entry allowlist matching nothing (i.e. ingests no announces at all).
     RETICULUM_INTERFACES: ${RETICULUM_INTERFACES:-}
+    # Read from the RNS config when unset; these only override it.
+    RETICULUM_FREQ: ${RETICULUM_FREQ:-}
+    RETICULUM_PRESET: ${RETICULUM_PRESET:-}
     # Required for PROTOCOL=reticulum and TRANSPORT=udp: without it the ingestor
     # heartbeat never registers and the protocol's packets/hour stays at zero.
     INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}

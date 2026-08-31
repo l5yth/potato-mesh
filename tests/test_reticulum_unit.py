@@ -1989,3 +1989,346 @@ def test_snapshot_includes_host_destinations_not_heard_as_announces(monkeypatch)
         by_aspect["nomadnetwork.node"]["user"]["longName"]
         == "Department of Decentralization"
     )
+
+
+# ---------------------------------------------------------------------------
+# Radio metadata from the shared RNS config (SPEC RL1/RL2)
+# ---------------------------------------------------------------------------
+
+# RNS's own annotated example (RNS/Utilities/rnsd.py): "Set frequency to
+# 867.2 MHz" -> 867200000, "Set LoRa bandwidth to 125 KHz" -> 125000. Both are
+# stored in Hz, which is why the parser converts.
+_RNS_CONFIG = """
+[reticulum]
+  enable_transport = Yes
+  rpc_key = deadbeefdeadbeefdeadbeefdeadbeef
+
+[interfaces]
+
+  [[Default Interface]]
+    type = AutoInterface
+    interface_enabled = True
+
+  [[RNode LoRa Interface]]
+    type = RNodeInterface
+    interface_enabled = True
+    port = /dev/ttyUSB0
+    frequency = 867200000
+    bandwidth = 125000
+    txpower = 7
+    spreadingfactor = 8
+    codingrate = 5
+"""
+
+
+def test_rnode_radio_config_is_parsed_in_the_units_rns_stores(tmp_path, monkeypatch):
+    """Frequency and bandwidth are Hz in the config; MHz and kHz downstream."""
+    parsed = _mod._parse_rnode_radio_config(_RNS_CONFIG)
+    assert parsed == {
+        # Floored integer MHz: the column is INTEGER and the field orients a
+        # reader in a band rather than stating an exact frequency.
+        "frequency_mhz": 867,
+        "bandwidth_khz": 125,
+        "sf": 8,
+        "cr": 5,
+    }
+
+
+def test_rnode_radio_config_ignores_non_rnode_interfaces():
+    """An AutoInterface carries no radio, and must not be read as one."""
+    only_auto = """
+[interfaces]
+  [[Default Interface]]
+    type = AutoInterface
+    interface_enabled = True
+"""
+    assert _mod._parse_rnode_radio_config(only_auto) is None
+    assert _mod._parse_rnode_radio_config("") is None
+
+
+def test_rnode_radio_config_survives_a_malformed_value():
+    """A non-integer value is skipped rather than crashing the connect path."""
+    broken = """
+[interfaces]
+  [[RNode]]
+    type = RNodeInterface
+    frequency = not-a-number
+    bandwidth = 125000
+    spreadingfactor = 8
+    codingrate = 5
+"""
+    parsed = _mod._parse_rnode_radio_config(broken)
+    assert parsed["frequency_mhz"] is None
+    assert parsed["bandwidth_khz"] == 125
+
+
+def test_reticulum_radio_metadata_prefers_the_env_override(tmp_path, monkeypatch):
+    """RETICULUM_FREQ/RETICULUM_PRESET win over the parsed config (SPEC RL1)."""
+    (tmp_path / "config").write_text(_RNS_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", None)
+    assert _mod._read_reticulum_radio_metadata() == (867, "SF8/BW125/CR5")
+
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", "868MHz")
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", "Custom")
+    assert _mod._read_reticulum_radio_metadata() == (868, "Custom")
+
+
+def test_reticulum_radio_metadata_is_none_without_a_readable_config(monkeypatch):
+    """No config, no numbers -- the columns keep their dash (SPEC RL1)."""
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", "/nonexistent/rns-dir")
+    assert _mod._read_reticulum_radio_metadata() == (None, None)
+    # An unset config dir must not raise on the connect path either.
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", None)
+    assert _mod._read_reticulum_radio_metadata() == (None, None)
+
+
+def test_preset_label_names_a_meshtastic_preset_only_on_an_exact_match():
+    """SPEC RL2, with each row's provenance stated.
+
+    The table is hand-maintained: the Meshtastic Python package defines the
+    preset *enum* but not its radio parameters, which live in firmware, so
+    nothing in the dependency tree can verify these. A mismatch with upstream
+    is a bug in the table, not in this test.
+    """
+    label = _mod._reticulum_preset_label
+    assert label(250, 11, 5) == "LongFast"
+    assert label(250, 10, 5) == "MediumSlow"
+    assert label(250, 9, 5) == "MediumFast"
+    assert label(250, 8, 5) == "ShortSlow"
+    assert label(250, 7, 5) == "ShortFast"
+    assert label(500, 7, 5) == "ShortTurbo"
+    assert label(125, 12, 8) == "LongSlow"
+    # One parameter off the triple is not that preset.
+    assert label(125, 11, 5) == "SF11/BW125/CR5"
+    assert label(250, 11, 8) == "SF11/BW250/CR8"
+    # Missing or unusable values name nothing rather than guessing.
+    assert label(None, 11, 5) is None
+    assert label(250, 0, 5) is None
+    assert label("x", 11, 5) is None
+
+
+def test_preset_fallback_matches_the_shape_the_repo_already_emits():
+    """The fallback is the existing SF/BW/CR format, not a second one."""
+    from data.mesh_ingestor.interfaces import radio as radio_mod
+
+    class _Lora:
+        spread_factor = 8
+        bandwidth = 125
+        coding_rate = 5
+
+    assert radio_mod._custom_preset_label(_Lora()) == "SF8/BW125/CR5"
+    assert _mod._reticulum_preset_label(125, 8, 5) == "SF8/BW125/CR5"
+
+
+def test_rnode_radio_config_takes_the_first_rnode_of_several():
+    """Two RNodes: the first wins, and a later section cannot overwrite it.
+
+    Exercises the section boundary -- a second interface block must close the
+    first rather than merging keys across them.
+    """
+    two = """
+[interfaces]
+  [[RNode A]]
+    type = RNodeInterface
+    frequency = 867200000
+    bandwidth = 125000
+    spreadingfactor = 8
+    codingrate = 5
+
+  [[RNode B]]
+    type = RNodeInterface
+    frequency = 915000000
+    bandwidth = 500000
+    spreadingfactor = 7
+    codingrate = 5
+"""
+    parsed = _mod._parse_rnode_radio_config(two)
+    assert parsed["frequency_mhz"] == 867
+    assert parsed["bandwidth_khz"] == 125
+    # A line with no '=' (a bare token) is skipped rather than mis-split.
+    assert _mod._parse_rnode_radio_config("[interfaces]\n  bare-token\n") is None
+
+
+def test_connect_populates_radio_metadata_from_the_config(tmp_path, monkeypatch):
+    """The connect path fills LORA_FREQ/MODEM_PRESET for the heartbeat (RL1)."""
+    (tmp_path / "config").write_text(_RNS_CONFIG, encoding="utf-8")
+    fake, _state = _fake_rns(existing_instance=object())
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    assert _mod.config.LORA_FREQ == 867
+    assert _mod.config.MODEM_PRESET == "SF8/BW125/CR5"
+
+
+def test_connect_never_overwrites_metadata_already_resolved(tmp_path, monkeypatch):
+    """An operator-set or already-detected value is left alone."""
+    (tmp_path / "config").write_text(_RNS_CONFIG, encoding="utf-8")
+    fake, _state = _fake_rns(existing_instance=object())
+    monkeypatch.setattr(_mod, "RNS", fake)
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", 915.0)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", "AlreadySet")
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    ReticulumProvider().connect(active_candidate=None)
+
+    assert _mod.config.LORA_FREQ == 915.0
+    assert _mod.config.MODEM_PRESET == "AlreadySet"
+
+
+def test_node_records_carry_the_resolved_radio_metadata(monkeypatch):
+    """SPEC RL3: the values must ride on the node, not just the heartbeat.
+
+    Meshtastic and MeshCore reach ``nodes.lora_freq`` / ``nodes.modem_preset``
+    through their position and telemetry payloads. A Reticulum announce carries
+    neither, so without stamping them here the table's Frequency and LoRa Preset
+    columns and the chat/log tags all stayed blank while the ingestor knew the
+    answer -- the symptom this feature was opened for.
+    """
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", 867)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", "SF8/BW125/CR5")
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"Alice", identity=_FakeIdentity(), aspect="lxmf.delivery"
+    )
+    assert node["lora_freq"] == 867
+    assert node["modem_preset"] == "SF8/BW125/CR5"
+
+
+def test_node_records_omit_radio_metadata_when_unresolved(monkeypatch):
+    """An absent value is left out entirely, so the column keeps its dash."""
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    node = _announce_to_node_dict(
+        _DEST_HASH, b"Alice", identity=_FakeIdentity(), aspect="lxmf.delivery"
+    )
+    assert "lora_freq" not in node
+    assert "modem_preset" not in node
+
+
+def test_host_destination_records_carry_radio_metadata_too(monkeypatch):
+    """The host's own discovered aspects are node records like any other."""
+    _local_stack(
+        monkeypatch,
+        {_FIELD_LXMF: _FIELD_PRIMARY, _FIELD_NOMADNET: _FIELD_PRIMARY},
+        transport_enabled=True,
+    )
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", 867)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", "LongFast")
+    records = ReticulumProvider().host_destination_nodes()
+    assert records, "expected host destinations"
+    assert all(r["lora_freq"] == 867 for r in records)
+    assert all(r["modem_preset"] == "LongFast" for r in records)
+
+
+def test_radio_metadata_partial_override_still_reads_the_config(tmp_path, monkeypatch):
+    """One variable set and the other unset is the case an operator hits.
+
+    The earlier test covered only both-unset and both-set, leaving the mixed
+    branches uncovered -- and it is the mixed case that decides whether the
+    config is consulted at all.
+    """
+    (tmp_path / "config").write_text(_RNS_CONFIG, encoding="utf-8")
+    monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
+
+    # Frequency pinned, preset still derived from the config.
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", "868MHz")
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", None)
+    assert _mod._read_reticulum_radio_metadata() == (868, "SF8/BW125/CR5")
+
+    # Preset pinned, frequency still derived.
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", None)
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", "LongFast")
+    assert _mod._read_reticulum_radio_metadata() == (867, "LongFast")
+
+
+def test_band_coercion_survives_the_integer_column():
+    """`nodes.lora_freq` is INTEGER, so a float override stored as NULL.
+
+    The documented `RETICULUM_FREQ="867.2MHz"` form did nothing at all until it
+    was floored here: `coerce_integer` rejects the suffixed string outright and
+    truncates a float, so the column dashed or silently lost 200 kHz.
+    """
+    coerce = _mod._coerce_band_mhz
+    assert coerce("867.2MHz") == 867
+    assert coerce("868") == 868
+    assert coerce(915.9) == 915
+    assert coerce("433 mhz") == 433
+    assert coerce("") is None
+    assert coerce(None) is None
+    assert coerce("not-a-frequency") is None
+    assert coerce("-5") is None
+
+
+def test_radio_metadata_is_scoped_to_the_lora_interface(monkeypatch):
+    """A peer heard over IP must not be stamped with the operator's radio.
+
+    The resolved values describe one interface -- the RNodeInterface they were
+    parsed from -- and an RNS stack routinely carries IP interfaces alongside
+    it. Attributing them to a peer heard over AutoInterface publishes, and
+    federates, a claim about that peer that is untrue (SPEC RL1).
+    """
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", 867)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", "SF8/BW125/CR5")
+
+    def node_for(interface):
+        return _announce_to_node_dict(
+            _DEST_HASH,
+            b"A",
+            identity=_FakeIdentity(),
+            aspect="lxmf.delivery",
+            interface=interface,
+        )
+
+    lora = node_for("RNodeInterface[RNode Reticulum Berlin]")
+    assert lora["lora_freq"] == 867 and lora["modem_preset"] == "SF8/BW125/CR5"
+
+    for other in (
+        "AutoInterface[Default Interface]",
+        "TCPInterface[peer]",
+        "LocalInterface[rns/default]",
+    ):
+        node = node_for(other)
+        assert "lora_freq" not in node, other
+        assert "modem_preset" not in node, other
+
+    # The host's own discovered destinations carry no interface and keep them.
+    own = node_for(None)
+    assert own["lora_freq"] == 867
+
+
+def test_rnode_radio_config_skips_a_line_without_an_assignment():
+    """A bare token inside an interface block is skipped, not mis-split."""
+    odd = """
+[interfaces]
+  [[RNode]]
+    type = RNodeInterface
+    bare-token-with-no-equals
+    frequency = 867200000
+"""
+    assert _mod._parse_rnode_radio_config(odd)["frequency_mhz"] == 867
+
+
+def test_radio_metadata_short_circuits_when_both_are_overridden(monkeypatch):
+    """With both pinned the config is never opened at all."""
+    monkeypatch.setattr(_mod.config, "RETICULUM_FREQ", "868")
+    monkeypatch.setattr(_mod.config, "RETICULUM_PRESET", "LongFast")
+
+    def _explode(*_a, **_k):
+        raise AssertionError("the config must not be read when both are pinned")
+
+    monkeypatch.setattr(_mod, "_parse_rnode_radio_config", _explode)
+    assert _mod._read_reticulum_radio_metadata() == (868, "LongFast")

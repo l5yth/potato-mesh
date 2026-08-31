@@ -85,6 +85,8 @@ TX_ENABLED=$(grep "^TX_ENABLED=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' |
 TX_ANNOUNCE=$(grep "^TX_ANNOUNCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 RETICULUM_CONFIG_DIR=$(grep "^RETICULUM_CONFIG_DIR=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 RETICULUM_INTERFACES=$(grep "^RETICULUM_INTERFACES=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+RETICULUM_FREQ=$(grep "^RETICULUM_FREQ=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+RETICULUM_PRESET=$(grep "^RETICULUM_PRESET=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 HIDDEN_CHANNELS=$(grep "^HIDDEN_CHANNELS=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
@@ -182,6 +184,10 @@ if [ "$PROTOCOL" = "reticulum" ]; then
     echo "Restrict ingestion to named interfaces (case-insensitive substring)."
     echo "Leave blank to ingest announces from every interface."
     read_with_default "Reticulum interfaces" "$RETICULUM_INTERFACES" RETICULUM_INTERFACES
+    echo "Frequency and preset are read from your RNS config; leave blank unless"
+    echo "you want to override what the dashboard displays."
+    read_with_default "Reticulum frequency (blank = from RNS config)" "$RETICULUM_FREQ" RETICULUM_FREQ
+    read_with_default "Reticulum preset (blank = from RNS config)" "$RETICULUM_PRESET" RETICULUM_PRESET
 else
     echo "Define how the mesh ingestor connects to your device."
     echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
@@ -258,6 +264,8 @@ update_env "TX_ENABLED" "$TX_ENABLED"
 update_env "TX_ANNOUNCE" "$TX_ANNOUNCE"
 update_env_optional "RETICULUM_CONFIG_DIR" "$RETICULUM_CONFIG_DIR"
 update_env_optional "RETICULUM_INTERFACES" "$RETICULUM_INTERFACES"
+update_env_optional "RETICULUM_FREQ" "$RETICULUM_FREQ"
+update_env_optional "RETICULUM_PRESET" "$RETICULUM_PRESET"
 update_env "MAP_CENTER" "\"$MAP_CENTER\""
 if [ -n "$MAP_ZOOM" ]; then
     update_env "MAP_ZOOM" "$MAP_ZOOM"
@@ -327,6 +335,8 @@ case "$PROTOCOL" in
     reticulum)
         echo "   RNS Config Dir: ${RETICULUM_CONFIG_DIR:-'~/.reticulum'}"
         echo "   Interfaces: ${RETICULUM_INTERFACES:-'All'}"
+        echo "   Frequency: ${RETICULUM_FREQ:-'From RNS config'}"
+        echo "   Preset: ${RETICULUM_PRESET:-'From RNS config'}"
         ;;
     *)
         echo "   Preset: $MESHTASTIC_PRESET"

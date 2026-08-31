@@ -373,6 +373,29 @@ bound), and a `before` newer than "now" is a no-op. A non-positive or non-intege
 is protocol-neutral. The per-id routes (`GET /api/.../:id`) and `GET /api/instances`
 do **not** accept `before`.
 
+### Reticulum radio metadata (SPEC RL1/RL3)
+
+Reticulum announces carry no radio parameters, so the provider supplies them
+from the operator's own stack.
+
+- Source: the first `RNodeInterface` block of the shared RNS config
+  (`frequency`, `bandwidth`, `spreadingfactor`, `codingrate`). **Only those four
+  keys are read** — the same file holds `rpc_key`, which is
+  never read or logged.
+- RNS stores both frequencies in **Hz**; they are emitted as MHz and kHz.
+- `RETICULUM_FREQ` / `RETICULUM_PRESET` override the parsed values.
+- The preset is a Meshtastic preset **name** when the BW/SF/CR triple matches
+  one exactly, else `SF{sf}/BW{bw}/CR{cr}`. The name describes radio settings
+  and is **not** an interoperability claim.
+- Every node record the provider emits carries `lora_freq` / `modem_preset`.
+  The other protocols reach `nodes.lora_freq` through their position and
+  telemetry payloads; an announce carries neither, so without this the values
+  never leave the ingestor heartbeat. An unresolved value is **omitted**, never
+  sent as null.
+- Read **once at startup**: a config file is not the running stack, and
+  `get_interface_stats` exposes no radio parameters to ask instead. Reconfiguring
+  `rnsd` without restarting the ingestor leaves the reported values stale.
+
 ### Host-owned destinations (SPEC RE8)
 
 The ingestor's own aspects never arrive as announces -- nothing relays our own

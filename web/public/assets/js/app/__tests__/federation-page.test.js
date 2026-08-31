@@ -274,18 +274,26 @@ const fetchImpl = async () => ({
     assert.match(secondRowHtml, /2\.0\.0/);
     assert.match(secondRowHtml, />2</);
     assert.match(secondRowHtml, /d ago/);
-    // A peer reporting a zero RNS count renders the dash too, not a violet
-    // tile beside a 0 — otherwise nearly every federated instance would carry
-    // one during rollout and the column would read as broken (SPEC RD8).
+    // SPEC RL4: zero is a muted 0 without a tile — distinct from absent, which
+    // is still the dash. The tile appears only where the count carries
+    // information, so a rollout full of zeros does not fill the column with
+    // markers. This supersedes the earlier rule that dashed a zero.
     const thirdRowHtml = rows[2].innerHTML;
-    assert.match(thirdRowHtml, /instances-col--reticulum-nodes mono"><em>—<\/em></);
+    assert.match(
+      thirdRowHtml,
+      /instances-col--reticulum-nodes mono"><span class="cell-empty">0<\/span></,
+    );
     // Its MeshCore count is non-zero, so that column still renders its tile —
-    // proving the dash comes from the value, not from the row.
+    // proving the rendering comes from the value, not from the row.
     assert.match(thirdRowHtml, /instances-col--meshcore-nodes mono"><img[^>]*> 7</);
 
-    // An instance without a reticulum count renders the muted dash, exactly
-    // like the other per-protocol columns.
+    // An instance carrying no reticulum count at all still dashes — the whole
+    // point of RL4 is that absent and zero now read differently, and this row
+    // is the absent half against the zero-valued third row above.
     assert.match(secondRowHtml, /instances-col--reticulum-nodes mono"><em>—<\/em></);
+    // The same rule governs its two siblings, not just Reticulum.
+    assert.match(secondRowHtml, /instances-col--meshcore-nodes mono"><em>—<\/em></);
+    assert.match(secondRowHtml, /instances-col--meshtastic-nodes mono"><em>—<\/em></);
     assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
     assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
 
@@ -1003,5 +1011,36 @@ test('federation table sanitises <a> tags and strips other HTML in contact field
     assert.doesNotMatch(aHtml, /<\/b>/);
   } finally {
     cleanup();
+  }
+});
+
+// --- SPEC RL4: one node-count rule for every protocol column ---
+
+test('a protocol count renders absent, zero and non-zero distinctly', async () => {
+  const { renderProtocolCountCell } = await import('../federation-page.js');
+  const tile = () => '<img src="/assets/img/reticulum.svg">';
+
+  // Absent: the instance reported nothing.
+  assert.equal(renderProtocolCountCell(null, tile), '<em>—</em>');
+  // Zero: a fact, and it reads as one — but the tile would be a protocol
+  // marker beside a count carrying no information, and during rollout most
+  // instances report zero.
+  assert.equal(renderProtocolCountCell(0, tile), '<span class="cell-empty">0</span>');
+  // Non-zero: tile then count.
+  assert.match(renderProtocolCountCell(7, tile), /reticulum\.svg">\s7$/);
+});
+
+test('the count rule is protocol-agnostic', async () => {
+  // The bug RL4 fixes was three columns with two different rules: MeshCore and
+  // Meshtastic tested `== null` (so a real 0 drew a tile) while Reticulum
+  // tested `!value` (so 0 and absent were indistinguishable).
+  const { renderProtocolCountCell } = await import('../federation-page.js');
+  for (const name of ['meshcore', 'meshtastic', 'reticulum']) {
+    const tile = () => `<img src="/assets/img/${name}.svg">`;
+    assert.equal(renderProtocolCountCell(null, tile), '<em>—</em>', name);
+    assert.equal(
+      renderProtocolCountCell(0, tile), '<span class="cell-empty">0</span>', name,
+    );
+    assert.match(renderProtocolCountCell(2, tile), new RegExp(`${name}\\.svg">\\s2$`), name);
   }
 });

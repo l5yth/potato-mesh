@@ -292,3 +292,37 @@ test('a sub-row escapes a hostile destination name', () => {
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /&lt;img/);
 });
+
+test('a sub-row renders its role as a coloured chip, like its parent', () => {
+  // A sub-row that spells its role in plain text while the row above it uses
+  // colour reads as two different kinds of value (field report).
+  const html = subRowCellsHtml(FIELD.nomadnet, '!27716218', '<td class="ts"></td>', badge);
+  assert.match(html, /class="role-chip"/);
+  assert.match(html, new RegExp(reticulumRoleColors.NODE));
+  assert.match(html, />NODE</);
+});
+
+test('a sub-row with no role dashes rather than rendering an empty chip', () => {
+  const html = subRowCellsHtml(
+    { id: 'c'.repeat(32), aspect: 'lxmf.delivery', role: null, name: 'x' },
+    '!27716218', '<td class="ts"></td>', badge,
+  );
+  assert.doesNotMatch(html, /role-chip/);
+  assert.match(html, /nodes-col--role"><span class="cell-empty">/);
+});
+
+test('a sub-row identifier links to the destination page and its anchor (SPEC RL5)', () => {
+  const html = subRowCellsHtml(FIELD.lxmf, '!27716218', '<td class="ts"></td>', badge);
+  // Links to the destination's own canonical id, which resolves server-side to
+  // the identity that owns it, and carries the fragment for that row.
+  assert.match(html, /href="\/nodes\/!4cf985bf#dest-4cf985bf"/);
+  assert.match(html, />\[!4cf985bf\]</);
+});
+
+test('a sub-row with no id emits plain text, not an empty link', () => {
+  const html = subRowCellsHtml(
+    { aspect: 'lxmf.delivery', role: 'PEER', name: 'x' },
+    '!27716218', '<td class="ts"></td>', badge,
+  );
+  assert.doesNotMatch(html, /<a /);
+});

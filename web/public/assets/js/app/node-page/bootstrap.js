@@ -27,6 +27,28 @@ import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { buildNeighborRoleIndex } from './role-index.js';
 import { buildTraceRoleIndex } from './traces.js';
 import { renderNodeDetailHtml } from './detail-html.js';
+
+/**
+ * Bring the element named by the current URL fragment into view.
+ *
+ * A no-op without a fragment, without a matching element, or in an environment
+ * with no `scrollIntoView` — the page is already correct in each case, the link
+ * simply lands at the top.
+ *
+ * @param {Document} documentRef Document to resolve the fragment against.
+ * @returns {boolean} `true` when an element was scrolled to.
+ */
+export function scrollToHashTarget(documentRef) {
+  const hash = documentRef?.location?.hash
+    ?? documentRef?.defaultView?.location?.hash
+    ?? (typeof globalThis !== 'undefined' ? globalThis.location?.hash : '');
+  const id = typeof hash === 'string' ? hash.replace(/^#/, '') : '';
+  if (!id || typeof documentRef?.getElementById !== 'function') return false;
+  const target = documentRef.getElementById(id);
+  if (!target || typeof target.scrollIntoView !== 'function') return false;
+  target.scrollIntoView();
+  return true;
+}
 import { startRelativeTimeTicker } from '../main/relative-time-ticker.js';
 
 const RENDER_WAIT_INTERVAL_MS = 20;
@@ -225,6 +247,12 @@ export async function initializeNodeDetailPage(options = {}) {
       privateMode,
     });
     root.innerHTML = html;
+    // The destinations table is built after several awaited fetches, so the
+    // browser has already resolved any `#dest-…` fragment against a page that
+    // did not yet contain the row (SPEC RL5). Re-target it once the row exists,
+    // otherwise a destination link lands at the top of the page instead of on
+    // the row it names.
+    scrollToHashTarget(documentRef);
     // One shared presentation clock keeps the rendered last-seen /
     // last-position ages counting up in place (SPEC RT1/RT2); re-initialising
     // replaces the previous ticker so the page never runs two clocks.

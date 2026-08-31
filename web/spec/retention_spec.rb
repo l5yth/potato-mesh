@@ -105,6 +105,17 @@ RSpec.describe PotatoMesh::App::Retention do
       ["!aaaaa001", 0xaaaaa001, "ST", "Stale Node", stale, stale, "CLIENT"],
     )
 
+    # A fresh and a stale destination, so the sweep is proven to keep one and
+    # drop the other rather than emptying the table.
+    db.execute(
+      "INSERT INTO destinations(id, node_id, aspect, role, first_heard, last_heard) VALUES (?,?,?,?,?,?)",
+      ["a" * 32, "!fffff001", "lxmf.delivery", "PEER", fresh, fresh],
+    )
+    db.execute(
+      "INSERT INTO destinations(id, node_id, aspect, role, first_heard, last_heard) VALUES (?,?,?,?,?,?)",
+      ["b" * 32, "!aaaaa001", "lxmf.delivery", "PEER", stale, stale],
+    )
+
     db.execute(
       "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, text) VALUES (?,?,?,?,?,?)",
       [1, fresh, Time.at(fresh).utc.iso8601, "!fffff001", "!ffffffff", "fresh"],
@@ -172,6 +183,13 @@ RSpec.describe PotatoMesh::App::Retention do
         node_ids = db.execute("SELECT node_id FROM nodes ORDER BY node_id").flatten
         expect(node_ids).to include("!fffff001")
         expect(node_ids).not_to include("!aaaaa001")
+
+        # A destination must not outlive its node: the table carries no foreign
+        # key, so nothing cascades when a node is purged and the row would
+        # linger invisibly forever.
+        dest_ids = db.execute("SELECT id FROM destinations ORDER BY id").flatten
+        expect(dest_ids).to eq(["a" * 32])
+        expect(removed["destinations"]).to eq(1)
 
         msg_ids = db.execute("SELECT id FROM messages ORDER BY id").flatten
         expect(msg_ids).to eq([1])

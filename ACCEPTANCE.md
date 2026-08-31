@@ -5638,8 +5638,10 @@ git grep -n "colorForNodeCount" -- web/public/assets/js/app/federation-page.js
 area fills, per-line weight/opacity, gridline and axis restyle) is deferred to
 its own feature and must not leak in here. The second confirms the federation map
 still colours markers by total active node count, so violet never means a bucket
-there. The JS suite confirms the Reticulum column renders an **em dash for a
-zero or absent count**, not a tile beside a `0`.
+there. **Superseded by RL4**, which replaced this with one rule for all three
+protocol columns: absent renders an em dash, zero a muted `0`, non-zero the tile
+and count. The clause below described the interim behaviour where a Reticulum
+zero also dashed; the JS suite now confirms the RL4 rule instead.
 
 **This is a behaviour change, not a preservation.** Before this feature the
 column rendered a tile beside every count including `0`, because
@@ -6153,11 +6155,29 @@ fails **open** and silently, which is why neither side may be changed alone.
 
 ### RA-A10 - Row controls do not set row height; the caret sits with the + - RA11
 ```bash
-git grep -n "min-height: 0" -- web/public/assets/styles/base.css
+git grep -c "not(.node-extra-toggle):not(.identity-disclosure)" -- web/public/assets/styles/base.css
 git grep -n "identity-disclosure" -- web/public/assets/js/app/main.js
 git grep -c "background: #7b61ff" -- web/public/assets/styles/base.css
+git grep -n "font-family" -- web/public/assets/styles/base.css | grep -c "cell-empty" || \
+  awk '/^\.cell-empty \{/,/^\}/' web/public/assets/styles/base.css | grep -c font-family
 ```
-**Expected:** the first two hit; the third returns `0` for the disclosure rule.
+**Expected:** the first two hit, the third returns `0` for the disclosure rule,
+and `.cell-empty` pins a `font-family`.
+
+**Both controls must be excluded from the global `button` rule.** Measured on a
+rendered page, `.identity-disclosure` and `.node-extra-toggle` are each
+**18.0 x 18.0** with `padding: 0`, and a Reticulum parent row is the same height
+as a Meshtastic one (25.2 px both). Setting the size on the controls alone is
+**not** sufficient: `button:not(.chat-tab):not(.sort-button)` has specificity
+(0,2,1) against the controls' (0,1,0), so its `padding: 6px 10px` won and the
+buttons rendered as stretched rectangles with an off-centre glyph. They are
+excluded from it by name, exactly as `.chat-tab` and `.sort-button` already are.
+
+**One dash, one glyph.** `.cell-empty` pins the body font because `#nodes
+td.num` is monospace: without it the identical em dash rendered as two visibly
+different glyphs down the same table, depending on whether the column was
+numeric. An empty cell has no number to align, so it loses nothing by leaving
+the tabular face.
 Both row controls sit inside the row's line box, so a Reticulum parent is the
 same height as every other row (a 24 px `min-height` made it ~33 px against
 ~24 px); the 44 px touch target is restored on coarse pointers by a transparent
@@ -6208,3 +6228,119 @@ violet ramp and WCAG floor, now with several badges per row); **RD-A6/RD-A7**
 (shape channel and legend column, whose header string changes); **RD-A8** (the
 scope boundary — panel 2d stays out); and **RE-A5/RE-A11** (identity keying and
 headline preference, which the parent row reads rather than re-derives).
+
+## Feature: Reticulum finalization — radio metadata, chat tags, federation zeros
+
+### RL-A1 - Reticulum reports a frequency and preset, config first, env override - RL1
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "radio_metadata or reticulum_config" )
+```
+**Expected:** pass. With an `RNodeInterface` section in the shared RNS config,
+the ingestor resolves `config.LORA_FREQ` and `config.MODEM_PRESET` from its
+`frequency` / `bandwidth` / `spreadingfactor` / `codingrate` keys, so the
+heartbeat carries them exactly as the Meshtastic path does.
+`RETICULUM_FREQ` / `RETICULUM_PRESET` override the parsed values; an absent or
+unparseable config leaves both `None` and every downstream field keeps its dash
+rather than inventing a number.
+
+The config file is the **only** available source, not a preference: the RPC
+`get_interface_stats` payload contains `bitrate`, airtime and channel load but
+**no** frequency, bandwidth, SF or CR, and a shared-instance client's own
+`Transport.interfaces` holds only its local-client interface. This carries
+RA12's staleness caveat — a file is not the running stack — with no RPC
+alternative to prefer.
+
+### RL-A2 - The preset names a Meshtastic preset only on an exact match - RL2
+```bash
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "preset" )
+```
+**Expected:** pass. A BW/SF/CR triple matching a Meshtastic preset exactly
+yields that preset's CamelCase name; anything else yields
+`SF{sf}/BW{bw}/CR{cr}` from the existing `_custom_preset_label`, so no second
+radio-parameter format enters the codebase.
+
+The mapping table is **hand-maintained** — the Meshtastic Python package defines
+the preset enum but not its parameters, which live in firmware — so a test
+states each row's provenance. Treat a mismatch with upstream as a table bug, not
+a test bug. The name is a label, **not** an interoperability claim: a Reticulum
+radio on `LongFast` parameters cannot talk to a Meshtastic `LongFast` mesh.
+
+### RL-A3 - The chat and log tags fill from the same values - RL3
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-protocol.test.js )
+( . .venv/bin/activate && pytest -q tests/test_reticulum_unit.py -k "radio_metadata" )
+```
+**Expected:** both pass. A Reticulum node announcement renders its frequency
+prefix and preset tag from the ingested values rather than two empty brackets —
+the symptom that prompted this feature. No **renderer** gains a Reticulum
+branch: the tags were always driven by the node's `lora_freq` / `modem_preset`.
+
+**The provider does change, though**, which this criterion exists to record.
+Meshtastic and MeshCore reach `nodes.lora_freq` / `nodes.modem_preset` through
+their **position and telemetry** payloads (`positions.rb:55`,
+`telemetry.rb:588`), and a Reticulum announce carries neither — so the values
+RL1/RL2 resolve never left the ingestor heartbeat. `_attach_radio_metadata`
+stamps them onto every node record the provider emits, including the host's own
+discovered destinations. The node upsert already read both keys
+(`node_writes.rb:468`); only the sender was missing.
+
+An unresolved value is **omitted** rather than sent as null, so the column keeps
+its dash instead of rendering an empty string.
+
+### RL-A4 - Federation counts distinguish zero from absent, for every protocol - RL4
+```bash
+( cd web && node --test public/assets/js/app/__tests__/federation-page.test.js )
+```
+**Expected:** pass. Each protocol column renders `—` when the count is absent, a
+muted `0` with **no** tile when it is zero, and tile + count when non-zero — one
+rule for all three, replacing MeshCore/Meshtastic's `== null` test and
+Reticulum's `!value` test.
+
+Both halves matter. Distinguishing zero from absent is the honest part; dropping
+the tile at zero is what answers the objection the previous em-dash rule was
+built on, since during rollout most instances report `0` and the column would
+otherwise fill with tiles carrying no information. Reticulum's
+`normalize_instance_row` still serves `|| 0` for signature canonicalisation
+(FS2), so its column shows a zero rather than a dash — unchanged.
+
+### RL-A5 - A destination's identifier reaches its identity page - RL5
+```bash
+( cd web && node --test public/assets/js/app/node-page/__tests__/destinations.test.js )
+( cd web && node --test public/assets/js/app/main/__tests__/identity-groups.test.js )
+( cd web && bundle exec rspec spec/reticulum_spec.rb -e "canonicalises to its identity page" )
+```
+**Expected:** all pass. The `[!xxxxxxxx]` in a table sub-row and the destination
+hash on the identity page are **links** to `/nodes/!<destination>`, and the
+identity page's destination rows carry anchors so a link lands on the row it
+names. The route already resolved these (RA5) and is covered by the rspec
+example; until now nothing in the interface emitted the link, so the behaviour
+was reachable only by typing a URL — a spec claim no interface exercises is
+indistinguishable from one that is false.
+
+### RL-A6 - A destination never outlives its node - RL6
+```bash
+( cd web && bundle exec rspec spec/retention_spec.rb )
+git grep -n '\["destinations", "last_heard"\]' -- web/lib/potato_mesh/application/retention.rb
+```
+**Expected:** pass, and the grep hits. `destinations` is a retention target keyed
+on `last_heard`, the same column its node uses, so the two age out together.
+
+The table carries **no foreign key** (`data/destinations.sql`), so nothing
+cascades when a node is purged: without this a destination row survived its node
+indefinitely, invisible to every view except an unfiltered
+`GET /api/destinations`, in a table that only ever grew. The spec seeds one
+fresh and one stale destination so the sweep is shown to keep one and drop the
+other rather than emptying the table.
+
+### RL-R1 - Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**UX-A10** (preset config migration and the join strip, now with a third
+protocol pair); **RE-A7** (protocol-scoped settings say which protocol they
+apply to); **S-A5 / MA-A5 / F2-A1** (the stats scopes, amended once already when
+`reticulum` stopped being a zero stub); **RD-A3** (one colour code across table,
+meta row and figure, now that Reticulum renders a preset tag); **RA-A1/RA-A2**
+(the table rows and counts); and the federation instance-table criteria, whose
+zero rendering RL4 changes for **all three** protocols, not only Reticulum.
