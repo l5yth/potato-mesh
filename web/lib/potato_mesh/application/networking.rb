@@ -273,17 +273,134 @@ module PotatoMesh
         "127.0.0.1"
       end
 
+      # CIDR ranges federation must never open a connection to (SPEC SS1).
+      #
+      # Stated explicitly rather than delegated to IPAddr's +loopback?+ /
+      # +private?+ / +link_local?+ predicates. Those answer an address-taxonomy
+      # question against a fixed stdlib table; this is a reachability decision,
+      # and every range the table happens not to model becomes a silent bypass
+      # that no test names. Four such omissions are covered here: RFC 6598
+      # carrier-grade NAT, which +private?+ does not treat as private because it
+      # is not RFC 1918; the RFC 1122 "this network" block, of which the
+      # predicates saw only the single address 0.0.0.0; RFC 3879 site-local,
+      # which no predicate models; and the reserved ::/16 slice below.
+      #
+      # Replacing the predicates also retires a stdlib defect rather than
+      # inheriting it: +private?+, +loopback?+ and +link_local?+ recognise an
+      # IPv4-mapped address by testing bits 80..95 == ffff *without* requiring
+      # bits 0..79 to be zero, so they misreport ordinary global addresses as
+      # internal: 2606:4700:4700::ffff:a9fe:a9fe reads as link-local (its low
+      # 32 bits are 169.254.169.254) and 2001:db8:1:2:3:ffff:a00:1 as private.
+      # Neither reaches anything internal — neither is IPv4-mapped at all — so
+      # this list deliberately permits them where the predicates did not.
+      RESTRICTED_IP_RANGES = [
+        IPAddr.new("0.0.0.0/8"),        # RFC 1122 "this network" (0.0.0.0 reaches localhost)
+        IPAddr.new("10.0.0.0/8"),       # RFC 1918 private
+        IPAddr.new("100.64.0.0/10"),    # RFC 6598 carrier-grade NAT
+        IPAddr.new("127.0.0.0/8"),      # RFC 1122 loopback
+        IPAddr.new("169.254.0.0/16"),   # RFC 3927 link-local (cloud instance metadata)
+        IPAddr.new("172.16.0.0/12"),    # RFC 1918 private
+        IPAddr.new("192.168.0.0/16"),   # RFC 1918 private
+        # RFC 4291 §2.4 reserves ::/8 outright. This /16 slice holds the
+        # unspecified address, loopback (::1), IPv4-mapped (::ffff:0:0/96) and
+        # the deprecated IPv4-compatible form (::a.b.c.d) — every one of which
+        # either names or encodes an internal target, and none of which a
+        # federation peer can legitimately publish. Restricting the slice
+        # covers all four without a decode step. It deliberately stops at /16
+        # rather than /8: the well-known NAT64 prefix 64:ff9b:: also sits in
+        # ::/8, and SS2 requires that one be decoded, not blocked.
+        IPAddr.new("::/16"),
+        IPAddr.new("64:ff9b:1::/48"),   # RFC 8215 local-use NAT64 (local by definition)
+        IPAddr.new("fc00::/7"),         # RFC 4193 unique local address
+        IPAddr.new("fe80::/10"),        # RFC 4291 link-local
+        IPAddr.new("fec0::/10"),        # RFC 3879 deprecated site-local
+      ].freeze
+
+      # RFC 6052 §3.1 well-known NAT64 prefix; the IPv4 destination is the low
+      # 32 bits. Used with DNS64 to reach *global* IPv4, which the prefix's own
+      # specification requires — so an embedded private address is already a
+      # violation, and decoding is what detects it.
+      NAT64_WELL_KNOWN_PREFIX = IPAddr.new("64:ff9b::/96").freeze
+
+      # RFC 3056 6to4; the IPv4 address occupies bits 16..47 (2002:V4ADDR::/48).
+      SIX_TO_FOUR_PREFIX = IPAddr.new("2002::/16").freeze
+
+      # RFC 4380 Teredo; bits 32..63 carry the server's IPv4 and bits 96..127
+      # the client's, obfuscated by XOR with all ones.
+      TEREDO_PREFIX = IPAddr.new("2001::/32").freeze
+
+      # RFC 5214 ISATAP interface identifiers. The IPv4 address follows the
+      # +00-00-5E-FE+ (locally administered) or +02-00-5E-FE+ (globally unique)
+      # marker in bits 64..95, so ISATAP is recognisable under *any* prefix
+      # rather than a fixed one.
+      ISATAP_IDENTIFIERS = [0x00005efe, 0x02005efe].freeze
+
+      # Mask selecting a 32-bit IPv4 payload out of an IPv6 address.
+      IPV4_PAYLOAD_MASK = 0xffffffff
+
       # Determine whether an IP should be restricted from exposure.
+      #
+      # An address is restricted when it names a forbidden destination directly
+      # (SS1) *or* when it encodes one through an IPv6 transition mechanism
+      # (SS2) — a NAT64/6to4/Teredo address is an IPv4 destination wrapped in
+      # IPv6 notation, and a guard that inspects only the wrapper reaches the
+      # target it meant to forbid. Recursion terminates after one step because
+      # {embedded_ipv4_addresses} yields IPv4 addresses, which embed nothing.
       #
       # @param ip [IPAddr] candidate IP address.
       # @return [Boolean] true when the IP should not be exposed.
       def restricted_ip_address?(ip)
-        return true if ip.loopback?
-        return true if ip.private?
-        return true if ip.link_local?
         return true if ip.to_i.zero?
+        return true if RESTRICTED_IP_RANGES.any? { |range| range.include?(ip) }
 
-        false
+        embedded_ipv4_addresses(ip).any? { |embedded| restricted_ip_address?(embedded) }
+      end
+
+      # Extract the IPv4 destinations an IPv6 transition address encodes.
+      #
+      # Decoding rather than blanket-blocking the transition prefixes is what
+      # keeps the guard from costing reachability (SPEC SS2): on an IPv6-only
+      # network with DNS64 every IPv4-only federation peer is synthesised into
+      # the well-known NAT64 prefix, so refusing the prefix outright would end
+      # federation with all of them while blocking nothing an attacker could
+      # have used.
+      #
+      # @param ip [IPAddr] candidate IP address.
+      # @return [Array<IPAddr>] embedded IPv4 addresses, empty when none apply.
+      def embedded_ipv4_addresses(ip)
+        return [] unless ip.ipv6?
+
+        value = ip.to_i
+        addresses = if NAT64_WELL_KNOWN_PREFIX.include?(ip)
+            [ipv4_from_integer(value & IPV4_PAYLOAD_MASK)]
+          elsif SIX_TO_FOUR_PREFIX.include?(ip)
+            [ipv4_from_integer((value >> 80) & IPV4_PAYLOAD_MASK)]
+          elsif TEREDO_PREFIX.include?(ip)
+            # Both endpoints are attacker-chosen, so both are checked.
+            [
+              ipv4_from_integer((value >> 64) & IPV4_PAYLOAD_MASK),
+              ipv4_from_integer((value & IPV4_PAYLOAD_MASK) ^ IPV4_PAYLOAD_MASK),
+            ]
+          else
+            []
+          end
+
+        # ISATAP is carried in the interface identifier, not in the prefix, so
+        # it can ride under a global prefix the branch above does not match and
+        # is therefore tested independently rather than as another branch.
+        if ISATAP_IDENTIFIERS.include?((value >> 32) & IPV4_PAYLOAD_MASK)
+          addresses += [ipv4_from_integer(value & IPV4_PAYLOAD_MASK)]
+        end
+
+        addresses
+      end
+
+      # Build an IPv4 address from its 32-bit integer representation.
+      #
+      # @param value [Integer] 32-bit IPv4 address value.
+      # @return [IPAddr] parsed IPv4 address.
+      def ipv4_from_integer(value)
+        IPAddr.new(value, Socket::AF_INET)
       end
 
       # Normalize IPv6 instance domains so that they remain bracketed and URI-compatible.
