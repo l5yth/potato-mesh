@@ -7,8 +7,10 @@ Working notes: what the code actually does today, what was verified against the
 pinned Meshtastic library, and what was decided. Written to be pasteable into
 the issue and picked up later once probe data exists.
 
-**Status:** blocked on empirical data. The diagnostic probe is on branch
-`l5y-ingestor-mqtt-probe`; the feature itself is not started.
+**Status:** still blocked on empirical data. Run 1 (§10) did not exercise the probe
+— `VIA_MQTT_PROBE` was never set — and was taken on the maintainer's own mesh rather
+than the reporter's, so the decisive question in §4 remains open. The probe is on
+branch `l5y-ingestor-mqtt-probe`; the feature itself is not started.
 
 ---
 
@@ -38,7 +40,7 @@ about hourly, so it re-fires roughly that often in practice.
 `handlers/nodeinfo.py:180` sets `node_payload["viaMqtt"]`, and the snapshot path
 passes meshtastic's raw node dict through `upsert_payload` (`serialization.py:270`),
 so the key rides along there too. But the `nodes` table has no such column
-(`data/nodes.sql:17-53`) and `node_writes.rb:352` never maps it. The flag dies at the
+(`data/nodes.sql:17-59`) and `node_writes.rb:546` never maps it. The flag dies at the
 web boundary. **An ingestor-side filter therefore needs no schema migration.**
 
 ## 3. Verified against the pinned library
@@ -79,7 +81,7 @@ Python library only reports what the device already decoded.
 If the bit is not set on relayed packets, a packet-level filter catches nothing and
 the whole approach needs rethinking. **Hence the probe — run it before building.**
 
-## 5. MeshCore — out of scope, deliberately
+## 5. MeshCore (and Reticulum) — out of scope, deliberately
 
 1. **No MQTT at all.** Zero matches for `mqtt|broker` across `protocols/meshcore/`.
    The filter is a Meshtastic-only concern by nature.
@@ -92,6 +94,12 @@ the whole approach needs rethinking. **Hence the probe — run it before buildin
    (handlers subscribe before `mc.connect()`/`ensure_contacts()`, `runner.py:157-224`),
    so the daemon snapshot is *mostly* redundant there — but removing it re-opens
    issue #788's ordering fix for no benefit.
+
+**Reticulum** (added in #888–#900, after these notes were first written) is likewise
+unaffected: it has no MQTT concept, and it never reaches `store_packet_dict` at all
+(`protocols/reticulum.py` calls `handlers.upsert_node` directly), so the packet gate
+cannot see it. Its `node_snapshot_items` does pass through the snapshot probe, which
+simply reports zero flagged nodes.
 
 ## 6. Decisions
 
@@ -168,3 +176,84 @@ in which case `snapshot_nodes` vs `flagged_nodes` shows how much of the problem 
 alone would solve.
 
 Delete the probe once the question is settled.
+
+---
+
+## 10. Empirical run 1 — 2026-08-24 → 08-29 (inconclusive on the core question)
+
+Two `DEBUG=1` ingestor logs, ~5 days (120.1 h), from the maintainer's Berlin
+deployment: `core-mqtt.log` (MeshCore, 80,504 lines) and `tast-mqtt.log`
+(Meshtastic, 98,054 lines, `127.0.0.1:4403` → `potatomesh.net`).
+
+### 10a. The probe did not run
+
+Zero `via_mqtt_probe` lines and zero `VIA_MQTT_PROBE` occurrences in either file.
+`VIA_MQTT_PROBE=1` was never set, or the deployed build predated the branch commit
+(which is still unpushed). **The decisive `mqtt-over-rf` classification from §9 is
+therefore unavailable.** §4 remains open.
+
+### 10b. A partial answer from the payload logs anyway
+
+`store_nodeinfo_packet` writes `viaMqtt` into the `/api/nodes` body
+(`handlers/nodeinfo.py:180`), the snapshot path passes the raw node dict through
+`_node_to_dict` (a pure recursive passthrough that preserves unknown keys), and
+`queue.queue_post_json` logs those payloads **in full** — verified uncut in the logs.
+So a flagged node would have been visible without the probe.
+
+Control, proving the absence is real and not an artifact of the logging:
+
+| field | `: true` | `: false` |
+| --- | --- | --- |
+| `isFavorite` | 1 | 0 |
+| `isUnmessagable` | 294 | 2429 |
+| **`viaMqtt`** | **0** | **0** |
+
+`isFavorite` shows exactly the no-presence signature — emitted when true, absent when
+false — so a flagged boolean does surface here. Result: **zero `viaMqtt` across 4,031
+node posts covering 240 distinct nodes over 5 days.** The MeshCore log is also zero,
+as expected (§5).
+
+### 10c. Why this does not settle §4
+
+These logs come from the maintainer's mesh, not the reporter's. If Berlin has no
+MQTT-bridged neighbours, zero is the expected result whether or not the bit survives
+an RF hop. It is an absence of *exposure*, not an absence of *signal*. Reach is not
+the limiting factor — the radio hears out to 7 hops (`hopsAway` 0–7, mode 3).
+
+**Run 2 must happen on the reporter's node (d3xt3r01, issue #884), with
+`VIA_MQTT_PROBE=1` and a build from this branch.**
+
+### 10d. Unplanned finding — run 1 measures the real cost of D3
+
+Distinct Meshtastic nodes over the 5 days, by arrival path:
+
+| path | nodes |
+| --- | --- |
+| Snapshot (`upsert_node`) | 201 |
+| Live NODEINFO packets | 171 |
+| Both | 132 |
+| **Snapshot-only, never re-heard live** | **69** |
+| New arrivals the snapshot never had | 40 |
+| Seen by any path | 254 |
+
+Of the 69 snapshot-only nodes, position/telemetry/neighborinfo also saw 14 — so **D6
+recovers 14 and 55 nodes (~22% of the roster) would never appear at all** under D3.
+Reachable without the snapshot: 199 of 254.
+
+Cold-start fill from live NODEINFO alone, as a share of the 201-node snapshot roster:
+
+| elapsed | 1 h | 3 h | 6 h | 12 h | 24 h | 48 h | 120 h |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| % of roster | 11.9% | 31.3% | 39.3% | 51.7% | 60.2% | 68.7% | 85.1% |
+
+**This is materially worse than the estimate D4 was accepted on.** D4 was agreed
+against a "fills over roughly 3 h" reading of the 3 h default NodeInfo broadcast
+interval; the measured curve is 60% at 24 h and never reaches 100%, with ~22% of the
+roster permanently absent. D4 stands unless revisited, but it should be revisited
+with these numbers rather than the estimate. D6 is also worth more than it first
+appeared: it is the only mechanism recovering any of the 69.
+
+*Method: node IDs extracted from `context=handlers.upsert_node` (snapshot) versus
+`context=handlers.store_nodeinfo` (live) debug lines, with
+`store_position`/`store_telemetry`/`store_neighborinfo` for the D6 estimate. Both
+logs are covered by `data/.gitignore`.*
