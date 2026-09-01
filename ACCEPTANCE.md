@@ -6344,3 +6344,117 @@ apply to); **S-A5 / MA-A5 / F2-A1** (the stats scopes, amended once already when
 meta row and figure, now that Reticulum renders a preset tag); **RA-A1/RA-A2**
 (the table rows and counts); and the federation instance-table criteria, whose
 zero rendering RL4 changes for **all three** protocols, not only Reticulum.
+
+---
+
+## Bugfix: SSRF guard missed IPv6 transition addresses (NAT64/6to4/Teredo)
+
+Maps to SPEC decisions **SS1–SS5**. `restricted_ip_address?`
+(`web/lib/potato_mesh/application/networking.rb`) delegated to Ruby's
+`IPAddr#loopback?` / `#private?` / `#link_local?`, which classify an address by
+its literal form and do not decode IPv6 transition addressing. A federated peer
+publishing an AAAA record of `64:ff9b::a9fe:a9fe` (NAT64 for `169.254.169.254`)
+passed the guard, and `build_remote_http_client` pinned the connection to it —
+full-read SSRF against cloud instance metadata on any NAT64-capable network.
+CGNAT (`100.64.0.0/10`) passed for the same reason. Reported by tonghuaroot;
+CWE-918. The apex (I) and parity (IV) invariants are untouched.
+
+### SS-A1 — Transition-encoded internal targets are restricted — SS1/SS2
+```bash
+( cd web && bundle exec rspec spec/networking_spec.rb -e "restricted_ip_address?" \
+                              -e "embedded_ipv4_addresses" -e "ipv4_from_integer" )
+```
+**Expected:** pass. An address that reaches a forbidden destination is
+restricted regardless of which of the recognised encodings it is written in
+(SS2 names the encodings no static rule can recognise): NAT64 (`64:ff9b::/96` and the
+RFC8215 `64:ff9b:1::/48`), 6to4 (`2002::/16`, including non-zero subnet and
+interface identifiers), Teredo (`2001::/32`, both the server IPv4 and the
+XOR-obfuscated client IPv4), and the deprecated IPv4-compatible `::a.b.c.d`
+form, and RFC5214 **ISATAP**, whose marker rides the interface identifier and
+is therefore decoded under any prefix — including one the NAT64 rule does not
+match. The pre-existing direct cases (loopback, RFC1918, `169.254.0.0/16`,
+`fc00::/7`, `fe80::/10`, IPv4-mapped, unspecified) stay restricted, and the
+ranges stdlib never modelled — `100.64.0.0/10` (RFC6598 CGNAT), `0.0.0.0/8`
+(RFC1122), `fec0::/10` (RFC3879 site-local), and the rest of the IETF-reserved
+`::/16` slice — are restricted now. `embedded_ipv4_addresses` and
+`ipv4_from_integer` are public module members and carry their own examples, not
+only transitive coverage.
+The Teredo vectors are asserted on decoded payloads, not on the ones named in
+the report: `2001:0:4136:e378:8000:63bf:3fff:fdd2` decodes to client
+`192.0.2.45`, which is TEST-NET-1 documentation space, not the RFC1918 address
+the report describes.
+
+### SS-A2 — The narrowing does not strand real peers — SS2
+```bash
+( cd web && bundle exec rspec spec/networking_spec.rb -e "restricted_ip_address?" \
+                              spec/federation_spec.rb -e "still reaches an IPv4-only peer" )
+```
+**Expected:** pass. Public IPv4/IPv6, the addresses immediately either side of
+the CGNAT block (`100.63.255.255`, `100.128.0.0`), `2001:db8::1` (documentation
+space, which sits outside the Teredo `/32`), a Teredo address whose server and
+client IPv4 are both public, the two global addresses stdlib `IPAddr` misreports
+as internal (SS1 — `2606:4700:4700::ffff:a9fe:a9fe` as **link-local**,
+`2001:db8:1:2:3:ffff:a00:1` as **private**), and — the load-bearing one — `64:ff9b::cb00:7105`, a public
+IPv4 peer synthesised into NAT64 by DNS64, all remain **permitted**; the pin to
+a permitted address is exercised end-to-end for that last case. Blanket-blocking the
+transition prefixes would fail this criterion: on an IPv6-only network every
+IPv4-only peer resolves into `64:ff9b::/96`, so a blanket rule ends federation
+with all of them while blocking nothing an attacker could have used.
+
+**Known cost, not a failure (SS5):** `100.64.0.0/10` is also **Tailscale's**
+range, so a peer reachable only across a tailnet or behind carrier NAT is now
+rejected with `restricted domain`. Deliberate — see SS5 — and it ships without
+an escape hatch.
+
+### SS-A3 — The guard holds at the real chokepoint — SS1/SS2
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb -e "rejects URIs resolving to" \
+                                                      -e "rejects URIs that resolve exclusively" )
+```
+**Expected:** pass. Driven through `build_remote_http_client` →
+`resolve_remote_ip_addresses` with DNS stubbed, because the predicate returning
+`false` is only a classification miss; pinning `Net::HTTP#ipaddr` to the result
+is what makes the request. Each transition encoding raises
+`ArgumentError, "restricted domain"` — the same rejection the bare IPv4 form
+already produced — which `fetch_instance_json` already wraps as
+`InstanceFetchError` (FD-A1), so a hostile peer is rejected, not a 500.
+
+### SS-A4 — The restricted set is stated, not borrowed — SS1
+```bash
+git grep -n 'RESTRICTED_IP_RANGES' -- web/lib/potato_mesh/application/networking.rb
+git grep -nc 'ip\.loopback?\|ip\.private?\|ip\.link_local?' -- \
+  web/lib/potato_mesh/application/networking.rb
+```
+**Expected:** the first grep hits a frozen, commented list of CIDR ranges. The
+second still hits — `loopback_address?` / `private_address?` / `link_local_address?`
+legitimately use the predicates for **host address discovery**
+(`public_ip_address?`, `protected_ip_address?`, SS3), which is a taxonomy
+question, not a reachability decision. What must not reappear is
+`restricted_ip_address?` itself delegating to them — which the count alone does
+not prove, so read the hits: they must all sit inside `loopback_address?`,
+`link_local_address?` and `private_address?`.
+
+### SS-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**A3c** (federation specs — opt-in, isolation, privacy override, staleness
+eviction), **FD-A1** (DNS failures wrapped, not leaked), and the
+`POST /api/instances` registration block in `spec/app_spec.rb`, which asserts
+both the accept and the `{"error":"restricted domain"}` reject path.
+**Known flake, unrelated:** `spec/worker_pool_spec.rb`'s two deadline examples
+(`:44`, `:137`) can fail with "expected TaskTimeoutError but nothing was raised".
+Evidence, stated as observed and no further: **2 failures across 10 full-suite
+runs** on this branch, a different one of the two examples each time, with **7
+consecutive clean runs since the last**; no failure in 8 isolated runs under
+synthetic load, nor in 5 stashed-baseline runs. The trigger was **not** isolated
+— CPU contention was present for one failure and absent for the other, which
+happened on a quiet foreground run — and it was **not** reproduced on a
+baseline. So "unrelated" rests on two things only: the diff touches neither
+`worker_pool.rb` nor its spec, and RSpec here has no random ordering (no
+`.rspec`, no `order`/`seed`). Re-run before attributing it to a change. Note the
+standing **B1 known gap**: in sandboxes whose resolver maps the suite's test
+domains into restricted ranges, 17 of those examples fail identically with and
+without this change. Judge them where the test domains resolve normally.

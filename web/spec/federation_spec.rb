@@ -236,6 +236,42 @@ RSpec.describe PotatoMesh::App::Federation do
       end.to raise_error(ArgumentError, "restricted domain")
     end
 
+    # SPEC SS1/SS2 regression: a peer that publishes an IPv6 transition address
+    # embedding an internal IPv4 target must be rejected here, at the same
+    # chokepoint that rejects the bare IPv4 form above. Exercised through
+    # +build_remote_http_client+ rather than the predicate alone because the
+    # pinning in this method is what turns a classification miss into a request.
+    {
+      "64:ff9b::a9fe:a9fe" => "NAT64-encoded cloud metadata",
+      "2002:a9fe:a9fe::" => "6to4-encoded cloud metadata",
+      "2001:0:4136:e378:8000:63bf:f5ff:fffe" => "Teredo-encoded RFC1918 client",
+      "::127.0.0.1" => "IPv4-compatible loopback",
+    }.each do |address, why|
+      it "rejects URIs resolving to #{address} (#{why})" do
+        uri = URI.parse("https://transition.mesh/api")
+        allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip(address)])
+
+        expect do
+          federation_helpers.build_remote_http_client(uri)
+        end.to raise_error(ArgumentError, "restricted domain")
+      end
+    end
+
+    it "still reaches an IPv4-only peer synthesised into NAT64 by DNS64" do
+      uri = URI.parse("https://v4peer.mesh/api")
+      # 64:ff9b::cb00:7105 embeds the public 203.0.113.5; blanket-blocking the
+      # NAT64 prefix would strand every IPv4 peer on an IPv6-only network.
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("64:ff9b::cb00:7105")])
+
+      http = federation_helpers.build_remote_http_client(uri)
+
+      if http.respond_to?(:ipaddr)
+        expect(http.ipaddr).to eq("64:ff9b::cb00:7105")
+      else
+        skip "Net::HTTP#ipaddr accessor unavailable"
+      end
+    end
+
     it "binds the HTTP client to the first unrestricted address" do
       uri = URI.parse("https://remote.example.com/api")
       allow(Addrinfo).to receive(:getaddrinfo).and_return([
