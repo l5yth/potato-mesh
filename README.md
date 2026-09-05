@@ -17,19 +17,16 @@
 A federated Meshtastic, Meshcore, and Reticulum node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
 
-* Web dashboard with chat window and map view showing nodes, positions, neighbors,
-  trace routes, telemetry, and messages.
-  * API to POST (authenticated) and to GET nodes, messages, and telemetry.
-  * Shows new node notifications (first seen) and telemetry logs in chat.
-  * Allows searching and filtering for nodes in map and table view.
-  * Federated: _automatically_ froms a federation with other communities running
-    Potato Mesh!
+* Web dashboard: map + chat, nodes, positions, neighbors, trace routes, telemetry, messages.
+  * API to `POST` (authenticated) and `GET` nodes, messages, and telemetry.
+  * New-node and telemetry notifications in chat.
+  * Search and filter nodes in map and table view.
+  * Federates automatically with other communities running PotatoMesh.
   * Supports Meshtastic, Meshcore, and Reticulum.
-* Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
+* Python ingestor feeds the web app's `POST` APIs remotely.
   * Supports multiple ingestors per instance.
-  * Supports Meshtastic, Meshcore, and Reticulum protocols.
-* Matrix bridge that posts Meshtastic messages to a defined matrix channel (no
-  radio required).
+  * Supports Meshtastic, Meshcore, and Reticulum.
+* Matrix bridge posts Meshtastic messages to a Matrix channel (no radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
 
 Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
@@ -42,10 +39,11 @@ Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
 - [Nix](#nix) - nix deployment
 - [Docker](#docker) - docker deployment
 - [Matrix Bridge](#matrix-bridge) - configuration and deployment
+- [Mobile App](#mobile-app) - reader app
 
 ## Web App
 
-Requires Ruby for the Sinatra web app and SQLite3 for the app's database.
+Requires Ruby and SQLite3.
 
 ```bash
 pacman -S ruby sqlite3
@@ -55,8 +53,6 @@ bundle install
 ```
 
 ### Run
-
-Check out the `app.sh` run script in `./web` directory.
 
 ```bash
 API_TOKEN="1eb140fd-cab4-40be-b862-41c607762246" ./app.sh
@@ -68,13 +64,9 @@ Puma starting in single mode...
 * Listening on http://127.0.0.1:41447
 ```
 
-Check [127.0.0.1:41447](http://127.0.0.1:41447/) for the development preview
-of the node map. Set `API_TOKEN` required for authorizations on the API's POST endpoints.
+Open [127.0.0.1:41447](http://127.0.0.1:41447/) for the dashboard. `API_TOKEN` is required to authorize the API's `POST` endpoints.
 
 ### Production
-
-When promoting the app to production, run the server with the minimum required
-configuration to ensure secure access and proper routing:
 
 ```bash
 RACK_ENV="production" \
@@ -85,14 +77,11 @@ MAP_CENTER="53.55,13.42" \
 exec ruby app.rb -p 41447 -o 0.0.0.0
 ```
 
-* `RACK_ENV` and `APP_ENV` must be set to `production` to enable optimized
-  settings suited for live deployments.
-* Bind the server to a production port and all interfaces (`-p 41447 -o 0.0.0.0`)
-  so that clients can reach the dashboard over the network.
-* Provide a strong `API_TOKEN` value to authorize POST requests against the API.
-* Configure `INSTANCE_DOMAIN` with the public URL of your deployment so vanity
-  links and generated metadata resolve correctly.
-* Don't forget to set a `MAP_CENTER` to point to your local region.
+* Set `RACK_ENV=production` and `APP_ENV=production`.
+* Bind to a production port and all interfaces: `-p 41447 -o 0.0.0.0`.
+* Set a strong `API_TOKEN` to authorize `POST` requests.
+* Set `INSTANCE_DOMAIN` to your deployment's public URL.
+* Set `MAP_CENTER` to your region's coordinates.
 
 The web app can be configured with environment variables (defaults shown):
 
@@ -116,23 +105,19 @@ The web app can be configured with environment variables (defaults shown):
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
 | `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm. |
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
-| `OG_IMAGE_URL` | _unset_ | Optional absolute URL for the social preview image. Must use an `http://` or `https://` scheme; values with other schemes are ignored. Most social platforms (Facebook, LinkedIn, Slack, iMessage) require **HTTPS** to render the card. When set, replaces the runtime-generated `/og-image.png` so deployments without Chromium (or with size-conscious images) can point at a CDN. |
+| `OG_IMAGE_URL` | _unset_ | Absolute `http(s)://` URL for the social preview image; other schemes are ignored. Replaces the generated `/og-image.png`. Use HTTPS — most platforms won't render an HTTP preview. |
 | `PAGES_DIR` | `./pages` | The directory for static, custom-content pages. |
 | `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. |
 
-The application derives SEO-friendly document titles, descriptions, and social
-preview tags from these existing configuration values. `/robots.txt` and
-`/sitemap.xml` are generated automatically and respect `PRIVATE`/`FEDERATION`
-toggles; markdown files in `pages/` may declare optional YAML frontmatter
-(`title`, `description`, `image`, `noindex`) for per-page overrides. The
-`image:` frontmatter must be an absolute `http(s)://` URL; other schemes are
-silently dropped to keep operators from accidentally leaking `data:` or
-`javascript:` URIs into Open Graph tags.
+`/robots.txt` and `/sitemap.xml` are generated automatically and respect
+`PRIVATE`/`FEDERATION`. Markdown files in `pages/` may set YAML frontmatter
+(`title`, `description`, `image`, `noindex`); `image` must be an absolute
+`http(s)://` URL — other schemes are dropped.
 
-If `INSTANCE_DOMAIN` is unset in production the app emits a one-time `WARN`
-at startup; canonical URLs and sitemap entries fall back to the inbound
-`Host` header, which can be cache-poisoned by a misconfigured proxy. Set
-`INSTANCE_DOMAIN` to your public hostname to silence the warning.
+If `INSTANCE_DOMAIN` is unset in production, the app warns once at startup and
+falls back to the inbound `Host` header for canonical URLs — vulnerable to
+cache poisoning behind a misconfigured proxy. Set `INSTANCE_DOMAIN` to avoid
+this.
 
 Example:
 
@@ -142,31 +127,27 @@ SITE_NAME="PotatoMesh Demo" INSTANCE_DOMAIN="https://potatomesh.net" MAP_CENTER=
 
 ### Configuration & Storage
 
-PotatoMesh stores its runtime assets using the XDG base directory specification.
-When XDG directories are not provided the application falls back
-to the repository root.
+Runtime assets follow the XDG base directory spec, falling back to the
+repository root when unset:
 
-The key is written to `$XDG_CONFIG_HOME/potato-mesh/keyfile` and the
-well-known document is staged in
-`$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`.
+- Key: `$XDG_CONFIG_HOME/potato-mesh/keyfile`
+- Well-known document: `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`
+- Database: `$XDG_DATA_HOME/potato-mesh`
 
-The database can be found in `$XDG_DATA_HOME/potato-mesh`.
-
-**Outbound requests.** The map requests basemap tiles from two third-party CDNs
-on every viewport — OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
-(`basemaps.cartocdn.com`) — so a visitor's browser contacts both. Only `z/x/y`
-tile coordinates are sent: no API key, token, cookie, or analytics parameter.
-Tiles are the only third-party request the dashboard makes.
+**Outbound requests.** The map loads basemap tiles from two third-party CDNs on
+every viewport: OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
+(`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent — no key,
+cookie, or analytics parameter. Tiles are the only third-party request the
+dashboard makes.
 
 ### Custom Pages
 
-Instance operators can publish static content pages (contact details, mesh
-protocol information, legal notices, etc.) by placing Markdown files in the
-`pages/` directory inside `web/`. Each `.md` file automatically becomes a nav
-entry and a route under `/pages/<slug>`.
+Add Markdown files to `web/pages/` to publish static content pages (contact
+info, rules, legal notices). Each `.md` file becomes a nav entry and a route
+at `/pages/<slug>`.
 
-Files are named `<sort-prefix>-<slug>.md`: the numeric prefix controls
-navigation order and the slug becomes the URL path and nav label:
+Filename format: `<sort-prefix>-<slug>.md`. The prefix sets nav order; the
+slug sets the URL and nav label:
 
 | Filename               | Nav Label      | URL                     |
 | ---------------------- | -------------- | ----------------------- |
@@ -175,26 +156,15 @@ navigation order and the slug becomes the URL path and nav label:
 | `9-contact.md`         | Contact        | `/pages/contact`        |
 | `20-impressum.md`      | Impressum      | `/pages/impressum`      |
 
-A default `1-about.md` ships with the app. In Docker deployments the directory
-is exposed as the `potatomesh_pages` volume (mounted at `/app/pages`) so you can
-add or edit pages without rebuilding the image. The pages directory can also be
-overridden with the `PAGES_DIR` environment variable.
+- Ships with a default `1-about.md`.
+- Docker: the directory is the `potatomesh_pages` volume (`/app/pages`) — edit pages without rebuilding.
+- Override the directory with `PAGES_DIR`.
 
 ### Federation
 
-PotatoMesh instances can optionally federate by publishing signed metadata and
-discovering peers. Federation is enabled by default and controlled with the
-`FEDERATION` environment variable. Set `FEDERATION=1` (default) to announce your
-instance, respond to remote crawlers, and crawl the wider network. Set
-`FEDERATION=0` to keep your deployment isolated. Private mode still takes
-precedence; when `PRIVATE=1`, federation features remain disabled regardless of
-the `FEDERATION` value.
-
-When federation is enabled, PotatoMesh automatically refreshes entries from
-known peers every eight hours to keep the directory current. Instances that
-stop responding are considered stale and are removed from the web frontend after
-72 hours, ensuring visitors only see active deployments in the public
-directory.
+- `FEDERATION=1` (default): announce this instance, respond to crawlers, and crawl peers every 8 hours.
+- `FEDERATION=0`: fully isolated, no federation.
+- `PRIVATE=1` disables federation regardless of `FEDERATION`.
 
 ### API
 
@@ -237,9 +207,9 @@ There is no health endpoint; use `GET /version`.
 
 ### Advanced tuning
 
-Environment variables for the web app's internals. All optional; set only to
-change the defaults shown. Not pre-declared in `.env.example`, Compose, or the
-NixOS module — set them in the environment of the web process.
+Internal tuning knobs, all optional; set only to change the defaults shown.
+Not pre-declared in `.env.example`, Compose, or the NixOS module — set them
+directly in the web process's environment.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -274,26 +244,18 @@ scrape configuration examples.
 
 ## Ingestor
 
-The web app is not meant to be run locally connected to a LoRa node but rather
-on a remote host without access to a physical LoRa device. Therefore, it only
-accepts data through the API POST endpoints. Benefit is, here _multiple nodes across the
-community_ can feed the dashboard with data. The web app handles messages and nodes
-by ID and there will be no duplication.
-
-For convenience, the directory `./data` contains a Python ingestor. It connects to a
-LoRa node via serial port or to a remote device that exposes the LoRa TCP
-or Bluetooth (BLE) interfaces to gather nodes and messages seen by the node.
+The web app never connects to a radio; it only ingests via authenticated
+`POST`. Run one or more Python ingestors from `./data` to feed it — each
+connects to a LoRa node over serial, TCP, or Bluetooth (BLE), and multiple
+ingestors can feed one instance without duplicating data.
 
 ```bash
 pacman -S python
 cd ./data
 python -m venv .venv
 source .venv/bin/activate
-pip install -r "requirements.txt
+pip install -r requirements.txt
 ```
-
-It uses the respective Python library to ingest mesh data and post nodes and messages
-to the configured potato-mesh instance.
 
 Check out `mesh.sh` ingestor script in the `./data` directory.
 
@@ -306,35 +268,25 @@ INSTANCE_DOMAIN=http://127.0.0.1:41447 API_TOKEN=1eb140fd-cab4-40be-b862-41c6077
 [2025-02-20T12:34:58.001122Z] [potato-mesh] [debug] context=handlers.store_packet_dict channel=0 from_id='!9ee71c38' payload='Guten Morgen!' to_id='^all' Queued message payload
 ```
 
-Run the script with `INSTANCE_DOMAIN` and `API_TOKEN` to keep updating
-node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
-specify the connection target with `CONNECTION` (default `/dev/ttyACM0`) or set it to
-an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
-interface. `CONNECTION` also accepts Bluetooth device addresses in MAC format (e.g.,
-`ED:4D:9E:95:CF:60`) or UUID format for macOS (e.g., `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`)
-and the script attempts a BLE connection if available. To keep
-ingestion limited, set `ALLOWED_CHANNELS` to a comma-separated whitelist (for
-example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
-Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
-appear in the allowlist.
+Configure with the environment variables below.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
 | `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. |
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
-| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP connections, and bluetooth addresses (BLE mac). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
+| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
 | `CHANNEL_INDEX` | `0` | Which channel index to ingest from. |
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
 | `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |
 | `CHANNEL` | _unset_ | Deprecated alias for `MESHTASTIC_PRESET`. |
-| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; when set, all other channels are skipped before hidden filters. |
+| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts (e.g. `Chat,Ops`); when set, all other channels are skipped before hidden filters. |
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
 | `TRANSPORT` | `api` | Ingestor transport: `api` (Meshtastic library over serial/TCP/BLE) or `udp` (passive LAN multicast; see [Passive UDP transport](#passive-udp-transport)). |
 | `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). |
 | `PRIMARY_CHANNEL_KEY` | `AQ==` | Base64 PSK used to decrypt the primary channel in UDP transport (default = Meshtastic default key). |
-| `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast`: the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key: only the per-channel hash of *(name, key)* distinguishes them. |
+| `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
@@ -344,8 +296,8 @@ appear in the allowlist.
 | `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
-| `TX_ENABLED` | `0` | Master switch for everything the ingestor puts on the air Off by default: the ingestor is a listener. Set to `1` to allow transmitting; this is what enables Meshcore on-air contact telemetry polling. Does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
-| `TX_ANNOUNCE` | `0` | Set to `1` (with `TX_ENABLED=1`) to broadcast a one-line activity summary on the default channel: at most once per 24 h, never in the first 24 h after start. Off by default: it is unsolicited automated traffic on a channel people read. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+| `TX_ENABLED` | `0` | Master switch for all ingestor transmissions. `0` = listen only. `1` = allow transmit — enables Meshcore on-air telemetry polling; does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+| `TX_ANNOUNCE` | `0` | Requires `TX_ENABLED=1`. Broadcasts a one-line activity summary at most once per 24 h, never in the first 24 h after start. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 
 ### Transmitting on the mesh
 
@@ -363,10 +315,8 @@ The announcement looks like this:
 Meshtastic activity in the last 24h: 42 active nodes, 118 packets/hour. https://mesh.example.org
 ```
 
-The numbers come from your instance's public API, covering the whole mesh your
-dashboard sees. Announcements are suppressed when the instance runs `PRIVATE=1`,
-and the check fails closed: if the ingestor cannot reach the instance to ask, it
-does not transmit.
+Numbers come from the instance's public API. Suppressed when the instance is
+`PRIVATE=1`; fails closed (no transmit) if the check can't reach the instance.
 
 Both flags must be on for an announcement to go out:
 
@@ -376,7 +326,6 @@ Both flags must be on for an announcement to go out:
 | `0` | `1` | Receive only: `TX_ENABLED=0` wins. |
 | `1` | `0` | Telemetry polling on, no announcements. |
 | `1` | `1` | Telemetry polling on, one announcement per 24 h. |
-
 
 The ingestor logs the resolved policy at startup, without `DEBUG=1`:
 
@@ -390,20 +339,18 @@ resolved — including a flag that never reached the container.
 ### Meshcore
 
 Set `PROTOCOL=meshcore` to ingest from a Meshcore companion-firmware node
-instead (serial, TCP, or BLE via the same `CONNECTION` formats). Alongside
-contacts and messages, the ingestor captures RF metrics: per-message SNR and
-hop counts, per-channel-message RSSI and repeater path (decoded from the
-radio's RX log), and per-advert SNR/RSSI/hops for every node heard on air:
-including nodes the radio's contact roster has no room for.
+(serial, TCP, or BLE via the same `CONNECTION` formats). Captures RF metrics
+alongside contacts and messages: per-message SNR/hop counts, per-channel-message
+RSSI and repeater path, and per-advert SNR/RSSI/hops for every node heard —
+including nodes with no room in the radio's contact roster.
 
-Note: the ingestor writes one radio setting. At startup it enables the
-firmware's *overwrite-oldest-contact* flag (`autoadd_config` bit `0x01`,
-firmware ≥ 1.16) so a full contact roster evicts its oldest non-favourite
-entry instead of rejecting new nodes. The write happens only when the bit is
-not already set, preserves all other auto-add settings, persists on the
-device, and never evicts favourites. Older firmware without the command is
-left untouched. Evicted contacts remain in the dashboard's database: only
-the radio's local roster rotates.
+The ingestor writes one radio setting at startup: enables the firmware's
+overwrite-oldest-contact flag (`autoadd_config` bit `0x01`, firmware ≥ 1.16)
+when not already set.
+
+- Never evicts favourites; other auto-add settings are preserved.
+- Older firmware (no command support) is left untouched.
+- Evicted contacts stay in the dashboard's database — only the radio's local roster rotates.
 
 ### Reticulum
 
@@ -411,8 +358,7 @@ Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. The ingestor
 listens for announces and files each one as a node. It never transmits, so
 `TX_ENABLED=0` (the default) is fine.
 
-`CONNECTION` does not apply; if it is set the ingestor ignores it and logs that
-it did.
+`CONNECTION` does not apply; if set, the ingestor ignores it and logs that it did.
 
 It reads your existing `~/.reticulum`, so if `rnsd` already works, so does this:
 
@@ -430,34 +376,31 @@ RETICULUM_INTERFACES="RNode Reticulum Berlin"
 Your own nodes are always ingested regardless of this setting. Everything
 further away is filtered by it.
 
-**To use a different RNS config**, set `RETICULUM_CONFIG_DIR`. Point it at the
-same directory your `rnsd` uses — interface filtering asks that instance which
-interface an announce came in on, and the request is rejected across directories.
+**To use a different RNS config**, set `RETICULUM_CONFIG_DIR`, pointing at the
+same directory your `rnsd` uses — interface filtering fails across mismatched
+directories.
 
-**In Docker**, the config dir is the `potatomesh_reticulum` volume, mounted at
-`/app/.config/potato-mesh/reticulum`. RNS writes its stock config there on first
-start, whose only interface is a link-local `AutoInterface`:
+**In Docker**, the config dir is the `potatomesh_reticulum` volume
+(`/app/.config/potato-mesh/reticulum`). RNS seeds a stock config there with
+only a link-local `AutoInterface`, which reaches no radio on the default
+bridge network:
 
-- On the default bridge network that interface reaches no radio and usually no
-  peers, so the ingestor connects and hears nothing.
-- Add your interfaces to the volume's `config` file, then restart the ingestor:
+- Add your interfaces to the volume's `config` file, then restart:
   `docker compose exec ingestor sh -c 'cat >> /app/.config/potato-mesh/reticulum/config'`
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
-  and run the container with host networking.
+  and run with host networking.
 
-The ingestor derives its own node id from your **primary identity** — the one
-announcing the most destinations on this machine, which is the identity your
-LXMF and nomadnet addresses belong to. `INGESTOR_NODE_ID` overrides it.
-
-It reports the id it resolved at startup:
+The ingestor derives its node id from your **primary identity** — the one
+announcing the most destinations on this machine. `INGESTOR_NODE_ID` overrides
+it. It reports the id it resolved at startup:
 
 ```
 context=reticulum.connect ... node_id='!27716218' Reticulum announce listener registered
 ```
 
-`node_id='pending'` means nothing local has been heard yet; the ingestor retries
-each loop and logs again once it resolves. It is **not** the transport identity,
-and not the hash `rnstatus` prints as "Transport Instance".
+`node_id='pending'` means nothing local has been heard yet; the ingestor
+retries each loop and logs again once it resolves. Not the transport identity
+— not the hash `rnstatus` prints as "Transport Instance".
 
 **Changing the id strands the old row.** Setting, changing, or removing
 `INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
@@ -465,52 +408,37 @@ and not the hash `rnstatus` prints as "Transport Instance".
 as-is across upgrades is inert.
 
 **Frequency and preset** are read from the first `RNodeInterface` in your RNS
-config; `RETICULUM_FREQ` and `RETICULUM_PRESET` override them. A preset whose
-bandwidth, spreading factor and coding rate match a Meshtastic preset shows that
-name — it describes the radio settings, not compatibility with a Meshtastic
-mesh — otherwise it shows `SF8/BW125/CR5`.
+config; `RETICULUM_FREQ` and `RETICULUM_PRESET` override them. A matching
+preset name describes radio settings only, not interoperability with a
+Meshtastic mesh; otherwise it shows `SF8/BW125/CR5`. Values are read once at
+startup — change them in the RNS config and restart the ingestor, or the
+dashboard keeps showing the old ones.
 
-The values are read once at startup. Change them in the RNS config and restart
-the ingestor, or the dashboard keeps showing the old ones.
-
-A node appears once per announced destination, so one peer running LXMF and a
-nomadnet node shows up as two entries. `GET /api/destinations` lists them and
-groups them by identity.
+A node is one row per identity — a peer running both LXMF and a nomadnet node
+is still one entry. Its destinations (addresses) are listed via
+`GET /api/destinations` and shown as sub-rows grouped under the identity in
+the dashboard table.
 
 Announces carry no SNR, battery, or position, so those columns show dashes and
 Reticulum nodes stay off the map.
 
 ### Passive UDP transport
 
-The Meshtastic node radio accepts only one API client at a time (serial or
-TCP), so an ingestor connected over `CONNECTION` monopolizes the node: the
-phone app, CLI, and message sending fight it for the single slot. Setting
-`TRANSPORT=udp` switches the ingestor to a passive listener that never
-connects to the node's API at all: it joins the node's LAN multicast group
-(Meshtastic "Mesh via UDP", `224.0.0.69:4403`) and decodes packets off the wire,
-leaving the node's API slot completely free.
+Meshtastic's node API accepts only one client at a time. Set `TRANSPORT=udp`
+to run the ingestor as a passive listener on the node's LAN multicast group
+(`224.0.0.69:4403`) instead of connecting to the API — leaving the API slot
+free for the phone app or CLI.
 
-Enable "Mesh via UDP" on the node first (`meshtastic --set
-network.enabled_protocols 1`). The ingestor decrypts the primary channel with
-`PRIMARY_CHANNEL_KEY` (the Meshtastic default key `AQ==` by default). Private
-channels with their own secret keys are cryptographically unreadable and
-dropped. To guarantee only channel 0 is ingested, set
-`PRIMARY_CHANNEL_ONLY=1` and `PRIMARY_CHANNEL_NAME` (e.g. `MediumFast`): each
-packet advertises the hash of its channel *(name + key)*, and only packets whose
-hash matches the primary channel's are accepted. This is stricter than decrypting
-with the primary key: a secondary channel created with the default `AQ==` key
-would decrypt too, but has a different name and therefore a different hash, so it
-is dropped. If `PRIMARY_CHANNEL_NAME` is not set while `PRIMARY_CHANNEL_ONLY=1`,
-the ingestor fails closed and drops everything. Because there is no API
-connection, the node's bulk node database is not read: the node list rebuilds
-over the air from observed packets, and payloads (position, telemetry,
-traceroute, …) are decoded into the exact same shape the API/serial transport
-produces, so the collector receives identical records.
+Enable "Mesh via UDP" on the node first: `meshtastic --set network.enabled_protocols 1`.
 
-`TRANSPORT=udp` requires host networking so the container can receive LAN
-multicast (`network_mode: host`). A ready-to-use Raspberry Pi (arm64) deployment
-is provided in [`data/tools/compose.udp.pi.yml`](data/tools/compose.udp.pi.yml).
-Capture live packets for testing with
+- Decrypts the primary channel with `PRIMARY_CHANNEL_KEY` (default `AQ==`). Channels with other keys are dropped undecrypted.
+- Set `PRIMARY_CHANNEL_ONLY=1` and `PRIMARY_CHANNEL_NAME` to ingest only channel 0. Without `PRIMARY_CHANNEL_NAME` set, `PRIMARY_CHANNEL_ONLY=1` drops every packet (fail closed).
+- The node list rebuilds from observed packets — the node's own database is not read. Decoded payloads (position, telemetry, traceroute, …) match the API/serial transport shape.
+
+`TRANSPORT=udp` requires host networking (`network_mode: host`). A
+ready-to-use Raspberry Pi (arm64) deployment is provided in
+[`data/tools/compose.udp.pi.yml`](data/tools/compose.udp.pi.yml). Capture live
+packets for testing with
 [`data/tools/capture_udp_fixtures.py`](data/tools/capture_udp_fixtures.py).
 
 ## Nix
@@ -601,15 +529,15 @@ deployment instructions.
 
 ## Matrix Bridge
 
-A matrix bridge is currently being worked on. It requests messages from a configured
-potato-mesh instance and forwards it to a specified matrix channel; see
-[matrix/README.md](./matrix/README.md).
+**Work in progress.** Forwards messages from a PotatoMesh instance to a Matrix
+channel (no radio required). See [matrix/README.md](./matrix/README.md).
 
 ![matrix bridge](./scrot-0.6.png)
 
 ## Mobile App
 
-A mobile _reader_ app is currently being worked on. Stay tuned for releases and updates.
+**Work in progress.** A read-only reader app for Android and iOS. See
+[app/README.md](./app/README.md).
 
 ## Demos
 

@@ -3,40 +3,25 @@
 
 # Prometheus Monitoring for PotatoMesh
 
-PotatoMesh exposes runtime telemetry through a dedicated Prometheus endpoint so you can
-observe message flow, node health, and geospatial metadata alongside the rest of your
-infrastructure. This guide explains how the exporter is wired into the web
-application, which metrics are available, and how to integrate the endpoint with a
-Prometheus server.
+PotatoMesh exposes runtime telemetry at `/metrics` for Prometheus scraping.
 
 ## Runtime integration
 
-The Sinatra application automatically loads the `prometheus-client` gem and mounts the
-collector and exporter middlewares during boot. No additional configuration is
-required to enable the `/metrics` endpoint—running the web application is enough to
-serve Prometheus data on the same port as the dashboard. The middleware pair both
-collects default Rack statistics and publishes PotatoMesh-specific gauges and
-counters that are updated whenever the ingestors process new node records.
-
-A background refresh is triggered during start-up via
-`update_all_prometheus_metrics_from_nodes`, which seeds the gauges based on the latest
-state in the database. Subsequent POST requests to the ingest APIs update each metric
-in near real time.
+No configuration required. `/metrics` is served automatically on the same
+port as the dashboard as soon as the web app runs. Gauges are seeded from the
+database at startup and updated in near real time as `POST` ingest requests
+arrive.
 
 ## Selecting which nodes are exported
 
-To avoid creating high-cardinality time series, PotatoMesh does not export per-node
-metrics unless you opt in by providing node identifiers. Control this behaviour with
-the `PROM_REPORT_IDS` environment variable:
+Per-node metrics are opt-in via `PROM_REPORT_IDS` (avoids unbounded per-node
+time series):
 
-- Leave the variable unset or blank to only export aggregate gauges such as the total
-  node count.
-- Set `PROM_REPORT_IDS=*` to export metrics for every node in the database.
-- Provide a comma-separated list (for example `PROM_REPORT_IDS=ABCD1234,EFGH5678`) to
-  expose metrics for specific nodes.
+- Unset or blank: only aggregate gauges (e.g. total node count) are exported.
+- `PROM_REPORT_IDS=*`: export metrics for every node.
+- `PROM_REPORT_IDS=ABCD1234,EFGH5678`: export metrics for the listed node ids only.
 
-The selection applies to both the initial refresh and the incremental updates handled
-by the ingest pipeline.
+Applies to both the initial refresh and incremental updates.
 
 ## Available metrics
 
@@ -54,27 +39,21 @@ by the ingest pipeline.
 | `meshtastic_node_longitude` | Gauge | `node` | Longitude component of the last known position. |
 | `meshtastic_node_altitude` | Gauge | `node` | Altitude (in metres) of the last known position. |
 
-All per-node gauges are only emitted for identifiers included in `PROM_REPORT_IDS`.
-Some values require telemetry packets to be present—for example, devices must provide
-metrics or positional updates before the related gauges appear.
+Per-node gauges are emitted only for ids in `PROM_REPORT_IDS`. A gauge does
+not appear until the device has sent the corresponding telemetry or position
+update at least once.
 
 ## Accessing the `/metrics` endpoint
-
-Once the application is running, query the exporter directly:
 
 ```bash
 curl http://localhost:41447/metrics
 ```
 
-Use any HTTP client capable of plain-text requests. Prometheus scrapers should target
-the same URL. The endpoint returns data in the standard exposition format produced by
-`prometheus-client`.
+Returns the standard Prometheus exposition format.
 
 ## Prometheus scrape configuration
 
-Add a job to your Prometheus server configuration that points to the PotatoMesh
-instance. This example polls an instance running locally on the default port every 15
-seconds:
+Example (instance on the default port, 15 s interval):
 
 ```yaml
 scrape_configs:
@@ -85,19 +64,11 @@ scrape_configs:
           - localhost:41447
 ```
 
-If your deployment requires authentication or runs behind a reverse proxy, configure
-Prometheus to match your network topology (for example by adding basic authentication
-credentials, custom headers, or TLS settings).
+Behind a reverse proxy or auth, configure Prometheus's `basic_auth`, custom
+headers, or TLS settings to match.
 
 ## Troubleshooting
 
-- **No per-node metrics appear.** Ensure that `PROM_REPORT_IDS` is set and that the
-  specified nodes exist in the database. Set the value to `*` if you want to export
-  every node during initial validation.
-- **Metrics look stale after a restart.** Confirm that the ingestor is still posting
-  telemetry. The exporter only reflects data stored in the PotatoMesh database.
-- **Scrapes time out.** Verify that the Prometheus server can reach the PotatoMesh
-  HTTP port and that no reverse proxy is blocking the `/metrics` path.
-
-With the endpoint configured, you can build Grafana dashboards or alerting rules to
-keep track of community mesh health in real time.
+- **No per-node metrics appear.** Set `PROM_REPORT_IDS` to the node ids you want, or `*` to export all.
+- **Metrics look stale after a restart.** Confirm the ingestor is still posting — the exporter only reflects what is stored in the database.
+- **Scrapes time out.** Verify Prometheus can reach the PotatoMesh HTTP port and that no reverse proxy blocks `/metrics`.

@@ -78,10 +78,9 @@ environments that require classic port mapping. Place this file in the same
 directory as your `.env` file so Compose can pick up both.
 
 The dedicated configuration volume binds to `/app/.config/potato-mesh` inside
-the container. This path stores the instance private key and staged
-`/.well-known/potato-mesh` documents. Because the volume persists independently
-of container lifecycle events, generated credentials are not replaced on reboot
-or re-deploy.
+the container, storing the instance private key and staged
+`/.well-known/potato-mesh` documents. Credentials survive reboot and re-deploy
+as long as this volume persists.
 
 The `potatomesh_pages` volume mounts to `/app/pages` and holds operator-managed
 Markdown files that are rendered as static content pages in the web UI. On first
@@ -136,12 +135,10 @@ proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 ```
 
-**Static-asset caching.** Every JS module and `base.css` is served with a
-`?v=<APP_VERSION>` query, and the layout emits one `<script type="importmap">`
-that rewrites the whole module graph to those versioned URLs (SPEC `AV2`–`AV4`).
-Versioned JS/CSS are therefore safe to cache **immutably** for a year; images,
-icons, and fonts are *not* versioned and keep a short TTL with revalidation (a
-stale logo is cosmetic — `AV4`). Two ways to realize this:
+**Static-asset caching.** Every JS module and `base.css` is versioned
+(`?v=<APP_VERSION>`) and safe to cache **immutably** for a year. Images,
+icons, and fonts are not versioned — keep a short TTL with revalidation. Two
+ways to serve the versioned assets with long-lived caching:
 
 1. **Any deployment (portable):** have the app emit the headers itself. The
    container bakes assets into the image at `/app/public` with no volume, so a
@@ -161,12 +158,10 @@ Three things that bite in practice — all handled in the example file:
   needs `o+x`, or disk-served assets return `403`.
 - **Upstream keepalive** needs both `proxy_http_version 1.1` and
   `proxy_set_header Connection ""`.
-- **TLS session resumption:** Certbot's `options-ssl-nginx.conf` sets
-  `ssl_session_tickets off` (forward secrecy) and ships its own
-  `ssl_session_cache`. Adding `ssl_session_tickets on;` in the same server block
-  is a fatal *duplicate-directive* error; even placed correctly it trades away
-  forward secrecy unless you rotate ticket keys. Leaving it off costs ~1 RTT on
-  cold TLS 1.3 connections — usually the right call.
+- **TLS session resumption:** don't add `ssl_session_tickets on;` alongside
+  Certbot's `options-ssl-nginx.conf` — it already sets `ssl_session_tickets
+  off` and ships its own `ssl_session_cache`; duplicating the directive is a
+  fatal config error. Leave it off.
 
 Verify after `nginx -t && systemctl reload nginx`:
 
@@ -179,22 +174,17 @@ curl -sD- -H 'Accept-Encoding: gzip' https://<host>/assets/js/app/main.js?v=<ver
 ## Performance & scaling
 
 The web app runs as a **single Puma process** with a bounded thread pool
-(`MIN_THREADS:MAX_THREADS`, default `16:96`). CRuby serialises Ruby execution on
-one global lock, so a single expensive request can delay others — keep hot read
-paths cheap and let the reverse proxy absorb static traffic.
+(`MIN_THREADS:MAX_THREADS`, default `16:96`). Keep hot read paths cheap and
+let the reverse proxy absorb static traffic.
 
 - **Thread pool.** Each live-update SSE stream (`GET /api/events`) pins one
-  thread for its lifetime, so size `MAX_THREADS` above your expected concurrent
-  SSE clients plus API/ingest headroom (that is why the floor is 16, not Puma's
-  MRI default of 5). Override with `MIN_THREADS` / `MAX_THREADS`.
+  thread for its lifetime — size `MAX_THREADS` above your expected concurrent
+  SSE clients plus API/ingest headroom. Override with `MIN_THREADS` / `MAX_THREADS`.
 - **Static assets.** Serve `/assets/` from the reverse proxy (or via app-level
   immutable headers) so the module fan-out and revalidations never touch Ruby —
   see the section above.
-- **Cluster (multi-process) mode is not supported out of the box.** Live updates
-  use an in-process pub/sub, so events would not fan out across workers; the
-  per-process response cache and the background retention/federation threads
-  would also need per-worker handling. To scale on one host today: front it with
-  the reverse proxy, serve assets from disk, and keep queries cheap.
+- **Cluster (multi-process) mode is not supported.** To scale on one host:
+  front it with the reverse proxy, serve assets from disk, and keep queries cheap.
 
 ## Troubleshooting
 
