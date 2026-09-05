@@ -33,7 +33,7 @@ Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the sixth version](./scrot-0.7.png)
 
-**Jump to Contents:**
+Jump to Contents:
 - [Web App](#web-app) - configuration, running, deploying, monitoring, etc.
 - [Ingestor](#ingestor) - configuration, running, transmitting, etc.
 - [Nix](#nix) - nix deployment
@@ -105,17 +105,17 @@ The web app can be configured with environment variables (defaults shown):
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
 | `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm. |
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
-| `OG_IMAGE_URL` | _unset_ | Absolute `http(s)://` URL for the social preview image; other schemes are ignored. Replaces the generated `/og-image.png`. Use HTTPS — most platforms won't render an HTTP preview. |
+| `OG_IMAGE_URL` | _unset_ | Absolute `http(s)://` URL for the social preview image; other schemes are ignored. Replaces the generated `/og-image.png`. Use HTTPS - most platforms won't render an HTTP preview. |
 | `PAGES_DIR` | `./pages` | The directory for static, custom-content pages. |
 | `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. |
 
 `/robots.txt` and `/sitemap.xml` are generated automatically and respect
 `PRIVATE`/`FEDERATION`. Markdown files in `pages/` may set YAML frontmatter
 (`title`, `description`, `image`, `noindex`); `image` must be an absolute
-`http(s)://` URL — other schemes are dropped.
+`http(s)://` URL - other schemes are dropped.
 
 If `INSTANCE_DOMAIN` is unset in production, the app warns once at startup and
-falls back to the inbound `Host` header for canonical URLs — vulnerable to
+falls back to the inbound `Host` header for canonical URLs - vulnerable to
 cache poisoning behind a misconfigured proxy. Set `INSTANCE_DOMAIN` to avoid
 this.
 
@@ -134,9 +134,9 @@ repository root when unset:
 - Well-known document: `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`
 - Database: `$XDG_DATA_HOME/potato-mesh`
 
-**Outbound requests.** The map loads basemap tiles from two third-party CDNs on
+Outbound requests. The map loads basemap tiles from two third-party CDNs on
 every viewport: OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
-(`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent — no key,
+(`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent - no key,
 cookie, or analytics parameter. Tiles are the only third-party request the
 dashboard makes.
 
@@ -157,7 +157,7 @@ slug sets the URL and nav label:
 | `20-impressum.md`      | Impressum      | `/pages/impressum`      |
 
 - Ships with a default `1-about.md`.
-- Docker: the directory is the `potatomesh_pages` volume (`/app/pages`) — edit pages without rebuilding.
+- Docker: the directory is the `potatomesh_pages` volume (`/app/pages`) - edit pages without rebuilding.
 - Override the directory with `PAGES_DIR`.
 
 ### Federation
@@ -172,7 +172,7 @@ All `GET` routes accept `?limit=` and `?since=`; bulk collections also accept
 `?before=` and `?protocol=`. All `POST` routes require
 `Authorization: Bearer <API_TOKEN>`.
 
-**Collections** — `GET` list, `GET /:id` for one node's rows, `POST` to ingest:
+Collections - `GET` list, `GET /:id` for one node's rows, `POST` to ingest:
 
 | Path | Notes |
 | --- | --- |
@@ -187,7 +187,7 @@ All `GET` routes accept `?limit=` and `?since=`; bulk collections also accept
 | `/api/ingestors` | `GET`, `POST`. Active ingestors feeding this instance |
 | `/api/instances` | `GET`, `POST`. Known federated instances |
 
-**Other**
+Other
 
 | Path | Returns |
 | --- | --- |
@@ -195,12 +195,12 @@ All `GET` routes accept `?limit=` and `?since=`; bulk collections also accept
 | `GET /api/stats/activity` | Packets/hour time series per protocol |
 | `GET /api/events` | SSE stream of collection-change events |
 | `GET /version` | Instance name, version, and public config |
-| `GET /metrics` | Prometheus exporter — see [`PROMETHEUS.md`](./PROMETHEUS.md) |
+| `GET /metrics` | Prometheus exporter - see [`PROMETHEUS.md`](./PROMETHEUS.md) |
 | `GET /.well-known/potato-mesh` | Signed federation record for this instance |
 | `GET /og-image.png` | Open Graph preview image |
 | `GET /robots.txt`, `GET /sitemap.xml` | Crawler directives |
 
-**Pages** — `GET /` dashboard, `GET /nodes/:id` node detail, `GET /pages/:slug`
+Pages - `GET /` dashboard, `GET /nodes/:id` node detail, `GET /pages/:slug`
 custom pages. Static assets: `GET /favicon.ico`, `GET /potatomesh-logo.svg`.
 
 There is no health endpoint; use `GET /version`.
@@ -208,7 +208,7 @@ There is no health endpoint; use `GET /version`.
 ### Advanced tuning
 
 Internal tuning knobs, all optional; set only to change the defaults shown.
-Not pre-declared in `.env.example`, Compose, or the NixOS module — set them
+Not pre-declared in `.env.example`, Compose, or the NixOS module - set them
 directly in the web process's environment.
 
 | Variable | Default | Purpose |
@@ -245,7 +245,7 @@ scrape configuration examples.
 ## Ingestor
 
 The web app never connects to a radio; it only ingests via authenticated
-`POST`. Run one or more Python ingestors from `./data` to feed it — each
+`POST`. Run one or more Python ingestors from `./data` to feed it - each
 connects to a LoRa node over serial, TCP, or Bluetooth (BLE), and multiple
 ingestors can feed one instance without duplicating data.
 
@@ -275,7 +275,7 @@ Configure with the environment variables below.
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
 | `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. |
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
-| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint — see [Reticulum](#reticulum). |
+| `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint - see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
 | `CHANNEL_INDEX` | `0` | Which channel index to ingest from. |
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
@@ -296,7 +296,7 @@ Configure with the environment variables below.
 | `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
-| `TX_ENABLED` | `0` | Master switch for all ingestor transmissions. `0` = listen only. `1` = allow transmit — enables Meshcore on-air telemetry polling; does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+| `TX_ENABLED` | `0` | Master switch for all ingestor transmissions. `0` = listen only. `1` = allow transmit - enables Meshcore on-air telemetry polling; does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `TX_ANNOUNCE` | `0` | Requires `TX_ENABLED=1`. Broadcasts a one-line activity summary at most once per 24 h, never in the first 24 h after start. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 
 ### Transmitting on the mesh
@@ -334,14 +334,14 @@ The ingestor logs the resolved policy at startup, without `DEBUG=1`:
 ```
 
 If a flag seems to have no effect, that line shows what the ingestor actually
-resolved — including a flag that never reached the container.
+resolved - including a flag that never reached the container.
 
 ### Meshcore
 
 Set `PROTOCOL=meshcore` to ingest from a Meshcore companion-firmware node
 (serial, TCP, or BLE via the same `CONNECTION` formats). Captures RF metrics
 alongside contacts and messages: per-message SNR/hop counts, per-channel-message
-RSSI and repeater path, and per-advert SNR/RSSI/hops for every node heard —
+RSSI and repeater path, and per-advert SNR/RSSI/hops for every node heard -
 including nodes with no room in the radio's contact roster.
 
 The ingestor writes one radio setting at startup: enables the firmware's
@@ -350,7 +350,7 @@ when not already set.
 
 - Never evicts favourites; other auto-add settings are preserved.
 - Older firmware (no command support) is left untouched.
-- Evicted contacts stay in the dashboard's database — only the radio's local roster rotates.
+- Evicted contacts stay in the dashboard's database - only the radio's local roster rotates.
 
 ### Reticulum
 
@@ -366,8 +366,8 @@ It reads your existing `~/.reticulum`, so if `rnsd` already works, so does this:
 API_TOKEN=... INSTANCE_DOMAIN=https://your.instance PROTOCOL=reticulum ./data/mesh.sh
 ```
 
-**To ingest only from your radio**, set `RETICULUM_INTERFACES` to part of the
-interface name from `rnstatus` — matching is case-insensitive substring:
+To ingest only from your radio, set `RETICULUM_INTERFACES` to part of the
+interface name from `rnstatus` - matching is case-insensitive substring:
 
 ```bash
 RETICULUM_INTERFACES="RNode Reticulum Berlin"
@@ -376,11 +376,11 @@ RETICULUM_INTERFACES="RNode Reticulum Berlin"
 Your own nodes are always ingested regardless of this setting. Everything
 further away is filtered by it.
 
-**To use a different RNS config**, set `RETICULUM_CONFIG_DIR`, pointing at the
-same directory your `rnsd` uses — interface filtering fails across mismatched
+To use a different RNS config, set `RETICULUM_CONFIG_DIR`, pointing at the
+same directory your `rnsd` uses - interface filtering fails across mismatched
 directories.
 
-**In Docker**, the config dir is the `potatomesh_reticulum` volume
+In Docker, the config dir is the `potatomesh_reticulum` volume
 (`/app/.config/potato-mesh/reticulum`). RNS seeds a stock config there with
 only a link-local `AutoInterface`, which reaches no radio on the default
 bridge network:
@@ -390,7 +390,7 @@ bridge network:
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
   and run with host networking.
 
-The ingestor derives its node id from your **primary identity** — the one
+The ingestor derives its node id from your primary identity - the one
 announcing the most destinations on this machine. `INGESTOR_NODE_ID` overrides
 it. It reports the id it resolved at startup:
 
@@ -400,21 +400,21 @@ context=reticulum.connect ... node_id='!27716218' Reticulum announce listener re
 
 `node_id='pending'` means nothing local has been heard yet; the ingestor
 retries each loop and logs again once it resolves. Not the transport identity
-— not the hash `rnstatus` prints as "Transport Instance".
+ -  not the hash `rnstatus` prints as "Transport Instance".
 
-**Changing the id strands the old row.** Setting, changing, or removing
+Changing the id strands the old row. Setting, changing, or removing
 `INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
 `/api/ingestors` without heartbeats until it ages out. Leaving the variable
 as-is across upgrades is inert.
 
-**Frequency and preset** are read from the first `RNodeInterface` in your RNS
+Frequency and preset are read from the first `RNodeInterface` in your RNS
 config; `RETICULUM_FREQ` and `RETICULUM_PRESET` override them. A matching
 preset name describes radio settings only, not interoperability with a
 Meshtastic mesh; otherwise it shows `SF8/BW125/CR5`. Values are read once at
-startup — change them in the RNS config and restart the ingestor, or the
+startup - change them in the RNS config and restart the ingestor, or the
 dashboard keeps showing the old ones.
 
-A node is one row per identity — a peer running both LXMF and a nomadnet node
+A node is one row per identity - a peer running both LXMF and a nomadnet node
 is still one entry. Its destinations (addresses) are listed via
 `GET /api/destinations` and shown as sub-rows grouped under the identity in
 the dashboard table.
@@ -426,14 +426,14 @@ Reticulum nodes stay off the map.
 
 Meshtastic's node API accepts only one client at a time. Set `TRANSPORT=udp`
 to run the ingestor as a passive listener on the node's LAN multicast group
-(`224.0.0.69:4403`) instead of connecting to the API — leaving the API slot
+(`224.0.0.69:4403`) instead of connecting to the API - leaving the API slot
 free for the phone app or CLI.
 
 Enable "Mesh via UDP" on the node first: `meshtastic --set network.enabled_protocols 1`.
 
 - Decrypts the primary channel with `PRIMARY_CHANNEL_KEY` (default `AQ==`). Channels with other keys are dropped undecrypted.
 - Set `PRIMARY_CHANNEL_ONLY=1` and `PRIMARY_CHANNEL_NAME` to ingest only channel 0. Without `PRIMARY_CHANNEL_NAME` set, `PRIMARY_CHANNEL_ONLY=1` drops every packet (fail closed).
-- The node list rebuilds from observed packets — the node's own database is not read. Decoded payloads (position, telemetry, traceroute, …) match the API/serial transport shape.
+- The node list rebuilds from observed packets - the node's own database is not read. Decoded payloads (position, telemetry, traceroute, …) match the API/serial transport shape.
 
 `TRANSPORT=udp` requires host networking (`network_mode: host`). A
 ready-to-use Raspberry Pi (arm64) deployment is provided in
@@ -529,14 +529,14 @@ deployment instructions.
 
 ## Matrix Bridge
 
-**Work in progress.** Forwards messages from a PotatoMesh instance to a Matrix
+Work in progress. Forwards messages from a PotatoMesh instance to a Matrix
 channel (no radio required). See [matrix/README.md](./matrix/README.md).
 
 ![matrix bridge](./scrot-0.6.png)
 
 ## Mobile App
 
-**Work in progress.** A read-only reader app for Android and iOS. See
+Work in progress. A read-only reader app for Android and iOS. See
 [app/README.md](./app/README.md).
 
 ## Demos

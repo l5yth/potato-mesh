@@ -3,11 +3,11 @@
 
 # potatomesh-matrix-bridge
 
-A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** room.
+A small Rust daemon that bridges PotatoMesh LoRa messages into a Matrix room.
 
 ![matrix bridge](../scrot-0.6.png)
 
-For each PotatoMesh node, the bridge creates (or uses) a **Matrix puppet user**:
+For each PotatoMesh node, the bridge creates (or uses) a Matrix puppet user:
 
 - Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
 - Matrix display name: the node’s `long_name` from the PotatoMesh API
@@ -32,12 +32,12 @@ Messages from PotatoMesh are periodically fetched and forwarded to a single Matr
 
 - Rust (stable) and `cargo`
 - A Matrix homeserver you control (e.g. Synapse)
-- An **application service registration** on your homeserver that:
+- An application service registration on your homeserver that:
   - Whitelists the puppet user namespace (e.g. `@potato_[0-9a-f]{8}:example.org`)
   - Provides an `as_token` the bridge can use (Matrix Client-Server API; the
     bridge impersonates puppets via
     `user_id=@potato_{hex}:{server_name}&access_token={as_token}` and is not a
-    full appservice framework — it speaks only the HTTP this needs)
+    full appservice framework - it speaks only the HTTP this needs)
 
 - Network access from the bridge host to:
   - `https://potatomesh.net/` (bridge appends `/api`)
@@ -218,7 +218,7 @@ Node hex ID is derived from `node_id` by stripping the leading `!` and using the
 
 You need an appservice registration file (e.g. `potatomesh-bridge.yaml`) configured in Synapse.
 
-A minimal example sketch (you **must** adjust URLs, secrets, namespaces):
+A minimal example sketch (you must adjust URLs, secrets, namespaces):
 
 ```yaml
 id: potatomesh-bridge
@@ -234,14 +234,14 @@ namespaces:
 ```
 
 Listens for Synapse appservice callbacks on port `41448` (acknowledged, not
-bridged — this is one-way PotatoMesh → Matrix only). `as_token` and
+bridged - this is one-way PotatoMesh → Matrix only). `as_token` and
 `namespaces.users` are required for outbound calls; `url` should point at this
 listener.
 
 In Synapse’s `homeserver.yaml`, add the registration file under `app_service_config_files`, restart, and invite a puppet user to your target room (or use room ID directly).
 
 The bridge validates inbound callbacks by comparing the `access_token` query
-param to `hs_token` — keep them in sync.
+param to `hs_token` - keep them in sync.
 
 ---
 
@@ -306,7 +306,7 @@ Ensure `Config.toml` is present and valid, then:
 
 Environment variables you may care about:
 
-* `RUST_LOG` – for logging, e.g.:
+* `RUST_LOG` - for logging, e.g.:
 
   ```bash
   RUST_LOG=info,reqwest=warn ./target/release/potatomesh-matrix-bridge

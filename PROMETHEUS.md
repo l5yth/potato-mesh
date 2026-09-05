@@ -69,6 +69,6 @@ headers, or TLS settings to match.
 
 ## Troubleshooting
 
-- **No per-node metrics appear.** Set `PROM_REPORT_IDS` to the node ids you want, or `*` to export all.
-- **Metrics look stale after a restart.** Confirm the ingestor is still posting — the exporter only reflects what is stored in the database.
-- **Scrapes time out.** Verify Prometheus can reach the PotatoMesh HTTP port and that no reverse proxy blocks `/metrics`.
+- No per-node metrics appear. Set `PROM_REPORT_IDS` to the node ids you want, or `*` to export all.
+- Metrics look stale after a restart. Confirm the ingestor is still posting - the exporter only reflects what is stored in the database.
+- Scrapes time out. Verify Prometheus can reach the PotatoMesh HTTP port and that no reverse proxy blocks `/metrics`.

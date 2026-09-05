@@ -4,38 +4,38 @@
 # CHANGELOG
 
 ### Features
-* Web/Data: **Reticulum gets a visual identity of its own** — the placeholder tile (an outline triangle on near-black `#010101`, indistinguishable from MeshCore's at 12 px) becomes a trifoil on violet `#7b61ff`; MeshCore's tile moves off pure black to `#1f2937` so it finally agrees with its own badge; the `/charts` mesh-activity lines repoint at their tiles so the table and the figure teach one colour code; a four-step violet role ramp (`PEER`/`NODE`/`TRANSPORT`/`PROPAGATION`) joins the palettes, all clearing the 4.5:1 badge floor; a hexagon joins circle and diamond as the protocol shape channel; and the legend gains a third column (SPEC RD1–RD8)
-* Data: Reticulum node roles are derived from the announce aspect — `lxmf.propagation` joins the ingested aspects, and each destination row carries the role of the aspect it announced on, so a peer announcing on several aspects no longer flips between roles (SPEC RD4/RE1)
-* Web: the federation table's Reticulum column renders an em dash for a zero count rather than a violet tile beside a `0` — the column is served as `|| 0` for signature canonicalisation, so during rollout nearly every federated instance would otherwise carry a tile (SPEC RD8)
+* Web/Data: Reticulum gets its own visual identity - trifoil marker on violet `#7b61ff`, MeshCore's tile moves to `#1f2937`, a four-step role color ramp, hexagon shape, and a third legend column (SPEC RD1-RD8)
+* Data: Reticulum node roles are derived from the announce aspect, so a multi-aspect peer no longer flips roles (SPEC RD4/RE1)
+* Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
-* Data/Web: **Reticulum reports a frequency and a LoRa preset.** Both are read from the first `RNodeInterface` in the shared RNS config (`RETICULUM_FREQ`/`RETICULUM_PRESET` override), stamped onto every node record heard over that radio, and rendered in the nodes table and the chat/log tags — which previously showed two empty brackets on every Reticulum line. A preset whose bandwidth, spreading factor and coding rate match a Meshtastic preset shows that name; anything else shows `SF8/BW125/CR5`. The name describes radio settings, not interoperability with a Meshtastic mesh (SPEC RL1–RL3)
-* Web: **federation node counts distinguish zero from "not reported"** — absent renders an em dash, zero a muted `0`, non-zero the protocol tile and the count, uniformly for all three protocols. Previously MeshCore and Meshtastic drew a tile beside a real `0` while Reticulum rendered `0` and absent identically; **supersedes** the earlier rule that dashed a Reticulum zero (SPEC RL4)
-* Web: **a destination's identifier links to its identity page** and lands on the row it names. The route resolved these already, but nothing in the interface emitted the link (SPEC RL5)
-* Web: **Reticulum rows match every other row's height**, the nodes table uses one dash glyph throughout, and destination sub-rows colour their role like the row above them (SPEC RA11)
-* Data/Web: **Reticulum nodes are keyed on the announcing identity** — a peer announcing `lxmf.delivery`, `lxmf.propagation` and `nomadnetwork.node` is one node with three destinations, not three nodes, and the node count counts identities. The per-aspect names and roles live in `destinations`, and the node's headline name/role follow a fixed preference (`NODE` > `PEER` > `PROPAGATION` > `TRANSPORT`) rather than whichever announce arrived last (SPEC RE7/RE10)
-* Data: **the ingestor's own node id is its primary announced identity**, discovered from the 0-hop path table, so the ingestor's row is one an operator recognises rather than a synthetic key. **Upgrade note:** this changes the id from earlier schemes, and the previous ingestor row stays in `/api/ingestors` without heartbeats until it ages out; setting, changing, or removing `INGESTOR_NODE_ID` has the same effect, while leaving it as-is is inert (SPEC RE8)
-* Data: **the host's own aspects are ingested**, including its transport instance when the stack has `enable_transport` set — the `TRANSPORT` role is emitted for the ingestor's own host only, never inferred for a remote peer (SPEC RE9)
-* Data: **`PROTOCOL=reticulum` no longer needs `INGESTOR_NODE_ID`** — the ingestor derives its own `!xxxxxxxx` from the transport identity already in `RETICULUM_CONFIG_DIR`, so the heartbeat and the `reticulum` packets/hour figure come up unaided instead of staying dead until an operator set a variable they had no way to guess. The id is stable across restarts and the variable still overrides it (SPEC RE5)
-* Data: **a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum`** — it names one serial/TCP/BLE endpoint, which an RNS stack of many interfaces does not have, and the shipped image sets a serial default for every protocol; the ingestor now says at startup that it is dropping the value and names the two variables that do apply (`RETICULUM_CONFIG_DIR` for which stack, `RETICULUM_INTERFACES` for which interfaces) (SPEC RN10)
-* Data: **`RETICULUM_INTERFACES` ingested nothing at all** wherever the ingestor shared an RNS instance — every announce arrived over one `LocalInterface` that no per-interface allowlist could match. Interface names now resolve through the shared instance itself (`RNS.Reticulum` RPCs to the running `rnsd` and returns its view), so the allowlist works on a shared stack; RPC auth is keyed on the config directory, which is why the ingestor shares the operator's (SPEC RE3)
-* Data: **a Reticulum announce carrying no display name overwrote the stored one** — the fallback named the destination that announced rather than the node, in a form the web upsert did not recognise as a placeholder. It is now `"Reticulum <SHORT>"`, matching the shape the upsert refuses to overwrite a real name with
-* Docs: the Reticulum config directory is documented — that it defaults to `~/.reticulum`, that a container gets the `potatomesh_reticulum` volume whose stock `AutoInterface` reaches no radio on the default bridge network, and how to add interfaces to it
-* Data: **`ALLOWED_CHANNELS` silently dropped every message on a stock Docker Compose deployment** — the packaged default was spelled `${ALLOWED_CHANNELS:-""}`, and Compose substitutes defaults as *literal text*, so the ingestor received the two-character string `""` and read it as a one-entry allowlist no real channel could match; every packet was then discarded as `disallowed-channel`. Defaults are now bare (`:-`), both list-valued parsers resolve a quote-*only* value to no filter while taking any fragment with content literally (a Meshtastic channel name is arbitrary UTF-8, so `Ops'` is a name, not a quoted one), and a guard discovers every Compose file in the repo and matches every quoted-default spelling, so the shape cannot return. `HIDDEN_CHANNELS` and `MAP_ZOOM` carried the same defect (both benign) and are fixed with it (ACCEPTANCE CH-A1–CH-A3)
-* Data/Web: **one Reticulum node row per announced destination** — a peer's aspects carry different display names and roles (`lxmf.delivery` and `nomadnetwork.node` announce separately), so merging them produced a row named from one aspect and roled from another; `nodes.identity_hash` groups the rows back into one peer (SPEC RE1)
-* Data/Web: **`user.publicKey` carries the identity's real public key**, and destinations get their own table (`id`, `node_id`, `identity_hash`, `name`, `aspect`, `role`, `interface`, `first_heard`, `last_heard`) served by `GET /api/destinations` (SPEC RE2)
-* Data: new `RETICULUM_INTERFACES` allowlist bounds announce ingestion to named RNS interfaces, applied from one hop out; empty (the default) ingests everything, and a 0-hop announce — one made by an app on this machine — is always ingested so the operator's own nodes are never filtered away (SPEC RN4/RE4)
-* Web: **the `/charts` mesh-activity figure draws the Reticulum series** — its line list was frozen to two protocols, so a reticulum-carrying mesh rendered two flat-zero lines with its real traffic invisible while the map card rendered the same payload correctly (SPEC RN2)
-* Web: the `instances.reticulum_nodes_count` added in #889 carries a standalone `data/migrations/*.sql` companion alongside its boot-time schema guard (SPEC RN7)
-* Docs: **every environment variable the ingestor or web app reads is documented** — `PROM_REPORT_IDS` and the `SSE_*`/`FEDERATION_*`/`REMOTE_INSTANCE_*`/Puma tuning knobs appeared in no document at all; the README now carries all 57, and the operator-facing subset reaches `.env.example`, Compose, both images, and the NixOS module (SPEC DOC2)
-* Docs/Config: **`configure.sh` and the NixOS module are no longer Meshtastic-only** — the wizard asks which protocol to run and branches its radio, connection, and transmit prompts on the answer; the module gained `ingestor.protocol`, the Reticulum options, and the UDP options, so two of the three supported protocols stopped being unconfigurable through the documented tooling (SPEC DOC3)
-* Docs: **the README documents every route**, including `/version`, `/metrics`, `/.well-known/potato-mesh`, the page routes, and that there is no health endpoint (SPEC DOC4)
-* Docs: **the dual basemap-CDN egress disclosure was restored** — an earlier editorial pass had dropped it, leaving the doubled third-party tile request undisclosed (SPEC SB6)
-* Docs: `CONTRACTS.md` corrected — `identityHash` is served by `GET /api/destinations`, whose read shape is now specified, and the `dest_hash` column it referenced no longer exists (SPEC DOC5)
-* Docs: `ACCEPTANCE.md` S-A5 / MA-A5 / MA-FA2 / F2-A1 / A4a amended — each still asserted a zero-stub, non-whitelisted `reticulum` that SPEC S6/MA5/MA-F2/F2-2 had already stopped describing; README gains a Reticulum section
+* Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
+* Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
+* Web: a destination's identifier links to its identity page (SPEC RL5)
+* Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
+* Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
+* Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
+* Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
+* Data: `PROTOCOL=reticulum` no longer requires `INGESTOR_NODE_ID` (SPEC RE5)
+* Data: a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum` - the ingestor now logs that it is dropping the value (SPEC RN10)
+* Data: `RETICULUM_INTERFACES` now resolves interface names through the shared RNS instance, fixing an allowlist that matched nothing on a shared stack (SPEC RE3)
+* Data: a Reticulum announce with no display name no longer overwrites a stored name
+* Docs: document the Reticulum config directory, its Docker volume, and how to add interfaces to it
+* Data: `ALLOWED_CHANNELS`, `HIDDEN_CHANNELS`, and `MAP_ZOOM` no longer break on the packaged Compose default's quoted-empty value (ACCEPTANCE CH-A1-CH-A3)
+* Data/Web: one Reticulum node row per announced destination, grouped by `nodes.identity_hash` (SPEC RE1)
+* Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations` (SPEC RE2)
+* Data: new `RETICULUM_INTERFACES` allowlist scopes announce ingestion by interface, applied from one hop out; the operator's own nodes are always ingested (SPEC RN4/RE4)
+* Web: the `/charts` mesh-activity figure draws the Reticulum series (SPEC RN2)
+* Web: `instances.reticulum_nodes_count` gets its own migration (SPEC RN7)
+* Docs: every environment variable the ingestor or web app reads is documented (SPEC DOC2)
+* Docs/Config: `configure.sh` and the NixOS module are no longer Meshtastic-only (SPEC DOC3)
+* Docs: the README documents every route (SPEC DOC4)
+* Docs: the dual basemap-CDN egress disclosure was restored (SPEC SB6)
+* Docs: `CONTRACTS.md` corrected to match the served `/api/destinations` shape (SPEC DOC5)
+* Docs: `ACCEPTANCE.md` amended for the shipped Reticulum stats scope; README gains a Reticulum section
 
 ### Features
-* Data/Web: Reticulum protocol support — `PROTOCOL=reticulum` selects a passive RNS announce listener that ingests `lxmf.delivery`/`nomadnetwork.node` announces as `protocol="reticulum"` nodes; the web app whitelists the protocol end-to-end (ingest + `?protocol=` filter), serves live `reticulum` stats scopes and activity-series keys, signs a live `reticulum_nodes_count` on the federation wire (the v2 canonical already carried the field, so peer signatures are unaffected), and renders reticulum nodes across the UI (icon, filter chip, mesh-activity row, federation column) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
+* Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 
 ## v0.7.5
 
@@ -43,15 +43,15 @@
 * Make the activity announcement opt-in via ANNOUNCE (default off) by @seybsen in <https://github.com/l5yth/potato-mesh/pull/886>
 
 ### Fixes
-* **Ingestor: every mesh transmission is now off by default** (`TX_ENABLED`, default `0`), covering the activity announcement *and* the MeshCore on-air contact telemetry polls; announcements take a second opt-in (`TX_ANNOUNCE=1`) on top by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
-* Ingestor: **`RX_ONLY` no longer fails open** — it was compared as an exact `== "1"`, so `RX_ONLY=true`, `TRUE`, `yes`, `on` and `" 1"` all silently resolved to *off* and a receive-only listening post transmitted anyway; all TX flags now accept the common spellings, strip whitespace, and resolve an unrecognized value toward silence by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
-* Ingestor: the `TX_*` flags reach every packaged deployment — `docker-compose.yml`, `data/Dockerfile`, the NixOS module (`txEnabled`/`txAnnounce`) and `.env.example`; the previous `ANNOUNCE` opt-in reached none of them, so setting it in `.env` had no effect at all by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
-* Ingestor: the announcement's 24 h anti-spam delay is measured on a monotonic clock — it used wall clock, so on an RTC-less host a post-boot NTP step cleared it instantly by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: every mesh transmission is now off by default (`TX_ENABLED`, default `0`), covering the activity announcement *and* the MeshCore on-air contact telemetry polls; announcements take a second opt-in (`TX_ANNOUNCE=1`) on top by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: `RX_ONLY` no longer fails open - it was compared as an exact `== "1"`, so `RX_ONLY=true`, `TRUE`, `yes`, `on` and `" 1"` all silently resolved to *off* and a receive-only listening post transmitted anyway; all TX flags now accept the common spellings, strip whitespace, and resolve an unrecognized value toward silence by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: the `TX_*` flags reach every packaged deployment - `docker-compose.yml`, `data/Dockerfile`, the NixOS module (`txEnabled`/`txAnnounce`) and `.env.example`; the previous `ANNOUNCE` opt-in reached none of them, so setting it in `.env` had no effect at all by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Ingestor: the announcement's 24 h anti-spam delay is measured on a monotonic clock - it used wall clock, so on an RTC-less host a post-boot NTP step cleared it instantly by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 * Ingestor: transmit policy is stated in the log at startup without `DEBUG=1`, and each suppressed announcement names the gate that closed by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
-* App: await the in-flight request before closing its HTTP client in `loadMessages`/`loadNodes` — the unawaited return let `finally` close the client mid-request by @l5yth
-* App: raise the iOS deployment target to **15.0** (from 14.0) in the Podfile, Xcode project and `AppFrameworkInfo.plist` — Flutter 3.47's `Flutter` pod requires it, and `pod install` could not resolve against the old target. **Drops support for iOS 14 devices.** by @l5yth
+* App: await the in-flight request before closing its HTTP client in `loadMessages`/`loadNodes` - the unawaited return let `finally` close the client mid-request by @l5yth
+* App: raise the iOS deployment target to 15.0 (from 14.0) in the Podfile, Xcode project and `AppFrameworkInfo.plist` - Flutter 3.47's `Flutter` pod requires it, and `pod install` could not resolve against the old target. Drops support for iOS 14 devices. by @l5yth
 * CI: the Mobile workflow matrix no longer fails fast, so an iOS failure stops hiding whether the Android build passed by @l5yth
-* Docs: README gains a **Transmitting on the mesh** section — what each flag turns on, the truth table, the literal announcement text, and what is never gated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
+* Docs: README gains a Transmitting on the mesh section - what each flag turns on, the truth table, the literal announcement text, and what is never gated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 
 ## v0.7.4
 
@@ -101,7 +101,7 @@
 * feat(ingestor): passive UDP transport (Mesh via UDP), primary-channel only by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/838>
 
 ### Fixes
-* fix: security review — dashboard XSS, private-mode federation gap, Matrix bridge resilience by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/839>
+* fix: security review - dashboard XSS, private-mode federation gap, Matrix bridge resilience by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/839>
 * fix: UDP-transport hardening, bridge tracker coverage, CI repairs; release 0.7.2 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/840>
 * web: fix MeshCore ghost nodes (stale contact enrichment discarded) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/841>
 * fix(docker): armv7 ingestor build toolchain; disable matrix fail-fast by @l5yth in <https://github.com/l5yth/potato-mesh/pull/842>
@@ -238,7 +238,7 @@
 * [Meshcore] fix: race condition  by @benallfree in <https://github.com/l5yth/potato-mesh/pull/676>
 
 ### Chores
-* Release: v0.6.0 — remove deprecated env var aliases by @l5yth in <https://github.com/l5yth/potato-mesh/pull/704>
+* Release: v0.6.0 - remove deprecated env var aliases by @l5yth in <https://github.com/l5yth/potato-mesh/pull/704>
 * Chore: prepare codebase for breaking release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/718>
 
 ## v0.5.12

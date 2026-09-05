@@ -3,9 +3,9 @@
 
 # Mesh-via-UDP capture fixtures
 
-`primary_and_private_capture.jsonl` — 32 real Meshtastic multicast datagrams
+`primary_and_private_capture.jsonl` - 32 real Meshtastic multicast datagrams
 captured from a live Station G2 with `data/tools/capture_udp_fixtures.py`
-(no filter — all channels). Each line: `{"raw_b64", "len", "src"}` where
+(no filter - all channels). Each line: `{"raw_b64", "len", "src"}` where
 `raw_b64` is the raw `MeshPacket` protobuf datagram.
 
 Composition (validated): 21 primary-channel packets (channel hash 31) that
