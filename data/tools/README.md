@@ -1,15 +1,15 @@
 <!-- Copyright © 2025-26 l5yth & contributors -->
 <!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
 
-# `data/tools/` — passive UDP operator & dev tools
+# `data/tools/` - passive UDP operator & dev tools
 
 Helpers for the passive UDP transport (`TRANSPORT=udp`, see the
 [Passive UDP transport](../../README.md#passive-udp-transport) section of the
 README). Neither file is part of the ingestor runtime.
 
-## `capture_udp_fixtures.py` — capture real datagrams for testing
+## `capture_udp_fixtures.py` - capture real datagrams for testing
 
-A **receive-only** diagnostic that joins the node's "Mesh via UDP" multicast
+A receive-only diagnostic that joins the node's "Mesh via UDP" multicast
 group and writes each raw datagram to a JSONL file (base64 in `raw_b64`). Used to
 produce the real-traffic fixtures under
 [`../../tests/fixtures/mesh_udp/`](../../tests/fixtures/mesh_udp/).
@@ -26,12 +26,12 @@ python data/tools/capture_udp_fixtures.py --out capture.jsonl --primary-only
 It never transmits and never connects to the radio API, so it is safe to run
 alongside a live ingestor or the phone app.
 
-**Coverage note:** this is an operator-run diagnostic that needs a live LAN
+Coverage note: this is an operator-run diagnostic that needs a live LAN
 socket, so it is intentionally exempt from the ingestor package's 100%-unit-test
 gate. The runtime decode/crypto it exercises *is* fully covered by
 `tests/test_meshtastic_udp_decode_unit.py` against the captured fixtures.
 
-## `compose.udp.pi.yml` — Raspberry Pi (arm64) deployment
+## `compose.udp.pi.yml` - Raspberry Pi (arm64) deployment
 
 A Docker Compose file for running the ingestor in passive UDP mode on a Pi 5. It
 requires `network_mode: host` (multicast `224.0.0.69` cannot reach a bridged
@@ -55,7 +55,7 @@ MESH_UDP_PORT=4403
 
 ### Build → ship → verify
 
-The image is built **natively on an arm64 Pi** (no QEMU) and copied to the
+The image is built natively on an arm64 Pi (no QEMU) and copied to the
 target:
 
 ```bash

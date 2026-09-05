@@ -3,11 +3,11 @@
 
 # potatomesh-matrix-bridge
 
-A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** room.
+A small Rust daemon that bridges PotatoMesh LoRa messages into a Matrix room.
 
 ![matrix bridge](../scrot-0.6.png)
 
-For each PotatoMesh node, the bridge creates (or uses) a **Matrix puppet user**:
+For each PotatoMesh node, the bridge creates (or uses) a Matrix puppet user:
 
 - Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
 - Matrix display name: the node’s `long_name` from the PotatoMesh API
@@ -28,28 +28,16 @@ Messages from PotatoMesh are periodically fetched and forwarded to a single Matr
 
 ---
 
-## Architecture Overview
-
-- **PotatoMesh side**
-  - `GET /api/messages` returns an array of messages
-  - `GET /api/nodes/{hex}` returns node metadata (including `long_name`)
-
-- **Matrix side**
-  - Uses the Matrix Client-Server API with an **appservice access token**
-  - Impersonates puppet users via `user_id=@potato_{hex}:{server_name}&access_token={as_token}`
-  - Sends `m.room.message` events into a configured room
-
-This is **not** a full appservice framework; it just speaks the minimal HTTP needed.
-
----
-
 ## Requirements
 
 - Rust (stable) and `cargo`
 - A Matrix homeserver you control (e.g. Synapse)
-- An **application service registration** on your homeserver that:
+- An application service registration on your homeserver that:
   - Whitelists the puppet user namespace (e.g. `@potato_[0-9a-f]{8}:example.org`)
-  - Provides an `as_token` the bridge can use
+  - Provides an `as_token` the bridge can use (Matrix Client-Server API; the
+    bridge impersonates puppets via
+    `user_id=@potato_{hex}:{server_name}&access_token={as_token}` and is not a
+    full appservice framework - it speaks only the HTTP this needs)
 
 - Network access from the bridge host to:
   - `https://potatomesh.net/` (bridge appends `/api`)
@@ -161,7 +149,6 @@ Before starting Compose, complete this preflight checklist:
    - `matrix.room_id`
    - `matrix.homeserver`
 
-This is required because the shared Compose anchor `x-matrix-bridge-base` mounts `./matrix/Config.toml` to `/app/Config.toml`.
 Then follow the token and namespace requirements in [Matrix Appservice Setup (Synapse example)](#matrix-appservice-setup-synapse-example).
 
 #### Troubleshooting
@@ -231,7 +218,7 @@ Node hex ID is derived from `node_id` by stripping the leading `!` and using the
 
 You need an appservice registration file (e.g. `potatomesh-bridge.yaml`) configured in Synapse.
 
-A minimal example sketch (you **must** adjust URLs, secrets, namespaces):
+A minimal example sketch (you must adjust URLs, secrets, namespaces):
 
 ```yaml
 id: potatomesh-bridge
@@ -246,11 +233,15 @@ namespaces:
       regex: "@potato_[0-9a-f]{8}:example.org"
 ```
 
-This bridge listens for Synapse appservice callbacks on port `41448` so it can log inbound transaction payloads. It still only forwards messages one way (PotatoMesh → Matrix), so inbound Matrix events are acknowledged but not bridged. The `as_token` and `namespaces.users` entries remain required for outbound calls, and the `url` should point at the listener.
+Listens for Synapse appservice callbacks on port `41448` (acknowledged, not
+bridged - this is one-way PotatoMesh → Matrix only). `as_token` and
+`namespaces.users` are required for outbound calls; `url` should point at this
+listener.
 
 In Synapse’s `homeserver.yaml`, add the registration file under `app_service_config_files`, restart, and invite a puppet user to your target room (or use room ID directly).
 
-The bridge validates inbound appservice callbacks by comparing the `access_token` query param to `hs_token` in `Config.toml`, so keep those values in sync.
+The bridge validates inbound callbacks by comparing the `access_token` query
+param to `hs_token` - keep them in sync.
 
 ---
 
@@ -258,8 +249,8 @@ The bridge validates inbound appservice callbacks by comparing the `access_token
 
 ```bash
 # clone
-git clone https://github.com/YOUR_USER/potatomesh-matrix-bridge.git
-cd potatomesh-matrix-bridge
+git clone https://github.com/l5yth/potato-mesh.git
+cd potato-mesh/matrix
 
 # build
 cargo build --release
@@ -296,7 +287,7 @@ If you prefer to isolate the state file from the config, mount it directly inste
 ```bash
 docker run --rm \
   -p 41448:41448 \
-  -v bridge_state:/app \
+  -v "$(pwd)/bridge_state.json:/app/bridge_state.json" \
   -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
   potatomesh-matrix-bridge
 ```
@@ -315,7 +306,7 @@ Ensure `Config.toml` is present and valid, then:
 
 Environment variables you may care about:
 
-* `RUST_LOG` – for logging, e.g.:
+* `RUST_LOG` - for logging, e.g.:
 
   ```bash
   RUST_LOG=info,reqwest=warn ./target/release/potatomesh-matrix-bridge
@@ -361,17 +352,8 @@ cargo clippy -- -D warnings
 
 ## GitHub Actions CI
 
-This repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that:
-
-* runs on pushes and pull requests
-* caches Cargo dependencies
-* runs:
-
-  * `cargo fmt --check`
-  * `cargo clippy`
-  * `cargo test`
-
-See the workflow file for details.
+`.github/workflows/rust.yml` runs on pushes and pull requests to `main`:
+`cargo fmt --check`, `cargo clippy`, `cargo test`.
 
 ---
 
