@@ -36,6 +36,7 @@ import time
 from collections.abc import Mapping
 
 from ... import activity, config, tx_policy
+from .identity import _meshcore_node_id
 from .interface import _MeshcoreInterface
 from .messages import _derive_message_id
 
@@ -47,7 +48,9 @@ round-robin would revisit each node every ``roster_size × interval`` — far
 more often than telemetry freshness needs.  This per-node cooldown caps every
 contact at one poll per 24 h (counted from the poll attempt, so unreachable
 nodes are not hammered either); when every contact is fresh the tick sends
-nothing.  Deliberately a constant, not an environment knob."""
+nothing.  Deliberately a constant, not an environment knob; the per-node escape
+hatch is :data:`~data.mesh_ingestor.config.MESHCORE_TELEMETRY_POLL_24H_EXEMPT`,
+which exempts listed nodes from this cooldown entirely."""
 
 
 _LPP_TYPE_NAMES: dict[int, str] = {
@@ -316,7 +319,10 @@ def _next_poll_contact(iface: _MeshcoreInterface, state: dict) -> dict | None:
     """Pick the next roster contact due for a telemetry poll, round-robin.
 
     Contacts polled within :data:`_TELEMETRY_NODE_COOLDOWN_SECONDS` are
-    skipped; the returned contact is stamped as polled immediately (before the
+    skipped — unless listed in
+    :data:`~data.mesh_ingestor.config.MESHCORE_TELEMETRY_POLL_24H_EXEMPT`,
+    which keeps them eligible on every rotation (still at most one request
+    per tick); the returned contact is stamped as polled immediately (before the
     request is sent), so failed or timed-out polls honour the cooldown too.
     Departed roster entries are pruned from the stamp table so a long-running
     process cannot accumulate stale state.
@@ -346,7 +352,16 @@ def _next_poll_contact(iface: _MeshcoreInterface, state: dict) -> dict | None:
         contact = contacts[index]
         key = contact.get("public_key")
         stamp = last_polled.get(key)
-        if stamp is not None and now - stamp < _TELEMETRY_NODE_COOLDOWN_SECONDS:
+        # Operator-listed nodes (MESHCORE_TELEMETRY_POLL_24H_EXEMPT) skip the
+        # 24 h cooldown and stay eligible every rotation; the one-request-per
+        # tick airtime bound still applies because this picker returns one
+        # contact regardless.  Read at call time so tests (and a future
+        # reload) observe the live set.
+        if (
+            stamp is not None
+            and now - stamp < _TELEMETRY_NODE_COOLDOWN_SECONDS
+            and _meshcore_node_id(key) not in config.MESHCORE_TELEMETRY_POLL_24H_EXEMPT
+        ):
             continue
         state["cursor"] = index + 1
         last_polled[key] = now

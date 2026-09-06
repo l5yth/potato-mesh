@@ -845,3 +845,26 @@ class TestUdpTransportAllExports:
         """TRANSPORT, PRIMARY_CHANNEL_ONLY, and the UDP vars are in __all__."""
         for name in _UDP_ENV_VARS:
             assert name in config.__all__
+
+
+# _parse_24h_exempt_nodes
+
+
+class TestParse24hExemptNodes:
+    """Tests for :func:`config._parse_24h_exempt_nodes`."""
+
+    def test_none_empty_and_blank_fragments_yield_empty_set(self):
+        """Unset, empty, and separator-only values disable the exemption."""
+        assert config._parse_24h_exempt_nodes(None) == frozenset()
+        assert config._parse_24h_exempt_nodes("") == frozenset()
+        assert config._parse_24h_exempt_nodes(" , ,") == frozenset()
+
+    def test_entries_normalise_to_canonical_ids(self):
+        """Whitespace, case, and 0x-prefixed entries all canonicalise."""
+        result = config._parse_24h_exempt_nodes(" !AABBCCDD , 0xDEADBEEF ")
+        assert result == frozenset({"!aabbccdd", "!deadbeef"})
+
+    def test_junk_entries_are_dropped_not_fatal(self):
+        """An unparseable entry is dropped; valid siblings survive."""
+        result = config._parse_24h_exempt_nodes("!aabbccdd,not-a-node-id")
+        assert result == frozenset({"!aabbccdd"})

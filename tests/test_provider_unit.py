@@ -5448,3 +5448,27 @@ def test_reticulum_interface_close_is_idempotent():
     iface.close()
     iface.close()  # must not raise
     assert iface.isConnected is False
+
+
+def test_next_poll_contact_24h_exempt_nodes_skip_cooldown(monkeypatch):
+    """Allowlisted nodes stay eligible every rotation while unlisted roster
+    contacts keep the 24 h cooldown, preserving one request per tick."""
+    second_key = "bbccddeeff00" + "11" * 26
+    mc_tel, iface, _stub, _captured = _telemetry_env(
+        monkeypatch,
+        contacts=[
+            {"public_key": _TEST_CONTACT_KEY, "adv_name": "A"},
+            {"public_key": second_key, "adv_name": "B"},
+        ],
+    )
+    monkeypatch.setattr(
+        mc_tel.config, "MESHCORE_TELEMETRY_POLL_24H_EXEMPT", frozenset({"!aabbccdd"})
+    )
+    state: dict = {}
+    # First rotation reaches both contacts, stamping each.
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == _TEST_CONTACT_KEY
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == second_key
+    # Later rotations: only the exempt contact is eligible again — repeatedly —
+    # while the unlisted contact stays inside its 24 h cooldown.
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == _TEST_CONTACT_KEY
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == _TEST_CONTACT_KEY

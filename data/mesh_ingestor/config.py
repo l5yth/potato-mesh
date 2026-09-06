@@ -409,6 +409,60 @@ regardless of roster size.  Values ``<= 0`` disable contact polling entirely
 ``MESHCORE_SELF_TELEMETRY_SECONDS``).  Stripped with a default fallback like
 ``MESH_UDP_PORT`` so a blank value in a ``.env`` file cannot break startup."""
 
+
+def _parse_24h_exempt_nodes(raw_value: str | None) -> frozenset[str]:
+    """Normalise a comma-separated node-id list into canonical ids.
+
+    Backs :data:`MESHCORE_TELEMETRY_POLL_24H_EXEMPT`.  Each fragment is
+    canonicalised via
+    :func:`~data.mesh_ingestor.node_identity.canonical_node_id` so operator
+    spellings (``!AABBCCDD``, ``0xdeadbeef``) all match the ``!xxxxxxxx`` ids
+    the poll loop derives from roster public keys.  Unparseable fragments are
+    dropped with a warning rather than raising — a typo costs one allowlist
+    entry, never ingestor startup (the fail-safe posture of :func:`_env_flag`).
+
+    Parameters:
+        raw_value: Raw environment string of comma-separated node ids.
+
+    Returns:
+        Frozen set of canonical node ids; empty when unset or blank.
+    """
+
+    if not raw_value:
+        return frozenset()
+    # Imported lazily: node_identity is dependency-free, but config is imported
+    # extremely early and keeps its module graph minimal on purpose.
+    from .node_identity import canonical_node_id
+
+    resolved: set[str] = set()
+    for part in raw_value.split(","):
+        fragment = part.strip()
+        if not fragment:
+            continue
+        canonical = canonical_node_id(fragment)
+        if canonical is None:
+            _debug_log(
+                "Unparseable MESHCORE_TELEMETRY_POLL_24H_EXEMPT entry dropped",
+                context="config",
+                severity="warning",
+                value=fragment,
+            )
+            continue
+        resolved.add(canonical)
+    return frozenset(resolved)
+
+
+MESHCORE_TELEMETRY_POLL_24H_EXEMPT = _parse_24h_exempt_nodes(
+    os.environ.get("MESHCORE_TELEMETRY_POLL_24H_EXEMPT")
+)
+"""Roster node ids exempt from the 24 h contact-telemetry cooldown.
+
+Listed nodes stay eligible on every round-robin rotation, so each is polled
+roughly every ``eligible_nodes x MESHCORE_TELEMETRY_POLL_SECONDS`` instead of
+once per 24 h.  The one-request-per-interval airtime bound and the
+``TX_ENABLED`` transmit gate (SPEC MA7) are unaffected.  Unset means every
+contact keeps the 24 h cooldown."""
+
 MESHCORE_SELF_TELEMETRY_SECONDS = int(
     os.environ.get("MESHCORE_SELF_TELEMETRY_SECONDS", "3600").strip() or "3600"
 )
