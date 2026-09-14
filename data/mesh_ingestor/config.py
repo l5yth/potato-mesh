@@ -462,6 +462,17 @@ roughly every ``eligible_nodes x MESHCORE_TELEMETRY_POLL_SECONDS`` instead of
 once per 24 h.  The one-request-per-interval airtime bound and the
 ``TX_ENABLED`` transmit gate (SPEC MA7) are unaffected.  Unset means every
 contact keeps the 24 h cooldown."""
+MESHCORE_ESTIMATE_BATTERY = _env_flag(
+    "MESHCORE_ESTIMATE_BATTERY", default=False, on_invalid=False
+)
+"""Derive a battery percentage for MeshCore nodes from their voltage.
+
+MeshCore firmware reports battery state as raw voltage only.  When enabled,
+the ingestor estimates ``batteryLevel`` from voltage using a 1S Li-ion discharge
+curve, making the shared ``battery_level`` column comparable across protocols. 
+Off by default because the estimate is stored indistinguishably from a measured
+reading; garbage values also resolve to off."""
+
 
 MESHCORE_SELF_TELEMETRY_SECONDS = int(
     os.environ.get("MESHCORE_SELF_TELEMETRY_SECONDS", "3600").strip() or "3600"
