@@ -474,6 +474,70 @@ Off by default because the estimate is stored indistinguishably from a measured
 reading; garbage values also resolve to off."""
 
 
+def _parse_ocv_millivolts(raw_value: str | None) -> tuple[int, ...] | None:
+    """Parse a ``MESHCORE_OCV_MILLIVOLTS`` discharge-curve override.
+
+    The operator writes the open-circuit voltages in **millivolts, ascending**
+    (0% first, 100% last, e.g. ``3100,3300,...,4190``); the estimator walks
+    the curve from full toward empty, so the parsed tuple is stored reversed.
+    Any number of points ``>= 2`` is accepted — the interpolation divides
+    0–100% evenly across the segments.  An unparseable value drops the whole
+    override with a warning rather than raising, falling back to the built-in
+    curve (the fail-safe posture of :func:`_env_flag`): a typo costs the
+    operator their custom curve, never ingestor startup.
+
+    Parameters:
+        raw_value: Raw environment string of comma-separated millivolt values.
+
+    Returns:
+        Tuple of millivolt points in descending order, or ``None`` when unset,
+        blank, or invalid.
+    """
+
+    if raw_value is None or not raw_value.strip():
+        return None
+    points: list[int] = []
+    for part in raw_value.split(","):
+        fragment = part.strip()
+        if not fragment:
+            continue
+        try:
+            points.append(int(fragment))
+        except ValueError:
+            _debug_log(
+                "Unparseable MESHCORE_OCV_MILLIVOLTS entry; override ignored",
+                context="config",
+                severity="warning",
+                value=fragment,
+            )
+            return None
+    if (
+        len(points) < 2
+        or points[0] <= 0
+        or any(later <= earlier for earlier, later in zip(points, points[1:]))
+    ):
+        _debug_log(
+            "MESHCORE_OCV_MILLIVOLTS needs >= 2 positive strictly ascending "
+            "values; override ignored",
+            context="config",
+            severity="warning",
+            value=raw_value,
+        )
+        return None
+    return tuple(reversed(points))
+
+
+MESHCORE_OCV_MILLIVOLTS = _parse_ocv_millivolts(
+    os.environ.get("MESHCORE_OCV_MILLIVOLTS")
+)
+"""Optional override for the battery-estimate discharge curve.
+
+Set as ascending comma-separated millivolts (0% → 100%).  ``None`` (unset or
+invalid) means the built-in 1S Li-ion curve in
+``protocols.meshcore.telemetry`` is used.  Only consulted when
+:data:`MESHCORE_ESTIMATE_BATTERY` is on."""
+
+
 MESHCORE_SELF_TELEMETRY_SECONDS = int(
     os.environ.get("MESHCORE_SELF_TELEMETRY_SECONDS", "3600").strip() or "3600"
 )

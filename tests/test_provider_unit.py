@@ -1733,6 +1733,22 @@ def test_voltage_to_battery_level_matches_curve():
     assert mc_tel._voltage_to_battery_level(2.5) is None
 
 
+def test_voltage_to_battery_level_honors_custom_curve(monkeypatch):
+    """A MESHCORE_OCV_MILLIVOLTS override replaces the built-in table.
+
+    The override is stored descending (config reverses the operator's
+    ascending list); the no-battery floor tracks the active curve's 0% point.
+    """
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_OCV_MILLIVOLTS", (4000, 3000))
+    assert mc_tel._voltage_to_battery_level(4.0) == 100
+    assert mc_tel._voltage_to_battery_level(3.5) == 50
+    assert mc_tel._voltage_to_battery_level(3.0) == 0
+    # Floor is the curve's 0% point minus 500 mV, not the default table's.
+    assert mc_tel._voltage_to_battery_level(2.6) == 0
+    assert mc_tel._voltage_to_battery_level(2.4) is None
+
+
 def test_voltage_to_battery_level_rejects_junk():
     """Non-numeric and non-positive inputs yield no estimate."""
     mc_tel = _telemetry_module()
