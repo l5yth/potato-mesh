@@ -183,6 +183,35 @@ class MockElement {
   }
 
   /**
+   * Element children, mirroring ``HTMLElement.children``: ``childNodes``
+   * without the string text nodes this environment creates. Lets code that
+   * reads a previous render back from the DOM (``renderChatTabs``) find it.
+   *
+   * @returns {Array<MockElement>} Element child nodes, in order.
+   */
+  get children() {
+    return this.childNodes.filter(node => node instanceof MockElement);
+  }
+
+  /**
+   * Replace ``oldNode`` with ``newNode`` in place, mirroring
+   * ``Node.replaceChild``.
+   *
+   * @param {Object} newNode Node to insert.
+   * @param {Object} oldNode Existing child to replace.
+   * @returns {Object} The replaced node.
+   * @throws {Error} When ``oldNode`` is not a child of this element.
+   */
+  replaceChild(newNode, oldNode) {
+    const index = this.childNodes.indexOf(oldNode);
+    if (index === -1) {
+      throw new Error('replaceChild: oldNode is not a child of this element');
+    }
+    this.childNodes[index] = newNode;
+    return oldNode;
+  }
+
+  /**
    * Serialize the element's children into a naive HTML string for test
    * assertions. This intentionally covers only the subset of markup produced
    * in unit tests.

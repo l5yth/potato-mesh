@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 import math
 import os
 from datetime import datetime, timezone
@@ -335,8 +336,73 @@ PSK), so decryptability alone cannot distinguish PRIMARY from SECONDARY -- only
 the per-channel hash of *(name, key)* can. When blank, UDP primary-only mode
 fails closed (drops every packet) rather than risk leaking a secondary channel."""
 
-MESH_UDP_GROUP = os.environ.get("MESH_UDP_GROUP", "224.0.0.69").strip() or "224.0.0.69"
-"""IPv4 multicast group joined in UDP transport mode."""
+DEFAULT_MESH_UDP_GROUPS = ("239.0.0.69", "224.0.0.69")
+"""Multicast groups joined when :envvar:`MESH_UDP_GROUP` is unset or blank.
+
+Meshtastic firmware 2.8 and later sends "Mesh via UDP" to ``239.0.0.69``;
+earlier firmware sends to ``224.0.0.69``.  Neither falls back to the other, so
+the default joins both (SPEC UG1)."""
+
+
+def _parse_mesh_udp_groups(raw: str) -> tuple[str, ...]:
+    """Parse :envvar:`MESH_UDP_GROUP` into the multicast groups to join.
+
+    The value is a comma-separated list of IPv4 multicast addresses.  Each
+    fragment is trimmed (a quote-only fragment counts as blank, see
+    :func:`_clean_env_fragment`), blank fragments are skipped, and a repeated
+    group collapses onto its first position.
+
+    Validated at import time for the reason :data:`PRIMARY_CHANNEL_KEY` is: an
+    entry that is not a multicast group otherwise fails only inside
+    ``connect()``, where the daemon's generic reconnect handler logs it as a
+    connection failure and retries forever.
+
+    Parameters:
+        raw: Raw :envvar:`MESH_UDP_GROUP` value.
+
+    Returns:
+        The groups in configured order, or :data:`DEFAULT_MESH_UDP_GROUPS`
+        when no fragment carries an address.
+
+    Raises:
+        ValueError: When a fragment is not an IPv4 address inside
+            ``224.0.0.0/4``.  The message names the variable and the entry.
+    """
+    groups: list[str] = []
+    for part in raw.split(","):
+        entry = _clean_env_fragment(part)
+        if not entry:
+            continue
+        try:
+            is_multicast = ipaddress.IPv4Address(entry).is_multicast
+        except ValueError:  # not an IPv4 address at all
+            is_multicast = False
+        if not is_multicast:
+            raise ValueError(
+                f"MESH_UDP_GROUP entry {entry!r} is not an IPv4 multicast address "
+                "(224.0.0.0/4). Set one address or a comma-separated list, "
+                'e.g. "239.0.0.69,224.0.0.69".'
+            )
+        # IPv4Address accepts only canonical dotted-decimal (no leading
+        # zeros), so the raw entry is already the normalised spelling.
+        if entry not in groups:
+            groups.append(entry)
+    return tuple(groups) or DEFAULT_MESH_UDP_GROUPS
+
+
+MESH_UDP_GROUPS = _parse_mesh_udp_groups(os.environ.get("MESH_UDP_GROUP", ""))
+"""IPv4 multicast groups joined in UDP transport mode, in configured order.
+
+Parsed from the comma-separated :envvar:`MESH_UDP_GROUP` by
+:func:`_parse_mesh_udp_groups`; the UDP provider opens one group-bound socket
+per entry.  Defaults to :data:`DEFAULT_MESH_UDP_GROUPS`; a single address
+restricts the listener to that group."""
+
+MESH_UDP_GROUP = ",".join(MESH_UDP_GROUPS)
+"""Normalised comma-joined form of :data:`MESH_UDP_GROUPS`.
+
+Kept for callers that read the single-string setting; the UDP provider reads
+:data:`MESH_UDP_GROUPS`."""
 
 MESH_UDP_PORT = int(os.environ.get("MESH_UDP_PORT", "4403").strip() or "4403")
 """UDP port for the Mesh-via-UDP multicast group.
@@ -691,6 +757,7 @@ __all__ = [
     "PRIMARY_CHANNEL_KEY",
     "PRIMARY_CHANNEL_NAME",
     "MESH_UDP_GROUP",
+    "MESH_UDP_GROUPS",
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
     "RETICULUM_CONFIG_DIR",

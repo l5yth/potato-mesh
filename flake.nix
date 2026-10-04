@@ -419,8 +419,8 @@
 
               meshUdpGroup = lib.mkOption {
                 type = lib.types.str;
-                default = "224.0.0.69";
-                description = "Multicast group for Meshtastic \"Mesh via UDP\"";
+                default = "239.0.0.69,224.0.0.69";
+                description = "Comma-separated multicast groups for Meshtastic \"Mesh via UDP\". The default listens on both; set one address to listen on that group only";
               };
 
               meshUdpPort = lib.mkOption {
@@ -439,6 +439,12 @@
                 type = lib.types.int;
                 default = 300;
                 description = "Seconds between Meshcore contact telemetry polls; requires txEnabled since polling transmits. 0 disables on-air polling";
+              };
+
+              meshcoreTelemetryPoll24hExempt = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Comma-separated node ids exempt from the once-per-24h Meshcore contact telemetry cooldown; listed nodes are polled every round-robin rotation. Requires txEnabled";
               };
 
               txEnabled = lib.mkOption {
@@ -557,6 +563,7 @@
                 ENERGY_SAVING = if cfg.ingestor.energySaving then "1" else "0";
                 MESHCORE_SELF_TELEMETRY_SECONDS = toString cfg.ingestor.meshcoreSelfTelemetrySeconds;
                 MESHCORE_TELEMETRY_POLL_SECONDS = toString cfg.ingestor.meshcoreTelemetryPollSeconds;
+                MESHCORE_TELEMETRY_POLL_24H_EXEMPT = cfg.ingestor.meshcoreTelemetryPoll24hExempt;
                 PRIMARY_CHANNEL_ONLY = if cfg.ingestor.primaryChannelOnly then "1" else "0";
                 PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;
                 MESH_UDP_GROUP = cfg.ingestor.meshUdpGroup;

@@ -51,12 +51,26 @@ RUN python3 -m venv /opt/meshtastic-venv && \
 # Production stage
 FROM ruby:3.3-alpine AS production
 
-# Install runtime dependencies
+# Build-time toggle controlling whether Chromium is bundled into the image
+# for runtime Open Graph preview rendering. Operators on size-constrained
+# hosts can build with `--build-arg WITH_OG_IMAGE=0` to skip Chromium and
+# its font/library payload (~150 MB). The web app falls back to the
+# packaged default PNG when Chromium is missing, and operators can point
+# `OG_IMAGE_URL` at a CDN-hosted preview instead.
+ARG WITH_OG_IMAGE=1
+ENV WITH_OG_IMAGE=${WITH_OG_IMAGE}
+
+# Install runtime dependencies. Chromium powers the runtime Open Graph
+# preview generator; the accompanying font and library packages are the
+# minimum set required to render the dashboard headlessly on Alpine.
 RUN apk add --no-cache \
     python3 \
     sqlite \
     tzdata \
-    curl
+    curl \
+    && if [ "$WITH_OG_IMAGE" = "1" ]; then \
+         apk add --no-cache chromium nss freetype harfbuzz ttf-freefont; \
+       fi
 
 # Create non-root user
 RUN addgroup -g 1000 -S potatomesh && \
@@ -79,6 +93,7 @@ COPY --chown=potatomesh:potatomesh web/spec ./spec
 COPY --chown=potatomesh:potatomesh web/public ./public
 COPY --chown=potatomesh:potatomesh web/views ./views
 COPY --chown=potatomesh:potatomesh web/scripts ./scripts
+COPY --chown=potatomesh:potatomesh web/pages ./pages
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
@@ -87,13 +102,27 @@ COPY --chown=potatomesh:potatomesh data/mesh_ingestor/decode_payload.py /app/dat
 # Create data and configuration directories with correct ownership
 RUN mkdir -p /app/.local/share/potato-mesh \
     && mkdir -p /app/.config/potato-mesh/well-known \
-    && chown -R potatomesh:potatomesh /app/.local/share /app/.config
+    && mkdir -p /app/pages \
+    && chown -R potatomesh:potatomesh /app/.local/share /app/.config /app/pages
 
 # Switch to non-root user
 USER potatomesh
 
 # Expose port
 EXPOSE 41447
+
+# Baked application version (SPEC AV1). The image ships without `.git`
+# (`.dockerignore` excludes it), so `determine_app_version`'s in-image `git
+# describe` would fall back to the constant `Config.version_fallback` and the
+# `?v=` asset cache-buster would be identical across every build between version
+# bumps. CI (`.github/workflows/docker.yml`) computes `git describe` from its
+# full checkout and passes it as `--build-arg APP_VERSION=…`; the app prefers
+# this ENV, making the buster unique per build so `AssetCacheControl` can serve
+# versioned JS/CSS `immutable`. Declared late so changing it only rebuilds the
+# final cheap layers. Empty by default: a plain `docker build` with no build-arg
+# keeps today's git-lookup / fallback behavior unchanged.
+ARG APP_VERSION=""
+ENV APP_VERSION=${APP_VERSION}
 
 # Default environment variables (can be overridden by host)
 ENV RACK_ENV=production \
@@ -108,6 +137,23 @@ ENV RACK_ENV=production \
     MAP_ZOOM="" \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
+    FERRUM_BROWSER_PATH=/usr/bin/chromium \
+    MESHTASTIC_PRESET="" \
+    MESHTASTIC_FREQ="" \
+    MESHCORE_PRESET="" \
+    MESHCORE_FREQ="" \
+    ANNOUNCEMENT="" \
+    EVENTS=1 \
+    OG_IMAGE_URL="" \
+    PAGES_DIR=/app/pages \
+    PROM_REPORT_IDS="" \
+    ALLOWED_CHANNELS="" \
+    HIDDEN_CHANNELS="" \
+    FEDERATION=1 \
+    PRIVATE=0 \
+    CONNECTION=/dev/ttyACM0 \
+    INSTANCE_DOMAIN="" \
+    API_TOKEN="" \
     DEBUG=0
 
 # Start the application
