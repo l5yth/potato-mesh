@@ -28,8 +28,10 @@ on:
       - 'README.md'
       - 'docker-compose.yml'
       - 'flake.nix'
-      - 'web/Dockerfile'
       - 'web/lib/potato_mesh/config.rb'
+      # tests/test_dockerfile_sync.py compares these two files.
+      - 'Dockerfile'
+      - 'web/Dockerfile'
 
 permissions:
   contents: read
