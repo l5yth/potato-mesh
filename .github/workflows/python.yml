@@ -23,6 +23,12 @@ on:
       - '.github/**'
       - 'data/**'
       - 'tests/**'
+      # Deployment surfaces read by tests/test_env_surfaces.py.
+      - '.env.example'
+      - 'README.md'
+      - 'docker-compose.yml'
+      - 'flake.nix'
+      - 'web/lib/potato_mesh/config.rb'
       # tests/test_dockerfile_sync.py compares these two files.
       - 'Dockerfile'
       - 'web/Dockerfile'
