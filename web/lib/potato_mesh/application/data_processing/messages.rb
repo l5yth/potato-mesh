@@ -185,6 +185,10 @@ module PotatoMesh
         # hop-hash route; both additive and absent for legacy senders.
         hops = coerce_integer(message["hops"])
         path = string_or_nil(message["path"])
+        # A MeshCore channel sender is only name-matched by the ingestor, so a
+        # stale roster can hand back a retired key; re-rank it before anything
+        # is stored, deduplicated, or touched (SPEC GN3).
+        from_id = resolve_meshcore_channel_sender(db, from_id, to_id, text) if protocol == "meshcore"
 
         row = [
           msg_id,
@@ -514,12 +518,13 @@ module PotatoMesh
 
         should_touch_message = !stored_decrypted
         if should_touch_message
-          # MeshCore channel messages name their sender (and quote/mention peers)
-          # in the text; synthesize/repair those placeholder nodes (issue #803)
-          # named from the text and flagged synthetic, so they reconcile with the
-          # real contact — instead of the generic "MeshCore <hex>" placeholder
-          # ensure_unknown_node would mint.  Falls through to ensure_unknown_node
-          # for non-MeshCore messages or when no sender prefix is present.
+          # MeshCore channel messages name their sender in the text; synthesize/
+          # repair that placeholder node (issue #803) named from the text and
+          # flagged synthetic, so it reconciles with the real contact — instead
+          # of the generic "MeshCore <hex>" placeholder ensure_unknown_node would
+          # mint.  Mentioned peers were not heard and get no node (SPEC GN1).
+          # Falls through to ensure_unknown_node for non-MeshCore messages or
+          # when no sender prefix is present.
           meshcore_sender_named =
             protocol == "meshcore" &&
             process_meshcore_chat_nodes(db, resolved_from_id || raw_from_id, to_id || raw_to_id, text, rx_time)

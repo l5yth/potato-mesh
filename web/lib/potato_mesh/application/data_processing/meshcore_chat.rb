@@ -14,8 +14,6 @@
 
 # frozen_string_literal: true
 
-require "digest"
-
 module PotatoMesh
   module App
     module DataProcessing
@@ -23,18 +21,18 @@ module PotatoMesh
       # channel chat text (issue #803).
       #
       # A MeshCore channel message encodes its sender as a +"SenderName: body"+
-      # text prefix and quotes/mentions peers as +@[Name]+.  The sender's
-      # +from_id+ is a name-derived synthetic id.  These helpers create the
-      # placeholder named from that text and marked +synthetic+, so the existing
-      # issue-#755 merge machinery reconciles it with the real contact
-      # advertisement — instead of the generic +"MeshCore <hex>"+ stand-in that
-      # +ensure_unknown_node+ would mint (which is mis-recorded as a real
-      # +synthetic=0+ node, shows the wrong name, and never reconciles).
-
-      # Matches +@[Name]+ mention patterns in a MeshCore message body.  Mirrors
-      # the ingestor's +_MENTION_RE+ and the frontend mention regex so all three
-      # layers agree on what a mention is.
-      MESHCORE_MENTION_RE = /@\[([^\]]+)\]/.freeze
+      # text prefix.  An unrostered sender's +from_id+ is a name-derived
+      # synthetic id.  These helpers create the placeholder named from that text
+      # and marked +synthetic+, so the existing issue-#755 merge machinery
+      # reconciles it with the real contact advertisement — instead of the
+      # generic +"MeshCore <hex>"+ stand-in that +ensure_unknown_node+ would mint
+      # (which is mis-recorded as a real +synthetic=0+ node, shows the wrong
+      # name, and never reconciles).
+      #
+      # Only the sender is a reception.  An +@[Name]+ mention or reply prefix
+      # names a peer that was not heard, so it never creates, refreshes, or
+      # merges a node (SPEC GN1, issue #883); the frontend renders unresolved
+      # mentions with its own stand-in badge.
 
       # Parse the sender long name from a MeshCore +"SenderName: body"+ prefix.
       #
@@ -52,36 +50,6 @@ module PotatoMesh
 
         name = text[0...idx].strip
         name.empty? ? nil : name
-      end
-
-      # Extract the trimmed, de-duplicated +@[Name]+ mentions from a body.
-      #
-      # @param text [String, nil] raw message text.
-      # @return [Array<String>] mention names in first-seen order (may be empty).
-      def extract_meshcore_mentions(text)
-        return [] unless text.is_a?(String)
-
-        text.scan(MESHCORE_MENTION_RE).map { |match| match[0].strip }.reject(&:empty?).uniq
-      end
-
-      # Derive the deterministic synthetic node id for a MeshCore display name.
-      #
-      # Uses the first four bytes of +SHA-256(UTF-8 name)+ as +"!xxxxxxxx"+.  The
-      # name is trimmed first so a reference and its bracket-padded variant
-      # (+@[ Name ]+) converge on one row and align with the frontend's trimmed
-      # mention/sender resolution; for the unpadded names that dominate in
-      # practice this equals the Python ingestor's +_derive_synthetic_node_id+
-      # (the sender path does not derive at all — it reuses the message +from_id+).
-      #
-      # @param name [String, nil] display name.
-      # @return [String, nil] canonical +"!xxxxxxxx"+ id, or nil for a blank name.
-      def meshcore_synthetic_node_id(name)
-        return nil unless name.is_a?(String)
-
-        trimmed = name.strip
-        return nil if trimmed.empty?
-
-        "!" + Digest::SHA256.hexdigest(trimmed)[0, 8]
       end
 
       # Rank a candidate MeshCore sender id by the strength of its identity
@@ -130,6 +98,40 @@ module PotatoMesh
         meshcore_sender_rank(db, incoming_from_id) > meshcore_sender_rank(db, existing_from_id)
       end
 
+      # Resolve the sender of a MeshCore channel message that the ingestor
+      # name-matched to a retired identity (SPEC GN3, extends MR3).
+      #
+      # A channel message carries no sender key: the ingestor maps the
+      # +"Name:"+ prefix onto its own contact roster, and a roster that still
+      # holds a retired keypair under that name hands back the retired id.  MR3
+      # only ranks *competing* copies, so a sole copy would keep the retired
+      # node alive.  The same ranks decide here: a positively-stale sender
+      # (rank 1) is replaced by the one same-name real node that is live or
+      # unproven (rank 2).  No such node, or more than one, keeps the
+      # ingestor's id.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param from_id [String, nil] sender id carried by the message.
+      # @param to_id [String, nil] resolved recipient (+"^all"+ for channel chat).
+      # @param text [String, nil] raw message text.
+      # @return [String, nil] the sender id to store, +from_id+ when unchanged.
+      def resolve_meshcore_channel_sender(db, from_id, to_id, text)
+        return from_id unless to_id.to_s == "^all"
+
+        sender_name = parse_meshcore_sender_name(text)
+        return from_id unless sender_name && meshcore_sender_rank(db, from_id) == 1
+
+        # NULL unless exactly one candidate qualifies, so ambiguity keeps the
+        # ingestor's attribution rather than guessing between two live nodes.
+        live_id = db.get_first_value(
+          "SELECT CASE WHEN COUNT(*) = 1 THEN MAX(node_id) END FROM nodes " \
+          "WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? " \
+          "AND NOT #{DataProcessing.positively_stale_sql("nodes")}",
+          [sender_name, from_id, DataProcessing.evidence_cutoff],
+        )
+        live_id || from_id
+      end
+
       # Create or repair the MeshCore chat placeholder node for a display name.
       #
       # The node is upserted as a synthetic (+synthetic=1+) COMPANION named
@@ -139,7 +141,8 @@ module PotatoMesh
       # (+synthetic=0+) is first demoted to synthetic so the parsed name can take
       # over — the real-node guard in +upsert_node+ would otherwise protect the
       # stale generic name.  A genuine real node (non-generic name, +synthetic=0+)
-      # is left untouched.
+      # is left untouched: it is the key-resolved sender itself, not a
+      # placeholder (SPEC GN2).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param node_id [String, nil] canonical node id to name.
@@ -175,6 +178,10 @@ module PotatoMesh
             end
             return
           end
+          # A genuine real node: nothing to name, and the synthetic upsert below
+          # would hand the reverse merge a real id, moving this sender's
+          # messages and last_heard onto a same-name sibling (issue #883).
+          return
         end
 
         upsert_node(
@@ -194,14 +201,13 @@ module PotatoMesh
         )
       end
 
-      # Synthesize/repair sender + mention placeholder nodes for a MeshCore
-      # channel message, replacing the generic +ensure_unknown_node+ placeholder
-      # for the sender.
+      # Synthesize/repair the sender placeholder node for a MeshCore channel
+      # message, replacing the generic +ensure_unknown_node+ placeholder.
       #
       # Only broadcast (+"^all"+) MeshCore messages are channel chat; direct
       # messages carry no +"Name:"+ prefix, so a stray colon in their body must
-      # not be mistaken for a sender.  Mentions are synthesized for every channel
-      # message (they exist only in channel chat).
+      # not be mistaken for a sender.  +@[Name]+ mentions are deliberately not
+      # synthesized: a mention is not a reception (SPEC GN1).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param from_id [String, nil] sender node id from the message.
@@ -213,10 +219,6 @@ module PotatoMesh
       def process_meshcore_chat_nodes(db, from_id, to_id, text, heard_time)
         return false unless to_id.to_s == "^all"
         return false unless string_or_nil(text)
-
-        extract_meshcore_mentions(text).each do |mention|
-          ensure_meshcore_chat_node(db, meshcore_synthetic_node_id(mention), mention, heard_time)
-        end
 
         sender = parse_meshcore_sender_name(text)
         return false unless sender && string_or_nil(from_id)

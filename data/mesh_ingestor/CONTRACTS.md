@@ -143,6 +143,8 @@ MeshCore roster-eviction assertion (SPEC RF4). At startup the provider asserts t
 
 New protocols SHOULD likewise treat "node was heard" as a first-class, name-optional upsert so peer discovery does not hinge on a roster being populated.
 
+MeshCore chat placeholders (SPEC GN1/GN4). A MeshCore channel message names its sender only in its `SenderName: body` text. When the ingestor's roster has no contact of that name, the message carries a name-derived `from_id` and no node is POSTed for it: the web app creates the placeholder node itself when it ingests the message, flagged synthetic, and merges it into the real node once that node's contact advertisement arrives. A node entry whose `user.synthetic` is set (any truthy value, the same rule `upsert_node` applies to the flag) is therefore ignored and the request still answers 201, so a POSTed placeholder never records a reception. An `@[Name]` mention or reply prefix is not a reception and never creates, refreshes, or merges a node.
+
 #### `POST /api/messages`
 
 Single message payload:
@@ -427,6 +429,10 @@ node snapshot.
   the identity hash (a destination hash is one-way and cannot be read back).
 - Emitted as ordinary node records sharing one `nodeId`, each carrying its own
   `destination` mapping, so no separate ingest route is involved.
+
+### GET /api/nodes placeholder flag (SPEC MR4)
+
+`GET /api/nodes` and `GET /api/nodes/:id` emit `synthetic: true` on a name-derived MeshCore placeholder row - a channel sender not yet matched to a keyed contact - and omit the key on every other row (no `synthetic: false`). Placeholders come only from ingested chat senders (see the `POST /api/nodes` placeholder note), never from mentions, and the reconciliation merge folds them into the real node once its contact is stored and the name is unambiguous (SPEC MR2).
 
 ### GET /api/destinations response shape
 

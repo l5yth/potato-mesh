@@ -9,6 +9,10 @@
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
+* Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)
+* Web: a MeshCore channel message stays on its sender's node and no longer moves to, or revives, a same-name node; a sender named by a stale roster is credited to the current key (#883)
+* Data: the MeshCore ingestor no longer posts placeholder nodes for chat senders or mentions, so hidden-channel names stay hidden; the web app ignores such posts from older ingestors (#883)
+* Data: a MeshCore sender name shared by several roster contacts resolves to the most recently advertised one (#883)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)

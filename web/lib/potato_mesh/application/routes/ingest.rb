@@ -48,6 +48,10 @@ module PotatoMesh
             data.each do |node_id, node|
               next if node_id == "ingestor"
               next if node_id == "protocol"
+              # Name-derived placeholders are minted web-side from the message
+              # text that names them (SPEC GN4); a POSTed one records no
+              # reception, and older ingestors also posted them for mentions.
+              next if node.is_a?(Hash) && node["user"].is_a?(Hash) && node["user"]["synthetic"]
               per_node = node.is_a?(Hash) ? normalize_protocol_value(node["protocol"]) : nil
               upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end

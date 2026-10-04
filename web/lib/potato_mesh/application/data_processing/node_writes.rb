@@ -713,11 +713,21 @@ module PotatoMesh
       # pubkey-derived real node coexisted because the forward merge only fired
       # on real-node upserts and never back-filled late-arriving synthetics.
       #
+      # Only a stored placeholder is folded (SPEC GN2).  A synthetic-flagged
+      # record for an id whose row is real is blocked by the +upsert_node+
+      # guard, and merging it would move that real node's messages and
+      # +last_heard+ onto a same-name sibling (issue #883), so it is a no-op.
+      #
       # @param db [SQLite3::Database] open database connection.
       # @param synthetic_node_id [String] canonical node ID of the synthetic placeholder being upserted.
       # @param long_name [String] long name to match against existing real rows.
       # @return [void]
       def merge_into_real_node(db, synthetic_node_id, long_name)
+        return unless db.get_first_value(
+          "SELECT 1 FROM nodes WHERE node_id = ? AND synthetic = 1 LIMIT 1",
+          [synthetic_node_id],
+        )
+
         # Read the single node_id column shape-robustly (see the +row.is_a?(Hash)+
         # guard below): a +results_as_hash = true+ handle yields plain Hash rows
         # with string keys only under sqlite3 2.x, where integer indexing (+row[0]+)

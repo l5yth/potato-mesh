@@ -82,7 +82,6 @@ from ._constants import (  # noqa: E402 - keep grouped with sibling re-exports.
     _CHANNEL_PROBE_FALLBACK_MAX,
     _CONNECT_TIMEOUT_SECS,
     _DEFAULT_BAUDRATE,
-    _MENTION_RE,
     _MESHCORE_ADV_TYPE_ROLE,
     _MESHCORE_ID_BITS,
     _MESHCORE_ID_MASK,
@@ -122,11 +121,9 @@ from .identity import (  # noqa: E402
 from .interface import ClosedBeforeConnectedError, _MeshcoreInterface  # noqa: E402
 from .messages import (  # noqa: E402
     _derive_message_id,
-    _extract_mention_names,
     _normalize_hops,
     _normalize_path,
     _parse_sender_name,
-    _synthetic_node_dict,
 )
 from .position import _store_meshcore_position  # noqa: E402
 from .provider import MeshcoreProvider  # noqa: E402
@@ -146,7 +143,6 @@ __all__ = [
     "_DEFAULT_BAUDRATE",
     "_IGNORED_MESSAGE_LOCK",
     "_IGNORED_MESSAGE_LOG_PATH",
-    "_MENTION_RE",
     "_MESHCORE_ADV_TYPE_ROLE",
     "_MESHCORE_ID_BITS",
     "_MESHCORE_ID_MASK",
@@ -158,7 +154,6 @@ __all__ = [
     "_derive_synthetic_node_id",
     "_ensure_autoadd_eviction",
     "_ensure_channel_names",
-    "_extract_mention_names",
     "_log_unhandled_loop_exception",
     "_make_connection",
     "_make_event_handlers",
@@ -178,6 +173,5 @@ __all__ = [
     "_rx_advert_to_node_dict",
     "_self_info_to_node_dict",
     "_store_meshcore_position",
-    "_synthetic_node_dict",
     "_to_json_safe",
 ]
