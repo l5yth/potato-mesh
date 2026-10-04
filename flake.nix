@@ -13,6 +13,11 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # Ruby 3.4, the version the web image ships and CI tests (SPEC DP5),
+        # with a Bundler built against it rather than nixpkgs' default Ruby.
+        ruby = pkgs.ruby_3_4;
+        bundler = pkgs.bundler.override { inherit ruby; };
+
         # Python environment for the ingestor
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           meshtastic
@@ -23,7 +28,7 @@
         # Web app wrapper script
         webApp = pkgs.writeShellApplication {
           name = "potato-mesh-web";
-          runtimeInputs = [ pkgs.ruby pkgs.bundler pkgs.sqlite pkgs.git pkgs.gnumake pkgs.gcc ];
+          runtimeInputs = [ ruby bundler pkgs.sqlite pkgs.git pkgs.gnumake pkgs.gcc ];
           text = ''
             if [ -n "''${XDG_DATA_HOME:-}" ]; then
               BASEDIR="$XDG_DATA_HOME"
@@ -103,8 +108,8 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            pkgs.ruby
-            pkgs.bundler
+            ruby
+            bundler
             pythonEnv
             pkgs.sqlite
           ];

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Main application builder stage
-FROM ruby:3.3-alpine AS builder
+FROM ruby:3.4-alpine AS builder
 
 # Ensure native extensions are built against musl libc rather than
 # using glibc precompiled binaries (which fail on Alpine).
@@ -46,7 +46,7 @@ RUN python3 -m venv /opt/meshtastic-venv && \
     /opt/meshtastic-venv/bin/pip install --no-cache-dir meshtastic protobuf
 
 # Production stage
-FROM ruby:3.3-alpine AS production
+FROM ruby:3.4-alpine AS production
 
 # Build-time toggle controlling whether Chromium is bundled into the image
 # for runtime Open Graph preview rendering. Operators on size-constrained

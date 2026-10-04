@@ -14,8 +14,8 @@
 
 """Keep CI testing the language runtimes the published images ship.
 
-The web image runs ``ruby:3.3-alpine`` and the ingestor image Python 3.12,
-yet CI tested only Ruby 3.4/4.0 and Python 3.13, so a change that broke the
+The web image ran ``ruby:3.3-alpine`` and the ingestor image Python 3.12
+while CI tested only Ruby 3.4/4.0 and Python 3.13, so a change that broke the
 shipped runtimes passed every check.
 """
 
