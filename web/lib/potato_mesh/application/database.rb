@@ -26,7 +26,12 @@ module PotatoMesh
       # +MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS+ (30→300 s), so it must re-run
       # once to clear the cross-slot, clock-skewed duplicates that accumulated
       # under the old window/key.
-      MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION = 2
+      # Bumped 2→3 (#880): a MeshCore channel broadcast with a "Name:" prefix
+      # no longer keys on +from_id+, which each ingestor resolves against its
+      # own roster (pubkey id or name-derived synthetic id), so the purge
+      # re-runs once to clear the cross-slot copies that the old guard let
+      # through when the two ingestors resolved the sender differently.
+      MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION = 3
 
       # Column definitions required for environment telemetry support. Each
       # entry pairs the column name with the SQL type used when backfilling
@@ -358,9 +363,13 @@ module PotatoMesh
             db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
           end
 
-          # #756 — partial index backing the meshcore content-dedup lookup in
-          # insert_message.  Scoped to meshcore so the index stays small even
-          # on meshtastic-heavy deployments.  ``CREATE … IF NOT EXISTS`` is
+          # #756 — meshcore-scoped partial indexes, small even on
+          # meshtastic-heavy deployments.  +idx_messages_meshcore_content+
+          # (from_id, channel, rx_time) is the original #756 index; since #880
+          # the content-dedup lookups in insert_message and both purge
+          # statements below search +idx_messages_meshcore_text+ (text,
+          # rx_time) instead (SPEC MX6), which +data/messages.sql+ also
+          # creates for a fresh database.  ``CREATE … IF NOT EXISTS`` is
           # cheap enough to run on every boot; the one-shot backfill below
           # is gated separately via ``PRAGMA user_version`` so it does not
           # repeat after the first successful pass.
@@ -374,15 +383,25 @@ module PotatoMesh
                 ON messages(from_id, channel, rx_time)
                 WHERE protocol = 'meshcore'
             SQL
+            db.execute(<<~SQL)
+              CREATE INDEX IF NOT EXISTS idx_messages_meshcore_text
+                ON messages(text, rx_time)
+                WHERE protocol = 'meshcore'
+            SQL
 
             # #756 backfill — collapse pre-existing meshcore duplicate groups.
             # Delete any row that has an EARLIER same-content row
             # (from_id, to_id, channel_name, text) within
             # #{PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS} s,
-            # keeping the earliest (min rx_time, min id) copy.  The key + window
-            # match the runtime guard (+insert_message+): the per-receiver
-            # +channel+ index differs across ingestors for one logical channel,
-            # so the stable +channel_name+ is what clusters cross-ingestor copies.
+            # keeping the earliest (min rx_time, min id) copy; a channel
+            # broadcast whose text carries a "Name:" prefix drops the +from_id+
+            # leg (#880), so the sweep runs as two statements, one per key.
+            # The keys + window match the runtime guard (+insert_message+): the
+            # per-receiver +channel+ index differs across ingestors for one
+            # logical channel, so the stable +channel_name+ is what clusters
+            # cross-ingestor copies.  Each lookup of an earlier copy searches
+            # +idx_messages_meshcore_text+ on ``text = … AND rx_time BETWEEN``,
+            # so the sweep stays near-linear in the number of meshcore rows.
             #
             # NOTE — this EXISTS predicate is TRANSITIVE and so does NOT behave
             # identically to the runtime guard: a chain of identical-content rows
@@ -397,9 +416,13 @@ module PotatoMesh
             # governs every new row.  See #756 and ``CONTRACTS.md``.
             #
             # Gated via ``PRAGMA user_version`` so this expensive self-join
-            # runs exactly once after deploy.  Post-fix the runtime guard
-            # prevents new duplicates from accumulating, so re-running on
-            # every boot would scan ``messages`` for no reason.
+            # runs once per backfill version, not on every boot.  The runtime
+            # guard alone governs rows inserted later and does not stop every
+            # duplicate: until #880 it let through cross-slot copies whose
+            # sender two ingestors resolved differently, and copies further
+            # apart than the window or caught in the check-then-insert race
+            # still pass (``CONTRACTS.md``).  A guard change that should also
+            # clear history bumps +MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION+.
             current_version = db.get_first_value("PRAGMA user_version").to_i
             if current_version < MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION
               window = PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS
@@ -410,20 +433,51 @@ module PotatoMesh
                 # purely for consistency.  ``PRAGMA user_version`` cannot
                 # accept bind params, so it keeps literal interpolation of
                 # an internal constant.
+                #
+                # The broadcast test mirrors +parse_meshcore_sender_name+: a
+                # colon with a non-blank name before it.  The +trim+ set (tab,
+                # LF, VT, FF, CR, space) is what +String#strip+ removes, less
+                # NUL, which SQLite would read as the end of the set.  The
+                # second statement takes every other row (``to_id IS`` keeps a
+                # NULL recipient in it) and keeps the +from_id+ leg.
+                sender_prefix = <<~SQL.strip
+                  instr(messages.text, ':') > 1
+                    AND trim(substr(messages.text, 1, instr(messages.text, ':') - 1),
+                             char(9, 10, 11, 12, 13, 32)) != ''
+                SQL
+                db.execute(<<~SQL, [window])
+                  DELETE FROM messages
+                   WHERE protocol = 'meshcore'
+                     AND to_id = '^all'
+                     AND text IS NOT NULL AND text != ''
+                     AND from_id IS NOT NULL
+                     AND #{sender_prefix}
+                     AND EXISTS (
+                       SELECT 1 FROM messages AS earlier
+                        WHERE earlier.protocol = 'meshcore'
+                          AND earlier.text = messages.text
+                          AND earlier.rx_time BETWEEN messages.rx_time - ? AND messages.rx_time
+                          AND earlier.to_id = '^all'
+                          AND earlier.from_id IS NOT NULL
+                          AND earlier.channel_name IS messages.channel_name
+                          AND (earlier.rx_time < messages.rx_time
+                               OR earlier.id < messages.id)
+                     )
+                SQL
                 db.execute(<<~SQL, [window])
                   DELETE FROM messages
                    WHERE protocol = 'meshcore'
                      AND text IS NOT NULL AND text != ''
                      AND from_id IS NOT NULL
+                     AND NOT (to_id IS '^all' AND #{sender_prefix})
                      AND EXISTS (
                        SELECT 1 FROM messages AS earlier
                         WHERE earlier.protocol = 'meshcore'
+                          AND earlier.text = messages.text
+                          AND earlier.rx_time BETWEEN messages.rx_time - ? AND messages.rx_time
                           AND earlier.from_id = messages.from_id
                           AND earlier.to_id IS messages.to_id
                           AND earlier.channel_name IS messages.channel_name
-                          AND earlier.text = messages.text
-                          AND messages.rx_time - earlier.rx_time >= 0
-                          AND messages.rx_time - earlier.rx_time <= ?
                           AND (earlier.rx_time < messages.rx_time
                                OR earlier.id < messages.id)
                      )

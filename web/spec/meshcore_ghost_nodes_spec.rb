@@ -18,6 +18,7 @@ require "spec_helper"
 require "sqlite3"
 require "json"
 require "digest"
+require_relative "support/data_processing_harness"
 
 # MeshCore ghost nodes from chat text (issue #883; SPEC GN1-GN4, ACCEPTANCE
 # GN-A1 - GN-A5).  A MeshCore channel message names its sender only in a
@@ -28,41 +29,9 @@ require "digest"
 # sole copy name-resolved to a retired key credits the live key (GN3), and a
 # POSTed name-derived placeholder records nothing (GN4).
 RSpec.describe "MeshCore ghost nodes from chat text (issue #883)" do
-  # Minimal host mixing in the data-processing pipeline, stubbed like the
-  # harness in data_processing_spec.rb.
-  let(:harness_class) do
-    Class.new do
-      include PotatoMesh::App::DataProcessing
-      include PotatoMesh::App::Helpers
+  include MeshcoreNodeSeeds
 
-      def debug_log(message, **); end
-
-      def warn_log(message, **); end
-
-      def with_busy_retry
-        yield
-      end
-
-      def update_prometheus_metrics(*); end
-
-      def prom_report_ids
-        []
-      end
-
-      def private_mode?
-        false
-      end
-
-      def normalize_node_id(_db, node_ref)
-        parts = canonical_node_parts(node_ref)
-        parts ? parts[0] : nil
-      end
-
-      def resolve_protocol(_db, _ingestor, cache: nil)
-        "meshtastic"
-      end
-    end
-  end
+  let(:harness_class) { DataProcessingHarness.build }
 
   subject(:dp) { harness_class.new }
 
@@ -71,7 +40,9 @@ RSpec.describe "MeshCore ghost nodes from chat text (issue #883)" do
   # An unrostered sender: the ingestor posts her name-derived id.
   let(:erin) { derived_id("Erin") }
 
-  # Fresh database per example.  The production windows are kept (7-day node
+  # Fresh database per example.  Not the shared "with isolated db" context:
+  # that one shortens +four_weeks_seconds+ to a week, and here the production
+  # windows are kept (7-day node
   # list, 28-day keyed-evidence horizon), so "positively stale" means what it
   # means in the field.  The Rack routes open the same stubbed path.
   around do |example|
@@ -104,23 +75,6 @@ RSpec.describe "MeshCore ghost nodes from chat text (issue #883)" do
   # @return [String] canonical +!xxxxxxxx+ id.
   def derived_id(name)
     "!" + Digest::SHA256.hexdigest(name)[0, 8]
-  end
-
-  # Store a keyed MeshCore contact (roster or advert record) last heard at
-  # +heard+; its keyed evidence (+last_advert_heard+) is +heard+ as well.
-  #
-  # @param db [SQLite3::Database] open database handle.
-  # @param node_id [String] canonical node id.
-  # @param name [String] advertised long name.
-  # @param key_byte [String] two hex digits repeated into the public key.
-  # @param heard [Integer] unix seconds of the record.
-  # @return [void]
-  def seed_keyed_node(db, node_id, name, key_byte, heard)
-    dp.upsert_node(db, node_id, {
-      "lastHeard" => heard,
-      "protocol" => "meshcore",
-      "user" => { "longName" => name, "shortName" => key_byte, "role" => "COMPANION", "publicKey" => key_byte * 32 },
-    }, protocol: "meshcore")
   end
 
   # Store a MeshCore row with no keyed evidence and no position: a legacy real

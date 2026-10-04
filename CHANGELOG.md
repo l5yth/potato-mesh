@@ -52,6 +52,8 @@
 * Data: new `DROP_VIA_MQTT=1` drops Meshtastic packets and nodes relayed via MQTT, on the API and UDP transports (#884, SPEC VM1-VM2)
 * Web: the web service no longer receives the unused `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` settings (#784, SPEC CF6)
 * Docs: `CHANNEL_INDEX` documented as the announcement channel, not an ingest filter (#884, SPEC CF7)
+* Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
+* Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
