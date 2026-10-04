@@ -33,6 +33,7 @@
 * Docs: the dual basemap-CDN egress disclosure was restored (SPEC SB6)
 * Docs: `CONTRACTS.md` corrected to match the served `/api/destinations` shape (SPEC DOC5)
 * Docs: `ACCEPTANCE.md` amended for the shipped Reticulum stats scope; README gains a Reticulum section
+* Web: picking a channel from the chat dropdown on mobile no longer fails while live updates arrive (#882)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

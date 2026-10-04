@@ -73,6 +73,89 @@ function applyActivePanelScroll(panel, previous) {
 }
 
 /**
+ * Activation callback of each live channel ``<select>`` (LV8), keyed by the
+ * element. The select outlives the render that created it (#882), so its one
+ * ``change`` listener looks up the latest render's ``setActiveTab`` here
+ * instead of closing over a render whose tab elements are gone.
+ * @type {WeakMap<HTMLSelectElement, function(string): void>}
+ */
+const tabSelectActivators = new WeakMap();
+
+/**
+ * Create the channel dropdown (LV8) with its single ``change`` listener.
+ *
+ * @param {Document} document Active document instance.
+ * @returns {HTMLSelectElement} The new, empty select.
+ */
+function createTabSelect(document) {
+  const tabSelect = document.createElement('select');
+  tabSelect.className = 'chat-tab-select';
+  tabSelect.setAttribute('aria-label', 'Jump to channel');
+  tabSelect.addEventListener('change', () => {
+    const activate = tabSelectActivators.get(tabSelect);
+    if (activate) {
+      activate(tabSelect.value);
+    }
+  });
+  return tabSelect;
+}
+
+/**
+ * Find the tab bar a previous render built, so a re-render can keep its
+ * channel select in the document. A native select whose picker is open loses
+ * the pick when the element is removed (the picker closes, or commits to the
+ * detached element), and at ≤ 900 px it is the only channel control (UX11), so
+ * a passive refresh must never remove it (#882).
+ *
+ * @param {HTMLElement} container Chat container holding the previous render.
+ * @returns {?{ wrapper: HTMLElement, select: HTMLSelectElement, panelWrapper: HTMLElement }}
+ *   The live tab bar, its select and the panel wrapper, or ``null`` when there
+ *   is none to reuse (initial render, emptied tabs, or foreign markup).
+ */
+function findPersistentTabBar(container) {
+  const [wrapper, panelWrapper] = container.children || [];
+  const select = wrapper && wrapper.children ? wrapper.children[3] : null;
+  // Only a select this module created and activated counts, and swapping the
+  // rebuilt parts in needs ``replaceChild`` (absent from some test mocks).
+  if (!panelWrapper || !tabSelectActivators.has(select) || typeof container.replaceChild !== 'function') {
+    return null;
+  }
+  return { wrapper, select, panelWrapper };
+}
+
+/**
+ * Bring the select's options in line with the tab list without touching the
+ * select itself. When the id sequence is unchanged only labels that differ
+ * (message counts) are rewritten, on the same option nodes; otherwise the
+ * options, never the select, are rebuilt.
+ *
+ * @param {Document} document Active document instance.
+ * @param {HTMLSelectElement} select Channel select kept across renders.
+ * @param {Array<{ id: string, label: string }>} entries Wanted options, in tab order.
+ * @returns {void}
+ */
+function syncTabSelectOptions(document, select, entries) {
+  const options = select.children;
+  const sameIds =
+    options.length === entries.length && entries.every((entry, index) => options[index].value === entry.id);
+  if (sameIds) {
+    entries.forEach((entry, index) => {
+      if (options[index].textContent !== entry.label) {
+        options[index].textContent = entry.label;
+      }
+    });
+    return;
+  }
+  const rebuilt = entries.map(entry => {
+    const option = document.createElement('option');
+    option.value = entry.id;
+    option.textContent = entry.label;
+    return option;
+  });
+  select.replaceChildren(...rebuilt);
+}
+
+/**
  * Render an accessible tab interface within ``container``.
  *
  * When a tab carries an ``iconSrc`` URL the icon is rendered as an
@@ -85,6 +168,11 @@ function applyActivePanelScroll(panel, previous) {
  * rendered on either side of the list.  They are hidden via the
  * {@code hidden} attribute while the corresponding scroll direction is
  * not available.
+ *
+ * The tab bar wrapper and its channel ``<select>`` (LV8) are built on the
+ * first call and stay in the document on later calls (#882): a re-render
+ * swaps a freshly built tab strip, scroll buttons and panels in around the
+ * select, so a native picker the user has open survives a live refresh.
  *
  * @param {{
  *   document: Document,
@@ -117,10 +205,12 @@ export function renderChatTabs({
   }
 
   const fragment = createFragment(document);
+  // Reuse the live tab bar when a previous render left one (#882).
+  const persistentTabBar = findPersistentTabBar(container);
 
   // Wrapper holds the scroll buttons + the tab list so the border-bottom
   // spans the full width including the arrow buttons.
-  const tabListWrapper = document.createElement('div');
+  const tabListWrapper = persistentTabBar ? persistentTabBar.wrapper : document.createElement('div');
   tabListWrapper.className = 'chat-tablist-wrapper';
 
   const prevBtn = document.createElement('button');
@@ -142,28 +232,31 @@ export function renderChatTabs({
   // Channel dropdown selector (LV8): a native <select> listing every tab so
   // the user can jump to a channel regardless of the horizontal scroll
   // position (the native control supplies the downward-triangle affordance).
-  const tabSelect = document.createElement('select');
-  tabSelect.className = 'chat-tab-select';
-  tabSelect.setAttribute('aria-label', 'Jump to channel');
+  // Built once, then reused, so it never leaves the document (#882).
+  const tabSelect = persistentTabBar ? persistentTabBar.select : createTabSelect(document);
+  const selectOptions = [];
 
   const tabList = document.createElement('div');
   tabList.className = 'chat-tablist';
   tabList.setAttribute('role', 'tablist');
 
-  tabListWrapper.appendChild(prevBtn);
-  tabListWrapper.appendChild(tabList);
-  tabListWrapper.appendChild(nextBtn);
-  tabListWrapper.appendChild(tabSelect);
-
   const panelWrapper = document.createElement('div');
   panelWrapper.className = 'chat-tabpanels';
 
-  fragment.appendChild(tabListWrapper);
-  fragment.appendChild(panelWrapper);
+  if (!persistentTabBar) {
+    // Initial render: assemble the bar in the fragment. A re-render swaps the
+    // rebuilt parts into the live bar instead (see below).
+    tabListWrapper.appendChild(prevBtn);
+    tabListWrapper.appendChild(tabList);
+    tabListWrapper.appendChild(nextBtn);
+    tabListWrapper.appendChild(tabSelect);
+    fragment.appendChild(tabListWrapper);
+    fragment.appendChild(panelWrapper);
+  }
 
   const tabElements = [];
   const existingActive = container.dataset?.activeTab || null;
-  // Preserve the channel-tab list's horizontal scroll across the full-subtree
+  // Preserve the channel-tab list's horizontal scroll across the tab-list
   // rebuild below (item 5): without this, every live refresh resets scrollLeft
   // to 0 and yanks the user back to the first tab. The previous render's tab
   // list is the second child of the first wrapper (see the structure built
@@ -234,10 +327,7 @@ export function renderChatTabs({
 
     tabList.appendChild(button);
     panelWrapper.appendChild(panel);
-    const option = document.createElement('option');
-    option.value = uniqueId;
-    option.textContent = tab.label || uniqueId;
-    tabSelect.appendChild(option);
+    selectOptions.push({ id: uniqueId, label: tab.label || uniqueId });
     tabElements.push({ id: uniqueId, button, panel });
   }
 
@@ -261,12 +351,21 @@ export function renderChatTabs({
     activeTabId = tabElements[0].id;
   }
 
-  if (typeof container.replaceChildren === 'function') {
+  if (persistentTabBar) {
+    // Swap the rebuilt strip, arrows and panels into the live bar around the
+    // select, which never leaves the document (#882).
+    const [oldPrevBtn, oldTabList, oldNextBtn] = tabListWrapper.children;
+    tabListWrapper.replaceChild(prevBtn, oldPrevBtn);
+    tabListWrapper.replaceChild(tabList, oldTabList);
+    tabListWrapper.replaceChild(nextBtn, oldNextBtn);
+    container.replaceChild(panelWrapper, persistentTabBar.panelWrapper);
+  } else if (typeof container.replaceChildren === 'function') {
     container.replaceChildren(fragment);
   } else {
     container.innerHTML = '';
     container.appendChild(fragment);
   }
+  syncTabSelectOptions(document, tabSelect, selectOptions);
 
   /**
    * Refresh the hidden state of the scroll arrow buttons based on the
@@ -287,8 +386,9 @@ export function renderChatTabs({
   }
   if (typeof globalThis !== 'undefined' && typeof globalThis.ResizeObserver === 'function') {
     // The observer is intentionally not disconnected: renderChatTabs replaces
-    // the entire DOM subtree on each call, so the previous tabList element is
-    // detached and the observer will not fire again after that point.
+    // the tab list on each call (only the bar wrapper and its select persist,
+    // #882), so the previous tabList element is detached and the observer will
+    // not fire again after that point.
     const ro = new globalThis.ResizeObserver(updateArrows);
     ro.observe(tabList);
   }
@@ -316,7 +416,10 @@ export function renderChatTabs({
         entry.panel.hidden = false;
         matched = true;
         container.dataset.activeTab = newId;
-        tabSelect.value = newId;
+        // Write only on a change, so an idle re-render leaves an open picker alone (#882).
+        if (tabSelect.value !== newId) {
+          tabSelect.value = newId;
+        }
         // An explicit tab switch (click / dropdown) jumps to the newest entry and
         // scrolls the chosen tab into view. A passive re-render does NEITHER: the
         // reader's vertical scroll is restored by the caller below, and the
@@ -372,10 +475,9 @@ export function renderChatTabs({
     });
   }
 
-  // Jump to the chosen channel when the dropdown selection changes (LV8).
-  tabSelect.addEventListener('change', () => {
-    setActiveTab(tabSelect.value, { scrollActiveIntoView: true });
-  });
+  // Jump to the chosen channel when the dropdown selection changes (LV8). The
+  // select's one listener was bound at creation; point it at this render (#882).
+  tabSelectActivators.set(tabSelect, id => setActiveTab(id, { scrollActiveIntoView: true }));
 
   return container.dataset.activeTab || null;
 }
@@ -404,5 +506,8 @@ export const __test__ = {
   createFragment,
   SCROLL_PIN_TOLERANCE_PX,
   capturePreviousActivePanelScroll,
-  applyActivePanelScroll
+  applyActivePanelScroll,
+  createTabSelect,
+  findPersistentTabBar,
+  syncTabSelectOptions
 };
