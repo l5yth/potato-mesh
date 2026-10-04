@@ -23,6 +23,9 @@ on:
       - '.github/**'
       - 'data/**'
       - 'tests/**'
+      # tests/test_dockerfile_sync.py compares these two files.
+      - 'Dockerfile'
+      - 'web/Dockerfile'
 
 permissions:
   contents: read
