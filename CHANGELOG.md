@@ -9,6 +9,9 @@
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
+* Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
+* Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
+* CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
