@@ -10,6 +10,11 @@
 
 ### Fixes
 * Matrix: the bridge crate declares its crates.io package metadata, and its README screenshot no longer links outside the crate (#879)
+* Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
+* Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
+* CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
+* Docker: the root `Dockerfile` builds the same image as `web/Dockerfile`, including Chromium for Open Graph previews (skip it with `--build-arg WITH_OG_IMAGE=0`), the custom pages directory, and the `APP_VERSION` build arg (SPEC DF1)
+* Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
@@ -34,6 +39,7 @@
 * Docs: the dual basemap-CDN egress disclosure was restored (SPEC SB6)
 * Docs: `CONTRACTS.md` corrected to match the served `/api/destinations` shape (SPEC DOC5)
 * Docs: `ACCEPTANCE.md` amended for the shipped Reticulum stats scope; README gains a Reticulum section
+* Web: picking a channel from the chat dropdown on mobile no longer fails while live updates arrive (#882)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
