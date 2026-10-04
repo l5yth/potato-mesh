@@ -220,6 +220,12 @@ module PotatoMesh
         resolved_from_id = from_id
 
         with_busy_retry do
+          # Each attempt starts from this copy's own id and sender, so a retry
+          # after SQLite3::BusyException re-derives the survivor instead of
+          # inheriting the previous attempt's choice.
+          target_id = msg_id
+          resolved_from_id = from_id
+
           # Meshcore-only content-level dedup (issue #756).  The deterministic
           # message id (``_derive_message_id`` in the Python ingestor) hashes
           # ``sender_timestamp`` among other fields, but the MeshCore library
@@ -236,9 +242,10 @@ module PotatoMesh
           # Known race: the SELECT and the downstream INSERT do not share a
           # transaction, so two Puma threads carrying the same content with
           # different ids can both pass the pre-check and both insert.  The
-          # deploy-time backfill sweeps the survivors; wrapping the pair in
-          # ``db.transaction(:immediate)`` is a future tightening if the race
-          # is ever observed in production.
+          # survivors are not cleaned up retroactively, since the backfill in
+          # +Database#ensure_schema_upgrades+ is one-shot (``CONTRACTS.md``);
+          # wrapping the pair in ``db.transaction(:immediate)`` is a future
+          # tightening if the race is ever observed in production.
           if protocol == "meshcore" && from_id && channel_index && text && !text.to_s.empty?
             # Match on the sender-stable ``channel_name`` (NULL-safe ``IS ?``)
             # rather than the per-receiver ``channel`` slot index.  Two
@@ -249,38 +256,67 @@ module PotatoMesh
             # carried in the message text/contact roster identically across
             # receivers, so it is the stable discriminator.  ``to_id`` is also
             # ``IS ?`` (rare meshcore nil fallback).
-            duplicate_id = db.get_first_value(
-              <<~SQL,
-              SELECT id FROM messages
-                WHERE protocol = 'meshcore'
-                  AND from_id = ?
-                  AND to_id IS ?
-                  AND channel_name IS ?
-                  AND text = ?
-                  AND rx_time BETWEEN ? AND ?
-                  AND id != ?
-                LIMIT 1
-            SQL
-              [from_id, to_id, channel_name, text,
-               rx_time - MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS,
-               rx_time + MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS, msg_id],
-            )
+            #
+            # A channel broadcast names its sender in the text ("Name: body"),
+            # so ``text =`` already pins the claimed sender.  ``from_id`` is
+            # each ingestor's own roster resolution of that name (the pubkey id,
+            # or the name-derived synthetic id when the roster lacks the
+            # sender; SPEC MR3), so it differs between copies of one
+            # transmission and must not split them (#880).  Direct messages
+            # carry no sender prefix and keep the ``from_id`` leg.
+            #
+            # Both forms constrain ``text = ?`` and an ``rx_time`` window, so
+            # they search +idx_messages_meshcore_text+ (SPEC MX6) and come back
+            # in ``rx_time, id`` order without a sort, however many channel
+            # rows the table holds.
+            rx_window = [rx_time - MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS, rx_time + MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS]
+            duplicate_id = if to_id == "^all" && parse_meshcore_sender_name(text)
+                db.get_first_value(<<~SQL, [channel_name, text, *rx_window, msg_id])
+                  SELECT id FROM messages
+                    WHERE protocol = 'meshcore'
+                      AND to_id = '^all'
+                      AND from_id IS NOT NULL
+                      AND channel_name IS ?
+                      AND text = ?
+                      AND rx_time BETWEEN ? AND ?
+                      AND id != ?
+                    ORDER BY rx_time, id
+                    LIMIT 1
+                SQL
+              else
+                db.get_first_value(<<~SQL, [from_id, to_id, channel_name, text, *rx_window, msg_id])
+                  SELECT id FROM messages
+                    WHERE protocol = 'meshcore'
+                      AND from_id = ?
+                      AND to_id IS ?
+                      AND channel_name IS ?
+                      AND text = ?
+                      AND rx_time BETWEEN ? AND ?
+                      AND id != ?
+                    ORDER BY rx_time, id
+                    LIMIT 1
+                SQL
+              end
             if duplicate_id
               debug_log(
-                "Skipped meshcore message duplicate",
+                "Collapsed meshcore message duplicate onto the stored copy",
                 context: "data_processing.insert_message",
                 new_id: msg_id,
                 existing_id: duplicate_id,
                 from_id: from_id,
                 channel: channel_index,
               )
-              return
+              # Apply this copy to the earliest matching row exactly as an id
+              # hit: the update path below ranks the two senders (SPEC MR3),
+              # fills columns the stored copy lacks, and credits the reception
+              # to the resolved winner, as if both ingestors had derived one id.
+              target_id = duplicate_id
             end
           end
 
           existing = db.get_first_row(
             "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol FROM messages WHERE id = ?",
-            [msg_id],
+            [target_id],
           )
           if existing
             updates = {}
@@ -407,7 +443,7 @@ module PotatoMesh
 
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
-              db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
+              db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [target_id])
             end
           else
             PotatoMesh::App::Prometheus::MESSAGES_TOTAL.increment

@@ -42,3 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_to_id     ON messages(to_id);
 CREATE INDEX IF NOT EXISTS idx_messages_channel   ON messages(channel);
 CREATE INDEX IF NOT EXISTS idx_messages_portnum   ON messages(portnum);
 CREATE INDEX IF NOT EXISTS idx_messages_reply_id  ON messages(reply_id);
+-- MeshCore content dedup (#880): the insert-time duplicate lookups and the
+-- one-shot purge search this index on text equality plus an rx_time window.
+-- ensure_schema_upgrades creates the same index on upgraded databases.
+CREATE INDEX IF NOT EXISTS idx_messages_meshcore_text ON messages(text, rx_time) WHERE protocol = 'meshcore';

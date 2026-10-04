@@ -38,7 +38,9 @@ module PotatoMesh
       # pairs and 28% of all meshcore rows were duplicates.  300 s covers
       # ~99.5% of the observed skew.  **Accepted tradeoff:** a sender repeating
       # the *identical* text to the same channel within 300 s collapses to one
-      # row — chosen over the 28% duplicate rate.  (The one-shot purge in
+      # row, and since channel broadcasts match without ``from_id`` (#880) so
+      # do two devices sharing a display name that send identical text there
+      # — chosen over the 28% duplicate rate.  (The one-shot purge in
       # +PotatoMesh::App::Database+ applies this transitively, so a chain of such
       # repeats spanning longer than 300 s also collapses — a deliberately
       # aggressive one-time cleanup; see that file's note.)  See issues
