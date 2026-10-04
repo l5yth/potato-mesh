@@ -712,7 +712,7 @@ class TestUdpTransportDefaults:
             monkeypatch.delenv(k, raising=False)
         importlib.reload(config)
         assert config.PRIMARY_CHANNEL_KEY == "AQ=="
-        assert config.MESH_UDP_GROUP == "224.0.0.69"
+        assert config.MESH_UDP_GROUP == "239.0.0.69,224.0.0.69"
         assert config.MESH_UDP_PORT == 4403
         assert config.INGESTOR_NODE_ID is None
 
@@ -746,7 +746,7 @@ class TestUdpTransportDefaults:
 
         monkeypatch.setenv("MESH_UDP_GROUP", "   ")
         importlib.reload(config)
-        assert config.MESH_UDP_GROUP == "224.0.0.69"
+        assert config.MESH_UDP_GROUP == "239.0.0.69,224.0.0.69"
 
     def test_mesh_udp_port_custom_value(self, monkeypatch):
         """A custom MESH_UDP_PORT is parsed to an int."""

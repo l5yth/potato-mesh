@@ -419,8 +419,8 @@
 
               meshUdpGroup = lib.mkOption {
                 type = lib.types.str;
-                default = "224.0.0.69";
-                description = "Multicast group for Meshtastic \"Mesh via UDP\"";
+                default = "239.0.0.69,224.0.0.69";
+                description = "Comma-separated multicast groups for Meshtastic \"Mesh via UDP\". The default listens on both; set one address to listen on that group only";
               };
 
               meshUdpPort = lib.mkOption {

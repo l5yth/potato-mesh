@@ -19,21 +19,26 @@ Coverage strategy mirrors ``tests/test_meshtastic_udp_decode_unit.py``:
    ``tests/fixtures/mesh_udp``) through :meth:`MeshtasticUdpProvider._handle_datagram`
    to prove the primary/private split works end-to-end against real traffic.
 2. **Synthetic tests** exercise every remaining line/branch (parse failures,
-   the no-``decoded`` drop path, the receive loop's timeout/OSError/dispatch
-   branches, and the lifecycle of :class:`_UdpInterface`) with fakes so no
-   real socket or long-lived thread is ever involved.
+   the no-``decoded`` drop path, the receive loop's wait/timeout/OSError/
+   dispatch branches, and the lifecycle of :class:`_UdpInterface`) with fakes:
+   a scripted ``select`` drives the receive loop synchronously, with no thread.
+3. **Connect tests** join every group over local ``AF_UNIX`` socketpairs, so
+   the real ``select`` waits on real file descriptors and one test runs the
+   real reader thread end-to-end.
 
-No test opens a real network socket or a real ``socket.timeout``-driven
-sleep loop of more than a few milliseconds: every fake socket either raises
-immediately or sets the interface's stop flag as a side effect of being
-called, so a hung test is not possible.
+No test opens a real network socket or a wait of more than a few
+milliseconds: the scripted ``select`` sets the interface's stop flag once its
+script is spent, and the real-thread test shortens the loop's poll interval,
+so a hung test is not possible.
 """
 
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import os
+import select
 import socket
 import sys
 import threading
@@ -313,103 +318,190 @@ class TestHandleDatagramDropPaths:
 # ---------------------------------------------------------------------------
 
 
+class _ScriptedSock:
+    """Fake group socket replaying scripted ``recvfrom`` results.
+
+    Each positional entry is the bytes of one datagram to return or an
+    exception instance to raise, consumed in order. ``close()`` records the
+    call and raises *close_error* when one is given.
+    """
+
+    def __init__(self, *script, close_error: BaseException | None = None):
+        """Queue *script* for ``recvfrom`` and remember *close_error*."""
+        self._script = list(script)
+        self._close_error = close_error
+        self.closed = False
+
+    def recvfrom(self, bufsize):
+        """Return the next scripted datagram, or raise the next scripted error."""
+        step = self._script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step, ("192.0.2.1", 4403)
+
+    def close(self):
+        """Record the close, raising the configured error if there is one."""
+        self.closed = True
+        if self._close_error is not None:
+            raise self._close_error
+
+
+class _ScriptedSelect:
+    """Stand-in for the :mod:`select` module replaying scripted readiness.
+
+    Installed as ``udp_mod.select``, so only the provider sees it. Each wait
+    consumes one step: the list of sockets to report readable, or an
+    exception instance to raise. Once the script is spent it sets the
+    interface's stop flag and reports nothing ready, so a loop under test
+    always terminates.
+    """
+
+    def __init__(self, iface, *script):
+        """Queue *script* for the waits of the loop serving *iface*."""
+        self._iface = iface
+        self._script = list(script)
+        self.waits: list[tuple[list, float]] = []
+
+    def select(self, rlist, wlist, xlist, timeout):
+        """Record the wait, then return (or raise) the next scripted step."""
+        self.waits.append((list(rlist), timeout))
+        if not self._script:
+            self._iface._stop.set()
+            return [], [], []
+        step = self._script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step, [], []
+
+
+@pytest.fixture
+def run_loop(monkeypatch):
+    """Run ``_recv_loop`` synchronously over scripted sockets and readiness.
+
+    Returns ``run(socks, *script, handle=None)``: it builds a connected
+    interface over *socks*, installs a :class:`_ScriptedSelect` replaying
+    *script*, replaces ``_handle_datagram`` with *handle* (by default, record
+    the raw bytes), runs the loop to completion, and returns
+    ``(iface, selector, handled)``.
+    """
+
+    def run(socks, *script, handle=None):
+        """Run the loop to completion over *socks*, replaying *script*."""
+        iface = _UdpInterface()
+        iface._socks = list(socks)
+        iface.isConnected.set()
+        selector = _ScriptedSelect(iface, *script)
+        monkeypatch.setattr(udp_mod, "select", selector)
+        handled: list[bytes] = []
+        provider = MeshtasticUdpProvider()
+        monkeypatch.setattr(
+            provider,
+            "_handle_datagram",
+            handle or (lambda raw, _iface: handled.append(raw)),
+        )
+        provider._recv_loop(iface)
+        return iface, selector, handled
+
+    return run
+
+
 class TestRecvLoop:
     """Directly exercises ``_recv_loop``'s branches without a real thread."""
 
-    def test_timeout_then_stop(self):
-        """A socket.timeout is swallowed (continue) and the loop exits on stop."""
-        iface = _UdpInterface()
+    def test_idle_wait_rechecks_stop_flag(self, run_loop):
+        """An empty wait (the poll timeout) loops back to the stop-flag check."""
+        sock = _ScriptedSock()
+        iface, selector, handled = run_loop([sock], [])
 
-        calls = {"n": 0}
-
-        class FakeSock:
-            def recvfrom(self, bufsize):
-                calls["n"] += 1
-                if calls["n"] >= 2:
-                    iface._stop.set()
-                raise socket.timeout()
-
-        iface._sock = FakeSock()
-        provider = MeshtasticUdpProvider()
-        provider._recv_loop(iface)
-
-        assert calls["n"] == 2
-
-    def test_oserror_breaks_and_clears_connected(self):
-        """An OSError from recvfrom clears isConnected and exits the loop."""
-        iface = _UdpInterface()
-        iface.isConnected.set()
-
-        class FakeSock:
-            def recvfrom(self, bufsize):
-                raise OSError("socket closed")
-
-        iface._sock = FakeSock()
-        provider = MeshtasticUdpProvider()
-        provider._recv_loop(iface)
-
+        assert selector.waits == [([sock], udp_mod._RECV_POLL_SECS)] * 2
+        assert handled == []
+        # Loop exit clears isConnected so a dead reader is detectable.
         assert not iface.isConnected.is_set()
 
-    def test_dispatches_datagram_then_stops(self, monkeypatch):
-        """A successfully received datagram is routed through _handle_datagram."""
-        iface = _UdpInterface()
-        handled: list[bytes] = []
+    def test_dispatches_datagrams_from_either_group_socket(self, run_loop):
+        """One thread serves every group: whichever socket is ready is read.
 
-        mp = mesh_pb2.MeshPacket()
-        mp.id = 9
-        setattr(mp, "from", 9)
-        mp.decoded.portnum = 1
-        raw = mp.SerializeToString()
-
-        calls = {"n": 0}
-
-        class FakeSock:
-            def recvfrom(self, bufsize):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    return raw, ("192.0.2.1", 4403)
-                iface._stop.set()
-                raise socket.timeout()
-
-        iface._sock = FakeSock()
-        provider = MeshtasticUdpProvider()
-        monkeypatch.setattr(
-            provider, "_handle_datagram", lambda r, i: handled.append(r)
+        The first wait reports only the second group's socket ready, the next
+        reports both, and every wait covers both sockets.
+        """
+        new_group = _ScriptedSock(b"from-239")
+        old_group = _ScriptedSock(b"from-224", b"again-224")
+        _iface, selector, handled = run_loop(
+            [new_group, old_group], [old_group], [new_group, old_group]
         )
-        provider._recv_loop(iface)
 
-        assert handled == [raw]
+        assert handled == [b"from-224", b"from-239", b"again-224"]
+        assert all(rlist == [new_group, old_group] for rlist, _ in selector.waits)
 
-    def test_handle_datagram_exception_is_swallowed_loop_survives(self, monkeypatch):
+    def test_ready_socket_that_times_out_is_skipped(self, run_loop):
+        """Readable-then-empty skips only that socket; the loop carries on."""
+        quiet = _ScriptedSock(socket.timeout())
+        busy = _ScriptedSock(b"datagram")
+        _iface, selector, handled = run_loop([quiet, busy], [quiet, busy])
+
+        assert handled == [b"datagram"]
+        assert len(selector.waits) == 2
+
+    @pytest.mark.parametrize("error", [OSError("bad fd"), ValueError("fd -1")])
+    def test_wait_error_ends_loop_and_clears_connected(self, run_loop, error):
+        """A socket closed under the wait ends the loop and marks it dead."""
+        iface, selector, _handled = run_loop([_ScriptedSock()], error)
+
+        assert len(selector.waits) == 1
+        assert not iface.isConnected.is_set()
+
+    def test_recv_oserror_ends_loop_and_clears_connected(self, run_loop):
+        """An OSError from recvfrom (socket closed after the wait) ends the loop."""
+        dead = _ScriptedSock(OSError("socket closed"))
+        iface, selector, handled = run_loop([dead], [dead])
+
+        assert len(selector.waits) == 1
+        assert handled == []
+        assert not iface.isConnected.is_set()
+
+    def test_handle_datagram_exception_is_swallowed_loop_survives(self, run_loop):
         """An exception from _handle_datagram is caught; the loop keeps running.
 
         Regression for the DoS where one bad datagram propagated out of
         _handle_datagram and killed the reader thread. Here _handle_datagram
-        raises on the first datagram; the loop must continue to the second and
+        raises on the first datagram; the loop must go on to the second and
         exit cleanly on the stop flag rather than propagating.
         """
+        seen: list[bytes] = []
+
+        def boom_once(raw, _iface):
+            """Record *raw*, raising for the ``b"bad"`` datagram only."""
+            seen.append(raw)
+            if raw == b"bad":
+                raise ValueError("simulated bad datagram")
+
+        sock = _ScriptedSock(b"bad", b"good")
+        iface, _selector, _handled = run_loop(
+            [sock], [sock], [sock], handle=boom_once
+        )  # must not raise
+
+        assert seen == [b"bad", b"good"]
+        assert not iface.isConnected.is_set()
+
+    def test_real_select_rejects_a_closed_socket_and_the_loop_ends(self):
+        """The real ``select`` raises ValueError on a closed socket; the loop ends.
+
+        Pins the premise of the ValueError branch with no script: a closed
+        socket's ``fileno()`` is -1, which ``select`` rejects. That is the race
+        where :meth:`_UdpInterface.close` runs between the stop-flag check and
+        the wait.
+        """
+        receiver, sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        sender.close()
+        receiver.close()
+        with pytest.raises(ValueError):
+            select.select([receiver], [], [], 0)
+
         iface = _UdpInterface()
+        iface._socks = [receiver]
         iface.isConnected.set()
-        calls = {"n": 0}
+        MeshtasticUdpProvider()._recv_loop(iface)  # must return, not raise
 
-        class FakeSock:
-            def recvfrom(self, bufsize):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    return b"anything", ("192.0.2.1", 4403)
-                iface._stop.set()
-                raise socket.timeout()
-
-        def boom(_raw, _iface):
-            raise ValueError("simulated bad datagram")
-
-        iface._sock = FakeSock()
-        provider = MeshtasticUdpProvider()
-        monkeypatch.setattr(provider, "_handle_datagram", boom)
-        provider._recv_loop(iface)  # must not raise
-
-        assert calls["n"] == 2
-        # Loop exit clears isConnected so a dead reader is detectable.
         assert not iface.isConnected.is_set()
 
 
@@ -422,33 +514,33 @@ class TestUdpInterfaceLifecycle:
     """Tests for :class:`_UdpInterface`."""
 
     def test_init_defaults(self):
-        """A fresh interface has no nodes, is not connected, and has no thread/sock."""
+        """A fresh interface has no nodes, sockets or thread, and is not connected."""
         iface = _UdpInterface()
         assert iface.nodes == {}
         assert isinstance(iface.isConnected, threading.Event)
         assert not iface.isConnected.is_set()
-        assert iface._sock is None
+        assert iface._socks == []
         assert iface._thread is None
         assert not iface._stop.is_set()
 
     def test_close_with_no_sock_or_thread_is_safe(self):
-        """close() must not raise when _sock and _thread were never set."""
+        """close() must not raise when no socket was opened and no thread started."""
         iface = _UdpInterface()
         iface.isConnected.set()
         iface.close()
         assert iface._stop.is_set()
         assert not iface.isConnected.is_set()
 
-    def test_close_closes_socket_and_swallows_oserror(self):
-        """close() swallows an OSError raised by the socket's close()."""
+    def test_close_closes_every_socket_and_swallows_oserror(self):
+        """close() closes each group socket, even after one close() raises."""
         iface = _UdpInterface()
+        failing = _ScriptedSock(close_error=OSError("already closed"))
+        healthy = _ScriptedSock()
+        iface._socks = [failing, healthy]
 
-        class RaisingSock:
-            def close(self):
-                raise OSError("already closed")
-
-        iface._sock = RaisingSock()
         iface.close()  # must not raise
+
+        assert failing.closed and healthy.closed
         assert iface._stop.is_set()
 
     def test_close_joins_thread(self):
@@ -473,20 +565,106 @@ class TestUdpInterfaceLifecycle:
 
 
 # ---------------------------------------------------------------------------
-# MeshtasticUdpProvider.connect (full lifecycle through a fake socket)
+# MeshtasticUdpProvider.connect (group joins over local socketpairs)
 # ---------------------------------------------------------------------------
 
 
-class TestConnectLifecycle:
-    """Exercises connect() end-to-end with a fake socket and a real thread."""
+class _GroupSockets:
+    """Stand-in for ``open_multicast_socket`` backed by local socketpairs.
 
-    def test_connect_returns_triple_and_receives_then_closes(self, monkeypatch):
-        """connect() starts the receive thread; close() stops it cleanly."""
+    Each join records ``(group, port)`` and returns the receiving end of a
+    fresh ``AF_UNIX`` datagram socketpair: a real file descriptor the real
+    ``select`` can wait on, with no network socket involved. The sending end
+    stays here so a test can deliver a datagram to one group's socket.
+    """
+
+    def __init__(self) -> None:
+        """Start with no joins recorded and no group set to fail."""
+        self.joined: list[tuple[str, int]] = []
+        self.fail_on: str | None = None
+        self._receivers: dict[str, socket.socket] = {}
+        self._senders: dict[str, socket.socket] = {}
+
+    def open(self, group: str, port: int) -> socket.socket:
+        """Join *group* on *port*, or raise ``OSError`` when it is :attr:`fail_on`."""
+        if group == self.fail_on:
+            raise OSError(f"simulated join failure for {group}")
+        self.joined.append((group, port))
+        receiver, sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        receiver.settimeout(1.0)  # as open_multicast_socket does
+        self._receivers[group] = receiver
+        self._senders[group] = sender
+        return receiver
+
+    def send(self, group: str, payload: bytes) -> None:
+        """Deliver *payload* to the provider's socket for *group*."""
+        self._senders[group].send(payload)
+
+    def is_closed(self, group: str) -> bool:
+        """Return whether the provider's socket for *group* has been closed."""
+        return self._receivers[group].fileno() == -1
+
+    def close_all(self) -> None:
+        """Close both ends of every socketpair handed out."""
+        for sock in (*self._receivers.values(), *self._senders.values()):
+            sock.close()
+
+
+@pytest.fixture
+def group_sockets(monkeypatch):
+    """Route the provider's group joins to a fresh :class:`_GroupSockets`."""
+    sockets = _GroupSockets()
+    monkeypatch.setattr(udp_mod, "open_multicast_socket", sockets.open)
+    yield sockets
+    sockets.close_all()
+
+
+@pytest.fixture
+def idle_reader(monkeypatch):
+    """Make the receive thread a no-op, for tests that only inspect connect()."""
+    monkeypatch.setattr(MeshtasticUdpProvider, "_recv_loop", lambda self, iface: None)
+
+
+@pytest.fixture
+def shipped_config(monkeypatch):
+    """Reload ``config`` with the UDP group and port unset, as shipped.
+
+    Reloads again on teardown. That reload runs before ``monkeypatch``
+    restores the variables, so it yields the shipped defaults, not the
+    caller's environment; a later test that needs environment-derived values
+    must reload ``config`` itself.
+    """
+    monkeypatch.delenv("MESH_UDP_GROUP", raising=False)
+    monkeypatch.delenv("MESH_UDP_PORT", raising=False)
+    yield importlib.reload(udp_mod.config)
+    importlib.reload(udp_mod.config)
+
+
+class TestConnectLifecycle:
+    """Exercises connect() end-to-end over local sockets and a real thread."""
+
+    def test_connect_returns_triple_and_receives_then_closes(
+        self, monkeypatch, group_sockets
+    ):
+        """One reader thread serves every group; close() releases them all.
+
+        The real captured primary datagram arrives on one group's socket and
+        a synthetic primary packet on the other's; both must reach on_receive.
+        """
         primary_raw, _private_raw = _load_fixture_raw()
+        captured = mesh_pb2.MeshPacket()
+        captured.ParseFromString(primary_raw)
+        synthetic_raw = _encrypt_packet(
+            udp_decode.channel_hash("MediumFast", "AQ=="), packet_id=0x5151
+        )
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_KEY", "AQ==")
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_NAME", "MediumFast")
-        monkeypatch.setattr(udp_mod.config, "MESH_UDP_GROUP", "224.0.0.69")
+        monkeypatch.setattr(
+            udp_mod.config, "MESH_UDP_GROUPS", ("239.0.0.69", "224.0.0.69")
+        )
         monkeypatch.setattr(udp_mod.config, "MESH_UDP_PORT", 4403)
+        # A short poll keeps close() from idling a full second in select.
+        monkeypatch.setattr(udp_mod, "_RECV_POLL_SECS", 0.01)
 
         received: list[dict] = []
         monkeypatch.setattr(
@@ -495,45 +673,76 @@ class TestConnectLifecycle:
             lambda packet, interface: received.append(packet),
         )
 
-        class FakeSock:
-            def __init__(self):
-                self._served = False
-                self.closed = False
-
-            def recvfrom(self, bufsize):
-                if not self._served:
-                    self._served = True
-                    return primary_raw, ("192.0.2.1", 4403)
-                # Small sleep keeps the background thread from busy-spinning
-                # at full CPU while the test asserts and calls close().
-                time.sleep(0.005)
-                raise socket.timeout()
-
-            def close(self):
-                self.closed = True
-
-        fake_sock = FakeSock()
-        monkeypatch.setattr(
-            udp_mod, "open_multicast_socket", lambda group, port: fake_sock
-        )
-
         provider = MeshtasticUdpProvider()
         iface, target, next_candidate = provider.connect(active_candidate="ignored")
 
-        assert target == "udp://224.0.0.69:4403"
+        assert target == "udp://239.0.0.69,224.0.0.69:4403"
         assert next_candidate == "ignored"
         assert iface.isConnected.is_set()
 
+        group_sockets.send("224.0.0.69", primary_raw)
+        group_sockets.send("239.0.0.69", synthetic_raw)
         deadline = time.monotonic() + 2.0
-        while not received and time.monotonic() < deadline:
+        while len(received) < 2 and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert len(received) == 1
+        assert sorted(packet["id"] for packet in received) == sorted(
+            [captured.id, 0x5151]
+        )
 
         iface.close()
 
         assert not iface._thread.is_alive()
         assert not iface.isConnected.is_set()
-        assert fake_sock.closed
+        assert group_sockets.is_closed("239.0.0.69")
+        assert group_sockets.is_closed("224.0.0.69")
+
+
+@pytest.mark.usefixtures("idle_reader")
+class TestConnectGroups:
+    """connect() opens one group-bound socket per configured group."""
+
+    def test_shipped_default_joins_both_groups(self, shipped_config, group_sockets):
+        """Unconfigured, both Meshtastic groups are joined (issue #903).
+
+        Firmware 2.8 and later sends to 239.0.0.69 and earlier firmware to
+        224.0.0.69, so a listener on only one group hears nothing from the
+        other firmware line.
+        """
+        iface, target, _next = MeshtasticUdpProvider().connect(active_candidate=None)
+        iface.close()
+
+        assert group_sockets.joined == [("239.0.0.69", 4403), ("224.0.0.69", 4403)]
+        assert target == "udp://239.0.0.69,224.0.0.69:4403"
+
+    def test_one_configured_group_opens_one_socket(self, monkeypatch, group_sockets):
+        """A single configured group listens on that group only."""
+        monkeypatch.setattr(udp_mod.config, "MESH_UDP_GROUPS", ("224.0.0.69",))
+        monkeypatch.setattr(udp_mod.config, "MESH_UDP_PORT", 4403)
+
+        iface, target, _next = MeshtasticUdpProvider().connect(active_candidate=None)
+        iface.close()
+
+        assert group_sockets.joined == [("224.0.0.69", 4403)]
+        assert target == "udp://224.0.0.69:4403"
+
+    def test_failed_join_closes_joined_sockets_and_propagates(
+        self, monkeypatch, group_sockets
+    ):
+        """A group that cannot be joined fails connect() without leaking the others.
+
+        The daemon retries a failed connect with backoff, so a socket left open
+        on each attempt would pile up for as long as the group stays unjoinable.
+        """
+        monkeypatch.setattr(
+            udp_mod.config, "MESH_UDP_GROUPS", ("239.0.0.69", "224.0.0.69")
+        )
+        group_sockets.fail_on = "224.0.0.69"
+
+        with pytest.raises(OSError, match="224.0.0.69"):
+            MeshtasticUdpProvider().connect(active_candidate=None)
+
+        assert [group for group, _port in group_sockets.joined] == ["239.0.0.69"]
+        assert group_sockets.is_closed("239.0.0.69")
 
 
 # ---------------------------------------------------------------------------
@@ -636,27 +845,12 @@ class TestPrimaryChannelFilter:
         assert len(captured) == 1  # primary still accepted
 
 
+@pytest.mark.usefixtures("group_sockets", "idle_reader")
 class TestConnectLogsPrimaryFilter:
     """connect() emits a startup log describing the resolved primary filter."""
 
-    def _fake_socket(self, monkeypatch):
-        """Install a fake multicast socket that only times out (no traffic)."""
-
-        class FakeSock:
-            def recvfrom(self, bufsize):
-                time.sleep(0.005)
-                raise socket.timeout()
-
-            def close(self):
-                pass
-
-        monkeypatch.setattr(
-            udp_mod, "open_multicast_socket", lambda group, port: FakeSock()
-        )
-
     def test_logs_resolved_hash_info(self, monkeypatch):
         """A configured name logs the resolved hash at info severity."""
-        self._fake_socket(monkeypatch)
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_NAME", "MediumFast")
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_KEY", "AQ==")
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_ONLY", True)
@@ -676,7 +870,6 @@ class TestConnectLogsPrimaryFilter:
 
     def test_logs_warn_when_fail_closed(self, monkeypatch):
         """primary-only with no name logs at warn severity (fail-closed)."""
-        self._fake_socket(monkeypatch)
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_NAME", "")
         monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_ONLY", True)
         logs: list[dict] = []

@@ -18,7 +18,8 @@ produce the real-traffic fixtures under
 # Prereq: "Mesh via UDP" enabled on the node
 #   meshtastic --set network.enabled_protocols 1
 # Run on a host on the node's LAN (host networking; multicast can't cross a NAT):
-python data/tools/capture_udp_fixtures.py --out capture.jsonl --count 40
+python data/tools/capture_udp_fixtures.py --out capture.jsonl --max 40
+# Node on firmware 2.8 or later: add --group 239.0.0.69
 # Optional live decode summary of primary-channel packets:
 python data/tools/capture_udp_fixtures.py --out capture.jsonl --primary-only
 ```
@@ -34,8 +35,8 @@ gate. The runtime decode/crypto it exercises *is* fully covered by
 ## `compose.udp.pi.yml` - Raspberry Pi (arm64) deployment
 
 A Docker Compose file for running the ingestor in passive UDP mode on a Pi 5. It
-requires `network_mode: host` (multicast `224.0.0.69` cannot reach a bridged
-container) and reads the same `.env` as the standard deployment.
+requires `network_mode: host` (multicast cannot reach a bridged container) and
+reads the same `.env` as the standard deployment.
 
 ### `.env` keys the UDP deployment reads
 
@@ -48,7 +49,7 @@ PRIMARY_CHANNEL_NAME=MediumFast   # REQUIRED: name of channel 0 (or the preset
                                   # channel hash. If unset, primary-only mode
                                   # drops ALL traffic (fail closed).
 INGESTOR_NODE_ID=!xxxxxxxx        # host node id for the ingestor heartbeat
-MESH_UDP_GROUP=224.0.0.69
+MESH_UDP_GROUP=239.0.0.69,224.0.0.69  # both groups; set one address to restrict
 MESH_UDP_PORT=4403
 # plus the standard API_TOKEN / INSTANCE_DOMAIN
 ```

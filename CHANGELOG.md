@@ -9,6 +9,7 @@
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
+* Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
