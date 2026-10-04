@@ -5,7 +5,7 @@
 
 A small Rust daemon that bridges PotatoMesh LoRa messages into a Matrix room.
 
-![matrix bridge](../scrot-0.6.png)
+![matrix bridge](https://raw.githubusercontent.com/l5yth/potato-mesh/main/scrot-0.6.png)
 
 For each PotatoMesh node, the bridge creates (or uses) a Matrix puppet user:
 
