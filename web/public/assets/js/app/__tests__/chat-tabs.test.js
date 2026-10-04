@@ -54,8 +54,28 @@ class MockFragment {
 }
 
 class MockElement {
-  constructor(tagName) {
+  /**
+   * Create a detached mock element.
+   *
+   * @param {string} tagName Element tag name, stored upper-case.
+   * @param {?Object} [ownerDocument=null] Mock document that created the
+   *   element; it tracks focus (``activeElement``) for the #882 tests.
+   */
+  constructor(tagName, ownerDocument = null) {
     this.tagName = tagName.toUpperCase();
+    // The mock document that created this element (tracks focus).
+    this.ownerDocument = ownerDocument;
+    // Parent element; null while detached or held by a fragment.
+    this.parentNode = null;
+    // Times this node left the tree, by its own removal or an ancestor's.
+    // A DOM "move" (re-inserting an attached node) counts too (#882).
+    this.detachCount = 0;
+    // Backing fields of the counted textContent / value accessors below.
+    this._textContent = '';
+    this._value = '';
+    // Writes through those accessors: an idle render must make none (#882).
+    this.textWrites = 0;
+    this.valueWrites = 0;
     // children mirrors HTMLElement.children: element nodes only.
     this.children = [];
     // childNodes mirrors HTMLElement.childNodes: all nodes including text.
@@ -63,6 +83,7 @@ class MockElement {
     this.attributes = new Map();
     this.dataset = {};
     this.classList = new MockClassList();
+    // event -> every registered handler, so a pile-up is observable.
     this.listeners = new Map();
     this.hidden = false;
     this.scrollTop = 0;
@@ -73,28 +94,132 @@ class MockElement {
     this.scrollIntoViewCalls = [];
   }
 
+  /**
+   * Text of the element.
+   *
+   * @returns {string} The stored text.
+   */
+  get textContent() {
+    return this._textContent;
+  }
+
+  /**
+   * Store ``text``, counting the write in ``textWrites``.
+   *
+   * @param {*} text New text.
+   */
+  set textContent(text) {
+    this.textWrites += 1;
+    this._textContent = String(text);
+  }
+
+  /**
+   * Value of the element; for a ``<select>``, the selected option's value.
+   *
+   * @returns {string} The current value.
+   */
+  get value() {
+    return this._value;
+  }
+
+  /**
+   * Store ``next``, counting the write in ``valueWrites``. Like a browser, a
+   * ``<select>`` selects the option with that value, or none (``''``).
+   *
+   * @param {*} next New value.
+   */
+  set value(next) {
+    this.valueWrites += 1;
+    const text = String(next);
+    if (this.tagName === 'SELECT') {
+      this._value = this.children.some(option => option.value === text) ? text : '';
+    } else {
+      this._value = text;
+    }
+  }
+
+  /**
+   * Append ``node``, first removing it from its current parent (a DOM move).
+   *
+   * @param {*} node Node to append.
+   * @returns {*} The appended node.
+   */
   appendChild(node) {
+    detachFromParent(node);
     this.childNodes.push(node);
     if (node instanceof MockElement) {
       this.children.push(node);
+      node.parentNode = this;
     }
     return node;
   }
 
+  /**
+   * Replace every child with ``nodes``, expanding fragments, and record each
+   * removal as the DOM would.
+   *
+   * @param {...*} nodes New children; falsy entries are skipped.
+   * @returns {void}
+   */
   replaceChildren(...nodes) {
-    this.children = [];
-    this.childNodes = [];
+    const incoming = [];
     for (const node of nodes) {
       if (!node) continue;
       if (node.isFragment && Array.isArray(node.children)) {
-        this.children.push(...node.children);
-        this.childNodes.push(...node.children);
+        incoming.push(...node.children);
       } else {
-        this.childNodes.push(node);
-        if (node instanceof MockElement) {
-          this.children.push(node);
-        }
+        incoming.push(node);
       }
+    }
+    // DOM order: the new nodes leave their old parents, then every current
+    // child is removed, so passing an existing child re-inserts it.
+    incoming.forEach(detachFromParent);
+    this.children.forEach(markDetached);
+    this.children = [];
+    this.childNodes = [];
+    for (const node of incoming) {
+      this.childNodes.push(node);
+      if (node instanceof MockElement) {
+        this.children.push(node);
+        node.parentNode = this;
+      }
+    }
+    // A browser <select> whose options are replaced resets to its first
+    // option, so code that wants another channel must write it back (#882).
+    if (this.tagName === 'SELECT') {
+      this._value = this.children.length > 0 ? this.children[0].value : '';
+    }
+  }
+
+  /**
+   * Replace ``oldNode`` with ``newNode`` in place, mirroring
+   * ``Node.replaceChild``; ``newNode`` first leaves its current parent.
+   *
+   * @param {MockElement} newNode Node to insert.
+   * @param {MockElement} oldNode Existing child to replace.
+   * @returns {MockElement} The replaced node.
+   * @throws {Error} When ``oldNode`` is not a child of this element.
+   */
+  replaceChild(newNode, oldNode) {
+    if (!this.children.includes(oldNode)) {
+      throw new Error('replaceChild: oldNode is not a child of this element');
+    }
+    detachFromParent(newNode);
+    this.children[this.children.indexOf(oldNode)] = newNode;
+    this.childNodes[this.childNodes.indexOf(oldNode)] = newNode;
+    newNode.parentNode = this;
+    markDetached(oldNode);
+    return oldNode;
+  }
+
+  /**
+   * Make this element the owner document's ``activeElement``.
+   *
+   * @returns {void}
+   */
+  focus() {
+    if (this.ownerDocument) {
+      this.ownerDocument.activeElement = this;
     }
   }
 
@@ -116,15 +241,38 @@ class MockElement {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
 
+  /**
+   * Register ``handler`` for ``event``, keeping every registration.
+   *
+   * @param {string} event Event type.
+   * @param {Function} handler Listener.
+   * @returns {void}
+   */
   addEventListener(event, handler) {
-    this.listeners.set(event, handler);
+    if (!this.listeners.has(event)) this.listeners.set(event, []);
+    this.listeners.get(event).push(handler);
   }
 
+  /**
+   * Call every handler registered for ``event``.
+   *
+   * @param {string} event Event type.
+   * @returns {void}
+   */
   dispatch(event) {
-    const handler = this.listeners.get(event);
-    if (handler) {
+    for (const handler of this.listeners.get(event) || []) {
       handler({});
     }
+  }
+
+  /**
+   * Count the handlers registered for ``event``.
+   *
+   * @param {string} event Event type.
+   * @returns {number} Number of registrations.
+   */
+  listenerCount(event) {
+    return (this.listeners.get(event) || []).length;
   }
 
   scrollIntoView(opts) {
@@ -136,6 +284,41 @@ class MockElement {
   }
 }
 
+/**
+ * Record that ``node`` and its whole subtree left the tree. A focused node
+ * loses focus, mirroring the HTML focus fix-up (and an open native picker
+ * closing with it).
+ *
+ * @param {MockElement} node Root of the removed subtree.
+ * @returns {void}
+ */
+function markDetached(node) {
+  node.parentNode = null;
+  const pending = [node];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    current.detachCount += 1;
+    if (current.ownerDocument && current.ownerDocument.activeElement === current) {
+      current.ownerDocument.activeElement = null;
+    }
+    pending.push(...current.children);
+  }
+}
+
+/**
+ * Remove ``node`` from its parent element, if it has one.
+ *
+ * @param {*} node Node about to be inserted elsewhere.
+ * @returns {void}
+ */
+function detachFromParent(node) {
+  const parent = node && node.parentNode;
+  if (!parent) return;
+  parent.children.splice(parent.children.indexOf(node), 1);
+  parent.childNodes.splice(parent.childNodes.indexOf(node), 1);
+  markDetached(node);
+}
+
 class MockTextNode {
   constructor(text) {
     this.textContent = String(text);
@@ -143,10 +326,20 @@ class MockTextNode {
   }
 }
 
+/**
+ * Build a minimal mock ``document`` whose elements know their owner, so focus
+ * (``activeElement``) can be tracked and cleared when a focused element
+ * leaves the tree.
+ *
+ * @returns {Object} Mock document with ``createElement``, ``createTextNode``,
+ *   ``createDocumentFragment`` and ``activeElement``.
+ */
 function createMockDocument() {
-  return {
+  const document = {
+    // Focused element; cleared when it leaves the tree (see markDetached).
+    activeElement: null,
     createElement(tag) {
-      return new MockElement(tag);
+      return new MockElement(tag, document);
     },
     createDocumentFragment() {
       return new MockFragment();
@@ -155,6 +348,7 @@ function createMockDocument() {
       return new MockTextNode(text);
     }
   };
+  return document;
 }
 
 test('renderChatTabs creates tab markup and selects default active tab', () => {
@@ -519,4 +713,269 @@ test('renderChatTabs renders a channel dropdown selector that jumps to a tab (LV
   tabSelect.value = 'c1';
   tabSelect.dispatch('change');
   assert.equal(container.dataset.activeTab, 'c1');
+});
+
+/**
+ * Return the LV8 channel select of a rendered container (the tab bar's 4th child).
+ *
+ * @param {MockElement} container Container ``renderChatTabs`` rendered into.
+ * @returns {MockElement} The channel select.
+ */
+function channelSelect(container) {
+  return container.children[0].children[3];
+}
+
+/**
+ * Build the tab set a live refresh re-renders: fixed ids, with labels carrying
+ * the message counts that change as messages arrive (#882).
+ *
+ * @param {{ c0: number, c1: number }} [counts] Message count per channel.
+ * @returns {Array<Object>} Tabs for ``renderChatTabs``.
+ */
+function liveTabs(counts = { c0: 3, c1: 1 }) {
+  return [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: `Primary (${counts.c0})`, content: new MockElement('div') },
+    { id: 'c1', label: `Alpha (${counts.c1})`, content: new MockElement('div') }
+  ];
+}
+
+test('renderChatTabs keeps the channel select in the document across a passive re-render (MS1, #882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const select = channelSelect(container);
+  select.focus();
+
+  // Two live refreshes: identical data, then a new message on c0.
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  renderChatTabs({ document, container, tabs: liveTabs({ c0: 4, c1: 1 }), defaultActiveTabId: 'c0' });
+
+  assert.ok(channelSelect(container) === select, 'the rendered select is the one the user holds');
+  // Re-inserting a reused select is a removal too: it must never leave the tree.
+  assert.equal(select.detachCount, 0);
+  assert.ok(document.activeElement === select, 'a focused select keeps focus');
+});
+
+test('renderChatTabs routes a channel chosen after a re-render to the current render (MS1/MS2, #882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  // The user opens the picker on this select, live refreshes land, then they pick c1.
+  const select = channelSelect(container);
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  renderChatTabs({ document, container, tabs: liveTabs({ c0: 4, c1: 1 }), defaultActiveTabId: 'c0' });
+  select.value = 'c1';
+  select.dispatch('change');
+
+  const panel = activePanel(container);
+  assert.equal(panel.id, 'chat-panel-c1', 'the live DOM shows the chosen channel');
+  assert.equal(container.dataset.activeTab, 'c1');
+  assert.equal(channelSelect(container).value, 'c1');
+  // An explicit switch jumps to the newest entry (CL-A3).
+  assert.equal(panel.scrollTop, panel.scrollHeight);
+  assert.equal(select.listenerCount('change'), 1, 'one listener, not one per render');
+});
+
+test('renderChatTabs reconciles the channel options in place and leaves an idle select untouched (MS3, #882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const select = channelSelect(container);
+  const options = [...select.children];
+  // Every write the mock counts on the select and its options, by option index.
+  const writes = () => ({
+    value: select.valueWrites,
+    optionValue: options.map(option => option.valueWrites),
+    text: options.map(option => option.textWrites),
+    detached: options.map(option => option.detachCount)
+  });
+  const sameOptionNodes = () => select.children.every((option, index) => option === options[index]);
+
+  // An idle refresh (same ids, labels and active tab) writes nothing at all.
+  const beforeIdle = writes();
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  assert.ok(sameOptionNodes(), 'option nodes are kept');
+  assert.deepEqual(writes(), beforeIdle, 'an idle re-render writes nothing to the select or its options');
+
+  // A new message on c0: exactly one text write, on c0's own option node.
+  const beforeMessage = writes();
+  renderChatTabs({ document, container, tabs: liveTabs({ c0: 9, c1: 1 }), defaultActiveTabId: 'c0' });
+  const afterMessage = writes();
+  assert.ok(sameOptionNodes(), 'option nodes are kept');
+  assert.deepEqual(afterMessage.text.map((count, index) => count - beforeMessage.text[index]), [0, 1, 0]);
+  assert.equal(options[1].textContent, 'Primary (9)');
+  assert.equal(afterMessage.value, beforeMessage.value, 'the active tab is unchanged, so value is not written');
+  assert.deepEqual(afterMessage.optionValue, beforeMessage.optionValue, 'no option value is rewritten');
+  assert.deepEqual(afterMessage.detached, [0, 0, 0], 'no option node was replaced');
+
+  // A channel appears while the active one ages out of the window.
+  renderChatTabs({
+    document,
+    container,
+    tabs: [
+      { id: 'log', label: 'Log', content: null },
+      { id: 'c1', label: 'Alpha (1)', content: null },
+      { id: 'c2', label: 'Bravo (1)', content: null }
+    ],
+    defaultActiveTabId: 'c1'
+  });
+  assert.ok(channelSelect(container) === select, 'the select survives a tab-set change');
+  assert.deepEqual(select.children.map(option => option.value), ['log', 'c1', 'c2']);
+  assert.equal(select.value, 'c1');
+  assert.equal(container.dataset.activeTab, 'c1');
+});
+
+test('renderChatTabs keeps the active channel selected when a re-render rebuilds the options (MS3, #882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const select = channelSelect(container);
+  select.value = 'c1';
+  select.dispatch('change');
+  assert.equal(container.dataset.activeTab, 'c1');
+
+  // A channel appears: rebuilding the options resets a browser select to its
+  // first option, so the unchanged active channel has to be written back.
+  const bravo = { id: 'c2', label: 'Bravo (1)', content: null };
+  renderChatTabs({ document, container, tabs: [...liveTabs(), bravo], defaultActiveTabId: 'c0' });
+  assert.equal(select.value, 'c1');
+  assert.equal(activePanel(container).id, 'chat-panel-c1');
+
+  // Alpha overtakes Primary: the same channels in a new order, options rebuilt.
+  const [log, primary, alpha] = liveTabs();
+  renderChatTabs({ document, container, tabs: [log, alpha, primary, bravo], defaultActiveTabId: 'c0' });
+  assert.deepEqual(select.children.map(option => option.value), ['log', 'c1', 'c0', 'c2']);
+  assert.equal(select.value, 'c1');
+});
+
+test('renderChatTabs scrolls nothing into view on a passive re-render through the persistent bar (LD-A2, #882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const select = channelSelect(container);
+  for (const counts of [{ c0: 3, c1: 1 }, { c0: 4, c1: 1 }]) {
+    renderChatTabs({ document, container, tabs: liveTabs(counts), defaultActiveTabId: 'c0' });
+    assert.ok(channelSelect(container) === select, 'the re-render took the persistent path');
+    const buttons = container.children[0].children[1].children;
+    const calls = buttons.reduce((total, button) => total + button.scrollIntoViewCalls.length, 0);
+    assert.equal(calls, 0);
+  }
+});
+
+test('renderChatTabs builds a working channel select again after the tab set empties (#882)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const first = channelSelect(container);
+
+  // Nothing left to choose from: the whole bar goes, select included.
+  renderChatTabs({ document, container, tabs: [] });
+  assert.equal(container.children.length, 0);
+  assert.equal(first.detachCount, 1);
+
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const second = channelSelect(container);
+  assert.ok(second !== first, 'a fresh select once tabs return');
+  second.value = 'c1';
+  second.dispatch('change');
+  assert.equal(activePanel(container).id, 'chat-panel-c1');
+});
+
+test('renderChatTabs observes each fresh tab list, so a replaced one goes quiet (#882)', () => {
+  const observed = [];
+  const originalResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    observe(target) {
+      observed.push(target);
+    }
+  };
+  try {
+    const document = createMockDocument();
+    const container = new MockElement('div');
+    renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+    renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+    assert.equal(observed.length, 2);
+    assert.ok(observed[1] === container.children[0].children[1], 'the live tab list is observed');
+    assert.equal(observed[0].detachCount, 1, 'the previous tab list left the tree');
+  } finally {
+    if (originalResizeObserver === undefined) {
+      delete globalThis.ResizeObserver;
+    } else {
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  }
+});
+
+test('renderChatTabs names a channel option by its id when the tab has no label', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: [{ id: 'c9', content: null }] });
+  assert.deepEqual(channelSelect(container).children.map(option => option.textContent), ['c9']);
+});
+
+test('renderChatTabs appends the fragment when the container has no replaceChildren', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  container.replaceChildren = undefined;
+  const active = renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  assert.equal(active, 'c0');
+  const [fragment] = container.childNodes;
+  assert.equal(fragment.isFragment, true);
+  assert.deepEqual(fragment.children.map(node => node.className), ['chat-tablist-wrapper', 'chat-tabpanels']);
+});
+
+test('createTabSelect ignores a change before any render activates it (#882)', () => {
+  const { createTabSelect } = __test__;
+  const select = createTabSelect(createMockDocument());
+  assert.equal(select.className, 'chat-tab-select');
+  assert.equal(select.getAttribute('aria-label'), 'Jump to channel');
+  assert.equal(select.listenerCount('change'), 1);
+  assert.doesNotThrow(() => select.dispatch('change'));
+});
+
+test('findPersistentTabBar reuses only a tab bar a previous render built (#882)', () => {
+  const { findPersistentTabBar } = __test__;
+  // No children to read, or no previous render.
+  assert.equal(findPersistentTabBar({}), null);
+  assert.equal(findPersistentTabBar(new MockElement('div')), null);
+  // Foreign markup: a wrapper without children, or a select no render activated.
+  assert.equal(findPersistentTabBar({ children: [{}, {}] }), null);
+  const foreignSelect = new MockElement('select');
+  const foreignBar = { children: [null, null, null, foreignSelect] };
+  assert.equal(findPersistentTabBar({ children: [foreignBar, {}], replaceChild() {} }), null);
+
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs() });
+  const bar = findPersistentTabBar(container);
+  assert.ok(bar.wrapper === container.children[0]);
+  assert.ok(bar.select === channelSelect(container));
+  assert.ok(bar.panelWrapper === container.children[1]);
+  // The same bar in a container that cannot swap children in place.
+  assert.equal(findPersistentTabBar({ children: container.children }), null);
+});
+
+test('syncTabSelectOptions rebuilds the options, not the select, when the channel order changes (#882)', () => {
+  const { syncTabSelectOptions } = __test__;
+  const document = createMockDocument();
+  const select = document.createElement('select');
+  syncTabSelectOptions(document, select, [
+    { id: 'log', label: 'Log' },
+    { id: 'c0', label: 'Primary (2)' },
+    { id: 'c1', label: 'Alpha (1)' }
+  ]);
+  const [logOption] = select.children;
+
+  // Alpha overtakes Primary on activity: same count of channels, new order.
+  syncTabSelectOptions(document, select, [
+    { id: 'log', label: 'Log' },
+    { id: 'c1', label: 'Alpha (3)' },
+    { id: 'c0', label: 'Primary (2)' }
+  ]);
+  assert.deepEqual(
+    select.children.map(option => [option.value, option.textContent]),
+    [['log', 'Log'], ['c1', 'Alpha (3)'], ['c0', 'Primary (2)']]
+  );
+  assert.ok(select.children[0] !== logOption, 'a reorder rebuilds the option nodes');
 });

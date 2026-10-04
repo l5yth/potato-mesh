@@ -52,3 +52,22 @@ test('dom environment supports class queries and innerHTML setter', () => {
 
   cleanup();
 });
+
+test('dom environment exposes element children and replaces a child in place', () => {
+  const env = createDomEnvironment({ includeBody: true });
+  const { document, createElement, cleanup } = env;
+
+  const parent = createElement('div');
+  const first = createElement('span');
+  const second = createElement('b');
+  parent.appendChild(first);
+  parent.appendChild(document.createTextNode('text'));
+  // Element children skip the string text node.
+  assert.deepEqual(parent.children, [first]);
+
+  assert.equal(parent.replaceChild(second, first), first);
+  assert.deepEqual(parent.childNodes, [second, 'text']);
+  assert.throws(() => parent.replaceChild(first, createElement('i')), /not a child/);
+
+  cleanup();
+});
