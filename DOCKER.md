@@ -56,8 +56,8 @@ Additional environment variables are optional:
 | `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom (disables the auto-fit checkbox when set). |
 | `MAX_DISTANCE` | `42` | Maximum relationship distance (km) before edges are hidden. |
 | `DEBUG` | `0` | Enables verbose logging across services when set to `1`. |
-| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; other channels are skipped before hidden filters. |
-| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor skips when forwarding packets. |
+| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; packets from other channels are dropped before `HIDDEN_CHANNELS` applies. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
+| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names whose packets the ingestor drops. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
 | `FEDERATION` | `1` | Controls whether the instance announces itself and crawls peers (`1`) or stays isolated (`0`). |
 | `PRIVATE` | `0` | Restricts public visibility and disables chat/message endpoints when set to `1`. |
 | `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |
@@ -65,8 +65,9 @@ Additional environment variables are optional:
 | `MAX_THREADS` | `96` | Maximum Puma worker threads on the web service. Each active `/api/events` (SSE) stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 
 The ingestor posts to the URL configured via `INSTANCE_DOMAIN` (defaulting to
-`http://web:41447` in the provided compose file). Use `CHANNEL_INDEX` to select
-a LoRa channel on serial or Bluetooth connections.
+`http://web:41447` in the provided compose file). `CHANNEL_INDEX` sets the
+channel the activity announcement is sent on; it does not filter what is
+ingested.
 
 ## Docker Compose file
 

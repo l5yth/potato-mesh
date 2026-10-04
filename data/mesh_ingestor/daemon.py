@@ -399,6 +399,12 @@ def _check_energy_saving(state: _DaemonState) -> bool:
 def _try_send_snapshot(state: _DaemonState) -> bool:
     """Send the initial node snapshot via the provider.
 
+    A provider may implement the optional, duck-typed
+    ``snapshot_filter_reason(node_id, node)`` hook (SPEC CF3): an entry it
+    names a reason for is skipped, not upserted.  Skipped entries still count
+    as processed, so a nodeDB whose every entry is filtered still latches
+    ``initial_snapshot_sent``.
+
     Returns:
         ``True`` when the snapshot succeeded (or no nodes exist yet); ``False``
         when a hard error occurred and the caller should ``continue``.
@@ -406,10 +412,22 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
 
     try:
         node_items = state.provider.node_snapshot_items(state.iface)
+        filter_reason = getattr(state.provider, "snapshot_filter_reason", None)
         processed_any = False
         for node_id, node in node_items:
             processed_any = True
             try:
+                reason = (
+                    filter_reason(node_id, node) if callable(filter_reason) else None
+                )
+                if reason is not None:
+                    config._debug_log(
+                        "Skipped snapshot node",
+                        context="daemon.snapshot",
+                        node_id=node_id,
+                        reason=reason,
+                    )
+                    continue
                 handlers.upsert_node(node_id, node)
             except Exception as exc:
                 config._debug_log(

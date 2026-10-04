@@ -20,7 +20,6 @@ import sys
 import threading
 import types
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -31,35 +30,8 @@ if str(REPO_ROOT) not in sys.path:
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
 import data.mesh_ingestor.config as _cfg_module  # noqa: E402 - path setup
 
-
-class FakeEvent:
-    """Test double for :class:`threading.Event` that can auto-set itself."""
-
-    instances: list["FakeEvent"] = []
-
-    def __init__(self, *, auto_set_on_wait: bool = False):
-        self._is_set = False
-        self._auto_set_on_wait = auto_set_on_wait
-        self.wait_calls: list[Any] = []
-        FakeEvent.instances.append(self)
-
-    def set(self) -> None:
-        """Mark the event as set."""
-
-        self._is_set = True
-
-    def is_set(self) -> bool:
-        """Return whether the event is currently set."""
-
-        return self._is_set
-
-    def wait(self, timeout: float | None = None) -> bool:
-        """Record waits and optionally auto-set the flag."""
-
-        self.wait_calls.append(timeout)
-        if self._auto_set_on_wait:
-            self._is_set = True
-        return self._is_set
+# FakeEvent and the _DaemonState factory are shared with other test modules.
+from daemon_fakes import FakeEvent, make_state as _make_state  # noqa: E402
 
 
 class AutoSetEvent(FakeEvent):
@@ -439,34 +411,6 @@ def test_main_inactivity_reconnect(monkeypatch):
 
     daemon.main()
     assert any(event.is_set() for event in FakeEvent.instances)
-
-
-# ---------------------------------------------------------------------------
-# Helper: build a minimal _DaemonState for unit tests
-# ---------------------------------------------------------------------------
-
-
-def _make_state(**overrides):
-    """Return a :class:`daemon._DaemonState` with sensible defaults.
-
-    Any keyword argument is forwarded as a field override via ``setattr``
-    after construction, so callers only need to supply fields under test.
-    """
-    state = daemon._DaemonState(
-        provider=None,  # type: ignore[arg-type]
-        stop=FakeEvent(),  # type: ignore[arg-type]
-        configured_port=None,
-        inactivity_reconnect_secs=0.0,
-        energy_saving_enabled=False,
-        energy_online_secs=0.0,
-        energy_sleep_secs=0.0,
-        retry_delay=0.0,
-        last_seen_packet_monotonic=None,
-        active_candidate=None,
-    )
-    for key, val in overrides.items():
-        setattr(state, key, val)
-    return state
 
 
 # ---------------------------------------------------------------------------

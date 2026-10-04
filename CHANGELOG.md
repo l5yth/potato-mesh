@@ -41,6 +41,13 @@
 * Docs: `CONTRACTS.md` corrected to match the served `/api/destinations` shape (SPEC DOC5)
 * Docs: `ACCEPTANCE.md` amended for the shipped Reticulum stats scope; README gains a Reticulum section
 * Web: picking a channel from the chat dropdown on mobile no longer fails while live updates arrive (#882)
+* Data: `ALLOWED_CHANNELS`, `HIDDEN_CHANNELS` and `PRIMARY_CHANNEL_ONLY` drop every packet type and node-list entry from excluded channels, not only text messages (#784, SPEC CF1-CF3)
+* Data: node-list snapshots no longer carry the radio library's copy of each node's last packet (#784, SPEC CF3)
+* Data: under `TRANSPORT=udp`, `ALLOWED_CHANNELS` and `HIDDEN_CHANNELS` match channel 0 by `PRIMARY_CHANNEL_NAME` (#784, SPEC CF2)
+* Data: `PRIMARY_CHANNEL_ONLY` accepts `true`/`yes`/`on` like the `TX_*` flags; an unrecognized value enables it (#784, SPEC CF5)
+* Data: new `DROP_VIA_MQTT=1` drops Meshtastic packets and nodes relayed via MQTT, on the API and UDP transports (#884, SPEC VM1-VM2)
+* Web: the web service no longer receives the unused `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` settings (#784, SPEC CF6)
+* Docs: `CHANNEL_INDEX` documented as the announcement channel, not an ingest filter (#884, SPEC CF7)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

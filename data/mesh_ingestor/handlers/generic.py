@@ -280,12 +280,54 @@ def _hops_travelled(packet: Mapping, hop_limit: object) -> int | None:
         return None
 
 
+#: DEBUG log line for each ingest-filter drop reason; the channel wording is
+#: kept verbatim from the per-filter checks the shared gate replaced.
+_FILTER_LOG_MESSAGES = {
+    "non-primary-channel": "Ignored packet on non-primary channel",
+    "disallowed-channel": "Ignored packet on disallowed channel",
+    "hidden-channel": "Ignored packet on hidden channel",
+    "via_mqtt": "Ignored via_mqtt packet",
+}
+
+
+def _packet_channel(packet: Mapping, decoded: Mapping) -> tuple[int, bool]:
+    """Return the channel ``packet`` was heard on and whether that is known.
+
+    Meshtastic stamps the channel on every ``MeshPacket`` header, whatever the
+    port, and proto3 omits the field when it is ``0``: a Meshtastic packet
+    without one was heard on the primary channel.  Packets synthesised by
+    other protocols carry ``channel`` only when they have one (MeshCore chat
+    stamps it); one without it (a MeshCore telemetry pull) has no channel
+    attribution, so no channel filter may guess one (SPEC CF2).
+
+    Parameters:
+        packet: Packet dictionary emitted by the mesh interface.
+        decoded: The packet's ``decoded`` section.
+
+    Returns:
+        ``(channel_index, attributed)``.  ``channel_index`` falls back to ``0``
+        when the packet carries no channel or an unparseable one;
+        ``attributed`` is ``False`` only for a packet of another protocol that
+        carries no ``channel`` at all.
+    """
+
+    raw = _first(decoded, "channel", default=None)
+    if raw is None:
+        raw = _first(packet, "channel", default=None)
+    attributed = raw is not None or packet.get("protocol") in (None, "meshtastic")
+    try:
+        return int(raw if raw is not None else 0), attributed
+    except Exception:
+        return 0, attributed
+
+
 def upsert_node(node_id: object, node: object) -> None:
     """Schedule an upsert for a single node.
 
-    Serialises ``node`` via :func:`upsert_payload`, enriches the result with
-    radio metadata and the current host node identifier, then enqueues a POST
-    to ``/api/nodes``.
+    Serialises ``node`` via :func:`upsert_payload`, drops the meshtastic
+    library's ``lastReceived`` packet copy, enriches the result with radio
+    metadata and the current host node identifier, then enqueues a POST to
+    ``/api/nodes``.
 
     Parameters:
         node_id: Canonical identifier for the node in the ``!xxxxxxxx`` format.
@@ -295,7 +337,16 @@ def upsert_node(node_id: object, node: object) -> None:
         ``None``. The payload is forwarded to the shared HTTP queue.
     """
 
-    payload = _apply_radio_metadata_to_nodes(upsert_payload(node_id, node))
+    payload = upsert_payload(node_id, node)
+    serialised = payload[node_id]
+    if isinstance(serialised, dict):
+        # A library nodeDB entry carries the whole last packet heard from the
+        # node, possibly one from a filtered channel; it is not part of the
+        # /api/nodes contract (SPEC CF3).  Dropped from the serialised copy,
+        # never the library's dict, so a dict the library mutates mid-snapshot
+        # fails this node alone, inside the caller's per-node error handling.
+        serialised.pop("lastReceived", None)
+    payload = _apply_radio_metadata_to_nodes(payload)
     payload["ingestor"] = _state.host_node_id()
     # Per-record protocol stamp closes the startup race where the web app
     # processes a node upsert before the ingestor heartbeat registers a
@@ -321,9 +372,12 @@ def upsert_node(node_id: object, node: object) -> None:
 def store_packet_dict(packet: Mapping) -> None:
     """Route a decoded packet to the appropriate storage handler.
 
-    Inspects ``portnum`` (string and integer forms) and the presence of
-    well-known decoded sub-sections to determine packet type, then delegates
-    to the corresponding ``store_*`` handler.
+    Every packet first passes the shared ingest filter
+    (:func:`~data.mesh_ingestor.channels.ingest_filter_reason`); a dropped one
+    is recorded as ignored with that reason.  The rest are classified by
+    ``portnum`` (string and integer forms) and the presence of well-known
+    decoded sub-sections, then delegated to the corresponding ``store_*``
+    handler.
 
     Parameters:
         packet: Packet dictionary emitted by the mesh interface.
@@ -333,6 +387,30 @@ def store_packet_dict(packet: Mapping) -> None:
     """
 
     decoded = packet.get("decoded") or {}
+
+    # One gate for every port (SPEC CF1/CF2, VM2): the dispatch below hands
+    # telemetry, traceroutes, node info, positions, waypoints, neighbor info
+    # and store-forward heartbeats to handlers that POST directly, so the
+    # channel and via_mqtt filters must run before it, not only on messages.
+    channel, attributed = _packet_channel(packet, decoded)
+    reason = channels.ingest_filter_reason(
+        channel if attributed else None,
+        via_mqtt=bool(_first(packet, "viaMqtt", "via_mqtt", default=False)),
+    )
+    if reason is not None:
+        _ignored_mod._record_ignored_packet(packet, reason=reason)
+        log_fields = {
+            "channel": channel,
+            "channel_name": channels.channel_name(channel),
+        }
+        if reason == "disallowed-channel":
+            log_fields["allowed_channels"] = channels.allowed_channel_names()
+        config._debug_log(
+            _FILTER_LOG_MESSAGES[reason],
+            context="handlers.store_packet_dict",
+            **log_fields,
+        )
+        return
 
     portnum_raw = _first(decoded, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
@@ -490,24 +568,6 @@ def store_packet_dict(packet: Mapping) -> None:
         _ignored_mod._record_ignored_packet(packet, reason="no-message-payload")
         return
 
-    channel = _first(decoded, "channel", default=None)
-    if channel is None:
-        channel = _first(packet, "channel", default=0)
-    try:
-        channel = int(channel)
-    except Exception:
-        channel = 0
-
-    if channels.is_primary_only() and not channels.is_primary_channel(channel):
-        _ignored_mod._record_ignored_packet(packet, reason="non-primary-channel")
-        if config.DEBUG:
-            config._debug_log(
-                "Ignored packet on non-primary channel",
-                context="handlers.store_packet_dict",
-                channel=channel,
-            )
-        return
-
     channel_name_value = channels.channel_name(channel)
 
     pkt_id = _first(packet, "id", "packet_id", "packetId", default=None)
@@ -558,29 +618,6 @@ def store_packet_dict(packet: Mapping) -> None:
                 channel=channel,
             )
         _ignored_mod._record_ignored_packet(packet, reason="skipped-direct-message")
-        return
-
-    if not channels.is_allowed_channel(channel_name_value):
-        _ignored_mod._record_ignored_packet(packet, reason="disallowed-channel")
-        if config.DEBUG:
-            config._debug_log(
-                "Ignored packet on disallowed channel",
-                context="handlers.store_packet_dict",
-                channel=channel,
-                channel_name=channel_name_value,
-                allowed_channels=channels.allowed_channel_names(),
-            )
-        return
-
-    if channels.is_hidden_channel(channel_name_value):
-        _ignored_mod._record_ignored_packet(packet, reason="hidden-channel")
-        if config.DEBUG:
-            config._debug_log(
-                "Ignored packet on hidden channel",
-                context="handlers.store_packet_dict",
-                channel=channel,
-                channel_name=channel_name_value,
-            )
         return
 
     message_payload = {

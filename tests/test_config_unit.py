@@ -628,7 +628,7 @@ class TestPrimaryChannelOnlyConfig:
         importlib.reload(config)
 
     def test_primary_channel_only_flag(self, monkeypatch):
-        """PRIMARY_CHANNEL_ONLY is True when the env var is exactly '1'."""
+        """PRIMARY_CHANNEL_ONLY is True when the env var is '1'."""
         import importlib
 
         monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", "1")
@@ -643,13 +643,75 @@ class TestPrimaryChannelOnlyConfig:
         importlib.reload(config)
         assert config.PRIMARY_CHANNEL_ONLY is False
 
-    def test_primary_channel_only_false_for_non_one_values(self, monkeypatch):
-        """Any value other than the literal '1' leaves the flag False."""
+    @pytest.mark.parametrize("value", ["true", "YES", " on "])
+    def test_primary_channel_only_accepts_truthy_spellings(self, monkeypatch, value):
+        """``true``/``yes``/``on`` enable the filter like ``1`` (SPEC CF5)."""
         import importlib
 
-        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", "true")
+        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", value)
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_ONLY is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "off", ""])
+    def test_primary_channel_only_falsy_spellings(self, monkeypatch, value):
+        """``0``/``false``/``off`` and a blank value leave the filter off."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", value)
         importlib.reload(config)
         assert config.PRIMARY_CHANNEL_ONLY is False
+
+    def test_primary_channel_only_unrecognised_value_filters(self, monkeypatch):
+        """A value it cannot parse fails toward filtering, never open."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", "maybe")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_ONLY is True
+
+
+class TestDropViaMqttConfig:
+    """Tests for :data:`config.DROP_VIA_MQTT` (SPEC VM1)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear the flag and reload config to defaults after each test."""
+        import importlib
+
+        monkeypatch.delenv("DROP_VIA_MQTT", raising=False)
+        yield
+        monkeypatch.delenv("DROP_VIA_MQTT", raising=False)
+        importlib.reload(config)
+
+    def test_defaults_off(self):
+        """Unset means via_mqtt traffic is kept."""
+        import importlib
+
+        importlib.reload(config)
+        assert config.DROP_VIA_MQTT is False
+
+    @pytest.mark.parametrize(
+        "value, expected", [("1", True), ("TRUE", True), ("0", False), ("no", False)]
+    )
+    def test_parses_like_the_tx_flags(self, monkeypatch, value, expected):
+        """The shared fail-safe parser accepts the common spellings."""
+        import importlib
+
+        monkeypatch.setenv("DROP_VIA_MQTT", value)
+        importlib.reload(config)
+        assert config.DROP_VIA_MQTT is expected
+
+    def test_unrecognised_value_drops(self, monkeypatch):
+        """A value it cannot parse fails toward dropping, never open."""
+        import importlib
+
+        monkeypatch.setenv("DROP_VIA_MQTT", "sometimes")
+        importlib.reload(config)
+        assert config.DROP_VIA_MQTT is True
+
+    def test_exported_in_all(self):
+        """The flag is part of the config module's public surface."""
+        assert "DROP_VIA_MQTT" in config.__all__
 
 
 class TestPrimaryChannelNameConfig:

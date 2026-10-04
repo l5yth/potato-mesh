@@ -31,6 +31,7 @@ services:
       # distinguishes the primary channel from a secondary channel that shares
       # the default AQ== key. If unset, primary-only mode drops ALL traffic.
       PRIMARY_CHANNEL_NAME: ${PRIMARY_CHANNEL_NAME:-}
+      DROP_VIA_MQTT: ${DROP_VIA_MQTT:-0}
       MESH_UDP_GROUP: ${MESH_UDP_GROUP:-239.0.0.69,224.0.0.69}
       MESH_UDP_PORT: ${MESH_UDP_PORT:-4403}
       INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
