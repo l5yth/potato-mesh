@@ -52,6 +52,10 @@
 * Data: new `DROP_VIA_MQTT=1` drops Meshtastic packets and nodes relayed via MQTT, on the API and UDP transports (#884, SPEC VM1-VM2)
 * Web: the web service no longer receives the unused `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` settings (#784, SPEC CF6)
 * Docs: `CHANNEL_INDEX` documented as the announcement channel, not an ingest filter (#884, SPEC CF7)
+* CI: Dependabot version updates run for every ecosystem; the Ruby and Python entries use the documented `bundler` and `pip` names (SPEC DP1)
+* Web: `web/Gemfile.lock` is committed, so CI and the web image install the locked gems (SPEC DP2)
+* Data: `data/requirements.txt` pins the runtime dependencies with `==` and no longer installs black and pytest into the ingestor image; the dev tools move to `data/requirements-dev.txt` (SPEC DP3)
+* CI: the Ruby workflow also tests Ruby 3.3 and the Python workflow Python 3.12, the runtimes the images ship; neither matrix fails fast (SPEC DP5)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

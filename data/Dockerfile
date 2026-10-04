@@ -17,7 +17,7 @@ ARG TARGETOS=linux
 # This pin is bounded on both sides (DK-A2 Rust-drift caveat):
 #   lower — the resolved Alpine base must ship Rust >= cryptography's MSRV,
 #           because armv7 publishes no wheel and compiles the Rust core from
-#           source: 3.12.10-alpine -> Alpine 3.22 -> Rust 1.87 >= crypto 49's 1.83.
+#           source: 3.12.10-alpine -> Alpine 3.22 -> Rust 1.87 >= crypto 50's 1.83.
 #   upper — Docker Hub published no `windowsservercore-ltsc2022` base past
 #           3.12.10, and production-windows below reuses this same ARG.
 # Raise the floor by bumping here; if crypto's MSRV ever outruns the Alpine that

@@ -1,0 +1,8 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under the Apache License, Version 2.0 (see LICENSE)
+
+# Development dependencies: the production set plus the test and lint tools
+-r requirements.txt
+black==26.5.1
+pytest==9.1.1
+pytest-cov==7.1.0

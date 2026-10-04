@@ -32,6 +32,8 @@ on:
       # tests/test_dockerfile_sync.py compares these two files.
       - 'Dockerfile'
       - 'web/Dockerfile'
+      # tests/test_dependency_manifests.py reads the web Gemfile and its lock.
+      - 'web/Gemfile*'
 
 permissions:
   contents: read
@@ -39,20 +41,26 @@ permissions:
 jobs:
   ingestor:
     runs-on: ubuntu-latest
+    strategy:
+      # The ingestor image ships Python 3.12 (data/Dockerfile), so CI tests it
+      # too; one leg's failure must not cancel the other's result.
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
     steps:
     - uses: actions/checkout@v5
-    - name: Set up Python 3.13
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
-        python-version: "3.13"
+        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
-      # Install from the manifest, not a hand-picked list: PR #838 added
+      # Install from the manifests, not a hand-picked list: PR #838 added
       # `cryptography` to data/requirements.txt and the hand-list here missed
-      # it, breaking test collection on main. requirements.txt already carries
-      # the dev deps (black/pytest/pytest-cov) too.
+      # it, breaking test collection on main. requirements-dev.txt adds the
+      # dev tools (black/pytest/pytest-cov) to the runtime set.
       run: |
         python -m pip install --upgrade pip
-        pip install -r data/requirements.txt
+        pip install -r data/requirements.txt -r data/requirements-dev.txt
     - name: Test with pytest and coverage
       run: |
         mkdir -p reports

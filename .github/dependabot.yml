@@ -14,11 +14,11 @@
 
 version: 2
 updates:
-  - package-ecosystem: "ruby"
+  - package-ecosystem: "bundler"
     directory: "/web"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "python"
+  - package-ecosystem: "pip"
     directory: "/data"
     schedule:
       interval: "weekly"
