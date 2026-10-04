@@ -288,7 +288,7 @@ Configure with the environment variables below.
 | `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). |
 | `PRIMARY_CHANNEL_KEY` | `AQ==` | Base64 PSK used to decrypt the primary channel in UDP transport (default = Meshtastic default key). |
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
-| `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
+| `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
@@ -427,12 +427,13 @@ Reticulum nodes stay off the map.
 ### Passive UDP transport
 
 Meshtastic's node API accepts only one client at a time. Set `TRANSPORT=udp`
-to run the ingestor as a passive listener on the node's LAN multicast group
-(`224.0.0.69:4403`) instead of connecting to the API - leaving the API slot
-free for the phone app or CLI.
+to run the ingestor as a passive listener on the node's LAN multicast groups
+(port `4403`) instead of connecting to the API - leaving the API slot free for
+the phone app or CLI.
 
 Enable "Mesh via UDP" on the node first: `meshtastic --set network.enabled_protocols 1`.
 
+- Listens on `239.0.0.69` (firmware 2.8 and later) and `224.0.0.69` (earlier firmware). Set `MESH_UDP_GROUP` to one of them to listen on that group only.
 - Decrypts the primary channel with `PRIMARY_CHANNEL_KEY` (default `AQ==`). Channels with other keys are dropped undecrypted.
 - Set `PRIMARY_CHANNEL_ONLY=1` and `PRIMARY_CHANNEL_NAME` to ingest only channel 0. Without `PRIMARY_CHANNEL_NAME` set, `PRIMARY_CHANNEL_ONLY=1` drops every packet (fail closed).
 - The node list rebuilds from observed packets - the node's own database is not read. Decoded payloads (position, telemetry, traceroute, …) match the API/serial transport shape.

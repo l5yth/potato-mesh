@@ -22,8 +22,8 @@ instead of holding the node's single API/serial connection slot.
 
 Unlike :class:`~data.mesh_ingestor.protocols.meshtastic.MeshtasticProvider`
 (pubsub-driven) this provider has no async callback registration: a single
-background thread reads datagrams off a multicast socket and calls
-:func:`~data.mesh_ingestor.handlers.on_receive` directly for every
+background thread reads datagrams off one multicast socket per joined group
+and calls :func:`~data.mesh_ingestor.handlers.on_receive` directly for every
 primary-channel packet.
 
 Primary-channel membership is decided by the packet's channel *hash*, not by
@@ -47,6 +47,7 @@ transport's packet shape.
 
 from __future__ import annotations
 
+import select
 import socket
 import threading
 
@@ -59,6 +60,13 @@ from .meshtastic_udp_decode import (
     meshpacket_to_packet_dict,
 )
 from .meshtastic_udp_socket import open_multicast_socket
+
+_RECV_POLL_SECS = 1.0
+"""Seconds the receive loop waits on its sockets before re-checking the stop flag.
+
+Matches the 1-second socket timeout set by
+:func:`~data.mesh_ingestor.protocols.meshtastic_udp_socket.open_multicast_socket`,
+which bounded the same re-check while the loop read a single socket."""
 
 
 class _UdpInterface:
@@ -76,23 +84,24 @@ class _UdpInterface:
         """Initialise an unconnected interface with no known nodes."""
         self.nodes: dict = {}
         self.isConnected = threading.Event()
-        self._sock: socket.socket | None = None
+        self._socks: list[socket.socket] = []
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def close(self) -> None:
-        """Stop the receive thread and release the socket.
+        """Stop the receive thread and release every group socket.
 
-        Signals :attr:`_stop` first so the receive loop's next timeout (or
-        the socket close below, whichever comes first) causes it to exit,
-        then closes the socket (best-effort -- close errors are not
-        actionable here) and joins the thread with a bounded timeout so
-        shutdown can never hang indefinitely.
+        Signals :attr:`_stop` first so the receive loop's next wait timeout
+        (or the socket closes below, whichever comes first) causes it to
+        exit, then closes each socket (best-effort -- close errors are not
+        actionable here, and one failing close must not leave the others
+        open) and joins the thread with a bounded timeout so shutdown can
+        never hang indefinitely.
         """
         self._stop.set()
-        if self._sock is not None:
+        for sock in self._socks:
             try:
-                self._sock.close()
+                sock.close()
             except OSError:
                 pass
         if self._thread is not None:
@@ -148,7 +157,14 @@ class MeshtasticUdpProvider:
     def connect(
         self, *, active_candidate: str | None
     ) -> tuple[object, str | None, str | None]:
-        """Open the multicast socket and start the background receive thread.
+        """Join every configured multicast group and start the receive thread.
+
+        Opens one socket per entry of :data:`config.MESH_UDP_GROUPS`, all on
+        :data:`config.MESH_UDP_PORT`: each socket is bound to its group's
+        address, so it receives that group's datagrams only. Joining is
+        all-or-nothing -- if any group fails, the sockets already opened are
+        closed and the error propagates, so the daemon retries the whole
+        connect just as it does when a single group fails.
 
         Parameters:
             active_candidate: Ignored (there is no serial/BLE candidate
@@ -159,11 +175,22 @@ class MeshtasticUdpProvider:
 
         Returns:
             A ``(iface, resolved_target, next_active_candidate)`` tuple: the
-            live :class:`_UdpInterface`, a ``udp://group:port`` string
-            describing the joined group, and *active_candidate* unchanged.
+            live :class:`_UdpInterface`, a ``udp://group[,group...]:port``
+            string naming the joined groups, and *active_candidate* unchanged.
+
+        Raises:
+            OSError: When a group cannot be joined (for example, no
+                multicast-capable route on the host).
         """
         iface = _UdpInterface()
-        iface._sock = open_multicast_socket(config.MESH_UDP_GROUP, config.MESH_UDP_PORT)
+        try:
+            for group in config.MESH_UDP_GROUPS:
+                iface._socks.append(open_multicast_socket(group, config.MESH_UDP_PORT))
+        except Exception:
+            # Release the groups already joined before failing, so each
+            # reconnect attempt the daemon makes does not leak a socket.
+            iface.close()
+            raise
         # Surface the resolved primary-channel filter so operators can verify at
         # a glance that ingestion is pinned to the intended channel 0 (e.g.
         # "primary_channel_name='MediumFast' primary_channel_hash=31"). Filtering
@@ -188,46 +215,61 @@ class MeshtasticUdpProvider:
             target=self._recv_loop, args=(iface,), daemon=True
         )
         iface._thread.start()
-        target = f"udp://{config.MESH_UDP_GROUP}:{config.MESH_UDP_PORT}"
+        target = f"udp://{','.join(config.MESH_UDP_GROUPS)}:{config.MESH_UDP_PORT}"
         return iface, target, active_candidate
 
     def _recv_loop(self, iface: _UdpInterface) -> None:
-        """Poll *iface*'s socket for datagrams until told to stop.
+        """Wait on all of *iface*'s group sockets and handle datagrams until stopped.
 
-        Runs on the background thread started by :meth:`connect`. A
-        ``socket.timeout`` (the socket has a 1-second timeout, see
+        Runs on the background thread started by :meth:`connect`. One
+        ``select`` waits on every joined group's socket at once, so this one
+        thread serves all groups; its :data:`_RECV_POLL_SECS` timeout is what
+        re-checks the stop flag. A socket reported readable whose ``recvfrom``
+        still times out (each keeps the 1-second timeout set by
         :func:`~data.mesh_ingestor.protocols.meshtastic_udp_socket.open_multicast_socket`)
-        is expected and simply re-checks the stop flag; any other
-        ``OSError`` (e.g. the socket was closed out from under this thread by
-        :meth:`_UdpInterface.close`) ends the loop. Per-datagram handling is
-        wrapped so a malformed or hostile packet is dropped rather than
-        propagating and killing the thread, and :attr:`_UdpInterface.isConnected`
-        is cleared on every exit path so a dead reader is detectable.
+        is skipped. Any other ``OSError`` -- or the ``ValueError`` ``select``
+        raises for a socket that is already closed -- means
+        :meth:`_UdpInterface.close` closed a socket out from under this
+        thread, and ends the loop. Per-datagram handling is wrapped so a
+        malformed or hostile packet is dropped rather than propagating and
+        killing the thread, and :attr:`_UdpInterface.isConnected` is cleared
+        on every exit path so a dead reader is detectable.
 
         Parameters:
-            iface: The interface whose socket to read and stop flag to
+            iface: The interface whose sockets to read and stop flag to
                 honour.
         """
         try:
             while not iface._stop.is_set():
                 try:
-                    raw, _addr = iface._sock.recvfrom(65535)
-                except socket.timeout:
-                    continue
-                except OSError:
-                    break
-                try:
-                    self._handle_datagram(raw, iface)
-                except Exception:
-                    # A single malformed or hostile datagram must never kill
-                    # the reader thread. Drop it and continue. Logged at debug
-                    # severity only, so a flood of bad datagrams cannot amplify
-                    # into a log-volume DoS.
-                    config._debug_log(
-                        "Dropped malformed UDP datagram",
-                        context="udp.recv",
-                        severity="debug",
-                    )
+                    ready, _w, _x = select.select(iface._socks, [], [], _RECV_POLL_SECS)
+                except (OSError, ValueError):
+                    # A closed socket's fileno() is -1, which select rejects
+                    # with ValueError rather than OSError.
+                    return
+                for sock in ready:
+                    try:
+                        raw, _addr = sock.recvfrom(65535)
+                    except socket.timeout:
+                        # Readable yet empty by the time recvfrom ran (Linux
+                        # can discard a datagram that fails its checksum after
+                        # waking select); the other ready sockets still count.
+                        continue
+                    except OSError:
+                        # Closed under the read; ``finally`` still runs.
+                        return
+                    try:
+                        self._handle_datagram(raw, iface)
+                    except Exception:
+                        # A single malformed or hostile datagram must never kill
+                        # the reader thread. Drop it and continue. Logged at debug
+                        # severity only, so a flood of bad datagrams cannot amplify
+                        # into a log-volume DoS.
+                        config._debug_log(
+                            "Dropped malformed UDP datagram",
+                            context="udp.recv",
+                            severity="debug",
+                        )
         finally:
             # Any loop exit -- stop flag, socket error, or an unexpected error
             # -- marks the interface disconnected so the daemon can notice a
