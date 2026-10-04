@@ -10,6 +10,9 @@
 
 ### Fixes
 * Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
+* Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
+* Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
+* CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
 * Docker: the root `Dockerfile` builds the same image as `web/Dockerfile`, including Chromium for Open Graph previews (skip it with `--build-arg WITH_OG_IMAGE=0`), the custom pages directory, and the `APP_VERSION` build arg (SPEC DF1)
 * Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)

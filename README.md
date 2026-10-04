@@ -235,6 +235,7 @@ directly in the web process's environment.
 | `REMOTE_INSTANCE_READ_TIMEOUT` | `60` | Read timeout when fetching a peer. |
 | `REMOTE_INSTANCE_REQUEST_TIMEOUT` | `30` | Overall request timeout when fetching a peer. |
 | `REMOTE_INSTANCE_MAX_RESPONSE_BYTES` | `8388608` | Response ceiling (8 MiB) when fetching a peer. |
+| `MESHTASTIC_PSK_B64` | `AQ==` | Base64 PSK used to decrypt Meshtastic messages that ingestors forward still encrypted (default = Meshtastic default key). |
 
 ### Monitoring
 

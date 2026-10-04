@@ -441,6 +441,12 @@
                 description = "Seconds between Meshcore contact telemetry polls; requires txEnabled since polling transmits. 0 disables on-air polling";
               };
 
+              meshcoreTelemetryPoll24hExempt = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Comma-separated node ids exempt from the once-per-24h Meshcore contact telemetry cooldown; listed nodes are polled every round-robin rotation. Requires txEnabled";
+              };
+
               txEnabled = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
@@ -557,6 +563,7 @@
                 ENERGY_SAVING = if cfg.ingestor.energySaving then "1" else "0";
                 MESHCORE_SELF_TELEMETRY_SECONDS = toString cfg.ingestor.meshcoreSelfTelemetrySeconds;
                 MESHCORE_TELEMETRY_POLL_SECONDS = toString cfg.ingestor.meshcoreTelemetryPollSeconds;
+                MESHCORE_TELEMETRY_POLL_24H_EXEMPT = cfg.ingestor.meshcoreTelemetryPoll24hExempt;
                 PRIMARY_CHANNEL_ONLY = if cfg.ingestor.primaryChannelOnly then "1" else "0";
                 PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;
                 MESH_UDP_GROUP = cfg.ingestor.meshUdpGroup;
