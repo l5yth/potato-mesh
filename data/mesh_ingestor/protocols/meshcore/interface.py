@@ -54,12 +54,6 @@ class _MeshcoreInterface:
         self._contacts_lock = threading.Lock()
         self._contacts: dict = {}
         self.isConnected: bool = False
-        # Tracks synthetic node IDs already upserted this session to avoid
-        # repeating the HTTP POST for every message from the same unknown sender.
-        # This set is reset on reconnect (because _MeshcoreInterface is recreated),
-        # which may cause extra upserts after a disconnect — the ON CONFLICT guard
-        # in the Ruby web app ensures those are idempotent and safe.
-        self._synthetic_node_ids: set[str] = set()
         self._self_info_payload: dict | None = None
         """Most recent SELF_INFO payload received from the device, or ``None``."""
 
@@ -136,6 +130,11 @@ class _MeshcoreInterface:
         available in the event payload.  The comparison is case-sensitive
         because ``adv_name`` values come verbatim from the MeshCore firmware.
 
+        A roster keeps a retired keypair under its old name until it is
+        evicted, so several contacts can share one name.  The contact with the
+        newest ``last_advert`` wins; on a tie the first one in roster order
+        does (SPEC GN3).
+
         Parameters:
             adv_name: Advertised name to look up.  Leading and trailing
                 whitespace is stripped before comparison.
@@ -147,12 +146,17 @@ class _MeshcoreInterface:
         name = adv_name.strip() if adv_name else ""
         if not name:
             return None
+        best_key = None
+        best_advert = -1
         with self._contacts_lock:
             for pub_key, contact in self._contacts.items():
                 contact_name = (contact.get("adv_name") or "").strip()
-                if contact_name == name:
-                    return _meshcore_node_id(pub_key)
-        return None
+                if contact_name != name:
+                    continue
+                advert = contact.get("last_advert") or 0
+                if advert > best_advert:
+                    best_key, best_advert = pub_key, advert
+        return _meshcore_node_id(best_key) if best_key else None
 
     # ------------------------------------------------------------------
     # Lifecycle

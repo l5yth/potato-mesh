@@ -32,11 +32,9 @@ from .identity import _derive_synthetic_node_id, _meshcore_node_id
 from .interface import _MeshcoreInterface
 from .messages import (
     _derive_message_id,
-    _extract_mention_names,
     _normalize_hops,
     _normalize_path,
     _parse_sender_name,
-    _synthetic_node_dict,
 )
 from .position import _store_meshcore_position
 from .telemetry import _make_telemetry_handlers
@@ -259,31 +257,17 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # MeshCore channel messages carry no sender identifier in the event
         # payload.  Try to resolve the sender from the "SenderName: body"
         # convention embedded in the message text, matched against the known
-        # contacts roster.  When the contacts roster does not yet contain the
-        # sender, create a synthetic placeholder node so that the message
-        # receives a stable from_id and the UI can render a badge immediately.
-        # The web app will migrate messages to the real node ID once the sender
-        # is seen via a contact advertisement.
+        # contacts roster.  When the contacts roster does not contain the
+        # sender, the message carries a name-derived synthetic from_id.  No
+        # node is POSTed for it: the web app mints the placeholder from the
+        # message text once the message has passed the channel filters, and
+        # migrates it to the real node ID when a contact advertisement arrives
+        # (SPEC GN4).  ``@[Name]`` mentions are not receptions and never become
+        # nodes (SPEC GN1).
         sender_name = _parse_sender_name(text)
         from_id = iface.lookup_node_id_by_name(sender_name) if sender_name else None
         if from_id is None and sender_name:
-            synthetic_id = _derive_synthetic_node_id(sender_name)
-            if synthetic_id not in iface._synthetic_node_ids:
-                _handlers.upsert_node(synthetic_id, _synthetic_node_dict(sender_name))
-                iface._synthetic_node_ids.add(synthetic_id)
-            from_id = synthetic_id
-
-        # Upsert synthetic placeholder nodes for any @[Name] mentions in the
-        # message body whose names are not yet in the contacts roster.  This
-        # ensures mention badges resolve even before the mentioned node is seen.
-        for mention_name in _extract_mention_names(text):
-            if not iface.lookup_node_id_by_name(mention_name):
-                mention_id = _derive_synthetic_node_id(mention_name)
-                if mention_id not in iface._synthetic_node_ids:
-                    _handlers.upsert_node(
-                        mention_id, _synthetic_node_dict(mention_name)
-                    )
-                    iface._synthetic_node_ids.add(mention_id)
+            from_id = _derive_synthetic_node_id(sender_name)
 
         # The dedup fingerprint uses the parsed sender name (lowercased and
         # stripped) rather than ``from_id``: each ingestor independently

@@ -66,7 +66,6 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _derive_modem_preset,
     _derive_synthetic_node_id,
     _ensure_channel_names,
-    _extract_mention_names,
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
@@ -82,7 +81,6 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _record_meshcore_message,
     _self_info_to_node_dict,
     _store_meshcore_position,
-    _synthetic_node_dict,
     _to_json_safe,
 )
 
@@ -807,54 +805,6 @@ def test_derive_synthetic_node_id_unicode():
 
 
 # ---------------------------------------------------------------------------
-# _synthetic_node_dict
-# ---------------------------------------------------------------------------
-
-
-def test_synthetic_node_dict_fields():
-    """_synthetic_node_dict returns a node dict with correct user fields."""
-    nd = _synthetic_node_dict("T114-Zeh")
-    assert nd["protocol"] == "meshcore"
-    assert nd["user"]["longName"] == "T114-Zeh"
-    assert nd["user"]["role"] == "COMPANION"
-    assert nd["user"]["synthetic"] is True
-    assert isinstance(nd["lastHeard"], int)
-
-
-def test_synthetic_node_dict_short_name_empty():
-    """Short name is always empty — the Ruby web app derives it at query time."""
-    nd = _synthetic_node_dict("pete 🍁")
-    assert nd["user"]["shortName"] == ""
-
-
-# ---------------------------------------------------------------------------
-# _extract_mention_names
-# ---------------------------------------------------------------------------
-
-
-def test_extract_mention_names_single():
-    """Extracts one mention name."""
-    assert _extract_mention_names("Hey @[Alice]!") == ["Alice"]
-
-
-def test_extract_mention_names_multiple():
-    """Extracts multiple mention names in order."""
-    assert _extract_mention_names("@[Alpha] and @[Beta]") == ["Alpha", "Beta"]
-
-
-def test_extract_mention_names_none():
-    """Returns empty list when no mentions are present."""
-    assert _extract_mention_names("no mentions here") == []
-
-
-def test_extract_mention_names_preserves_spaces():
-    """Names with spaces inside brackets are preserved."""
-    assert _extract_mention_names("Hi @[MaLiBu'2 Britz-Sued]") == [
-        "MaLiBu'2 Britz-Sued"
-    ]
-
-
-# ---------------------------------------------------------------------------
 # _MeshcoreInterface.lookup_node_id_by_name
 # ---------------------------------------------------------------------------
 
@@ -910,6 +860,38 @@ def test_lookup_node_id_by_name_multiple_contacts():
     iface._update_contact({"public_key": "22222222" + "00" * 28, "adv_name": "Beta"})
     assert iface.lookup_node_id_by_name("Alpha") == "!11111111"
     assert iface.lookup_node_id_by_name("Beta") == "!22222222"
+
+
+@pytest.mark.parametrize("retired_first", [True, False])
+def test_lookup_node_id_by_name_prefers_newest_last_advert(retired_first):
+    """A name held by a retired and a live keypair resolves to the newest advert.
+
+    A roster keeps a retired keypair under its old name until it is evicted, so
+    insertion order alone would hand the retired id to every channel message
+    from that name (SPEC GN3).
+    """
+    iface = _MeshcoreInterface(target=None)
+    retired = {
+        "public_key": "dddd0001" + "00" * 28,
+        "adv_name": "Carol",
+        "last_advert": 1_750_000_000,
+    }
+    live = {
+        "public_key": "cccc0001" + "00" * 28,
+        "adv_name": "Carol",
+        "last_advert": 1_759_000_000,
+    }
+    for contact in (retired, live) if retired_first else (live, retired):
+        iface._update_contact(contact)
+    assert iface.lookup_node_id_by_name("Carol") == "!cccc0001"
+
+
+def test_lookup_node_id_by_name_keeps_first_contact_on_equal_last_advert():
+    """Without a newer advert to prefer, the first same-name contact wins."""
+    iface = _MeshcoreInterface(target=None)
+    iface._update_contact({"public_key": "11111111" + "00" * 28, "adv_name": "Twin"})
+    iface._update_contact({"public_key": "22222222" + "00" * 28, "adv_name": "Twin"})
+    assert iface.lookup_node_id_by_name("Twin") == "!11111111"
 
 
 # ---------------------------------------------------------------------------
@@ -2379,59 +2361,33 @@ def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
     assert pkt["from_id"] == "!aabbccdd"
 
 
-def test_on_channel_msg_creates_synthetic_node_when_sender_not_in_contacts(monkeypatch):
-    """on_channel_msg upserts a synthetic node and sets from_id when sender is unknown."""
+def test_on_channel_msg_derives_synthetic_from_id_without_posting_a_node(monkeypatch):
+    """An unrostered sender gets the name-derived from_id but no node POST.
+
+    The web app mints the placeholder from the message text once the message
+    has passed the channel filters (SPEC GN4), so the ingestor queues no
+    ``/api/nodes`` upsert for it, however many messages the sender posts.
+    """
     import asyncio
     from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
 
     captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
-    asyncio.run(
-        hmap["CHANNEL_MSG_RECV"](
-            _FakeEvt(
-                {
-                    "sender_timestamp": 1_758_000_003,
-                    "text": "UnknownSender: Hello",
-                    "channel_idx": 0,
-                }
+    for sender_ts, text in ((1_758_000_003, "First"), (1_758_000_004, "Second")):
+        asyncio.run(
+            hmap["CHANNEL_MSG_RECV"](
+                _FakeEvt(
+                    {
+                        "sender_timestamp": sender_ts,
+                        "text": f"UnknownSender: {text}",
+                        "channel_idx": 0,
+                    }
+                )
             )
         )
-    )
-
-    assert len(captured) == 1
-    expected_id = _derive_synthetic_node_id("UnknownSender")
-    assert captured[0]["from_id"] == expected_id
-    # A synthetic node should have been upserted for the sender.
-    synth_upserts = [(nid, nd) for nid, nd in upserted if nid == expected_id]
-    assert len(synth_upserts) == 1
-    synth_node = synth_upserts[0][1]
-    assert synth_node["user"]["longName"] == "UnknownSender"
-    assert synth_node["user"]["role"] == "COMPANION"
-    assert synth_node["user"]["synthetic"] is True
-
-
-def test_on_channel_msg_synthetic_upserted_only_once_per_session(monkeypatch):
-    """on_channel_msg only calls upsert_node once per unique synthetic ID per session."""
-    import asyncio
-    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
-
-    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
-    payload = {
-        "sender_timestamp": 1_758_000_010,
-        "text": "UnknownSender: First",
-        "channel_idx": 0,
-    }
-    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
-    payload2 = {
-        "sender_timestamp": 1_758_000_011,
-        "text": "UnknownSender: Second",
-        "channel_idx": 0,
-    }
-    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload2)))
 
     expected_id = _derive_synthetic_node_id("UnknownSender")
-    sender_upserts = [nid for nid, _ in upserted if nid == expected_id]
-    # Second message must NOT re-upsert the same synthetic node.
-    assert len(sender_upserts) == 1
+    assert [pkt["from_id"] for pkt in captured] == [expected_id, expected_id]
+    assert upserted == []
 
 
 def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
@@ -2456,12 +2412,15 @@ def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
     assert upserted == []
 
 
-def test_on_channel_msg_upserts_synthetic_for_unknown_mention(monkeypatch):
-    """on_channel_msg upserts synthetic nodes for @[Name] mentions not in contacts."""
+def test_on_channel_msg_posts_no_node_for_mentions(monkeypatch):
+    """A mention is not a reception: no node POST, rostered or not (SPEC GN1)."""
     import asyncio
-    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
 
-    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    pub_key = "aabbccdd" + "00" * 28
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "Bob"}],
+    )
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -2474,38 +2433,50 @@ def test_on_channel_msg_upserts_synthetic_for_unknown_mention(monkeypatch):
         )
     )
 
-    upserted_ids = {nid for nid, _ in upserted}
-    assert _derive_synthetic_node_id("Bob") in upserted_ids
-    assert _derive_synthetic_node_id("Carol") in upserted_ids
+    assert len(captured) == 1
+    assert upserted == []
 
 
-def test_on_channel_msg_skips_synthetic_for_known_mention(monkeypatch):
-    """on_channel_msg does not upsert synthetic for @[Name] if name is in contacts."""
+def test_on_channel_msg_hidden_channel_queues_nothing(monkeypatch):
+    """A ``HIDDEN_CHANNELS`` message leaks neither its text nor its names.
+
+    Runs the real ``handlers`` module with only the HTTP queue captured, so the
+    channel filter in ``store_packet_dict`` applies exactly as in production;
+    names parsed from the hidden text must not reach ``/api/nodes`` either.
+    """
     import asyncio
-    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+    import data.mesh_ingestor.channels as _channels
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.queue as _queue_mod
 
-    pub_key = "aabbccdd" + "00" * 28
-    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(
-        monkeypatch,
-        contacts=[{"public_key": pub_key, "adv_name": "Bob"}],
+    sent: list = []
+    monkeypatch.setattr(
+        _queue_mod,
+        "_queue_post_json",
+        lambda path, payload, *, priority, **_kw: sent.append(path),
     )
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    # DEBUG off: the dropped packet must not be appended to the ignored log.
+    monkeypatch.setattr(_mod.config, "DEBUG", False)
+    monkeypatch.setattr(_mod.config, "HIDDEN_CHANNELS", ("Secret",))
+    monkeypatch.setattr(_mod.config, "ALLOWED_CHANNELS", ())
+    monkeypatch.setattr(_mod.config, "PRIMARY_CHANNEL_ONLY", False)
+    monkeypatch.setattr(_channels, "_CHANNEL_LOOKUP", {5: "Secret"})
+
+    hmap = _make_event_handlers(_MeshcoreInterface(target=None), "/dev/ttyUSB0")
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
                 {
                     "sender_timestamp": 1_758_000_006,
-                    "text": "Alice: Hey @[Bob]",
-                    "channel_idx": 0,
+                    "text": "Erin: meet @[Ghosty] at 8",
+                    "channel_idx": 5,
                 }
             )
         )
     )
 
-    # Bob is in contacts — no synthetic upsert for Bob.
-    bob_upserts = [
-        nid for nid, _ in upserted if nid == _derive_synthetic_node_id("Bob")
-    ]
-    assert bob_upserts == []
+    assert sent == []
 
 
 def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):

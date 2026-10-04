@@ -20,8 +20,6 @@ import only what they need without picking up unrelated side-effects.
 
 from __future__ import annotations
 
-import re
-
 _CONNECT_TIMEOUT_SECS: float = 30.0
 """Seconds to wait for :class:`MeshcoreProvider.connect` to return.
 
@@ -88,6 +86,3 @@ instead of ``0``; any other value is the masked 6-bit hop count (the
 ``meshcore`` library strips the 2-bit ``path_hash_mode`` prefix before
 dispatching, so handlers only ever see ``0``–``63`` or this sentinel).
 """
-
-# Matches @[Name] mention patterns in MeshCore message bodies.
-_MENTION_RE = re.compile(r"@\[([^\]]+)\]")

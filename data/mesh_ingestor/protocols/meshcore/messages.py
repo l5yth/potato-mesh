@@ -17,9 +17,8 @@
 from __future__ import annotations
 
 import hashlib
-import time
 
-from ._constants import _DIRECT_PATH_LEN, _MENTION_RE, _MESHCORE_ID_MASK
+from ._constants import _DIRECT_PATH_LEN, _MESHCORE_ID_MASK
 
 
 def _normalize_hops(path_len: object) -> int | None:
@@ -134,48 +133,3 @@ def _parse_sender_name(text: str) -> str | None:
         return None
     name = text[:colon_idx].strip()
     return name if name else None
-
-
-def _extract_mention_names(text: str) -> list[str]:
-    """Extract all ``@[Name]`` mention names from a MeshCore message body.
-
-    Parameters:
-        text: Raw message text that may contain ``@[Name]`` mention patterns.
-
-    Returns:
-        List of extracted name strings (may be empty).
-    """
-    return _MENTION_RE.findall(text)
-
-
-def _synthetic_node_dict(long_name: str) -> dict:
-    """Build a synthetic node dict for an unknown MeshCore channel sender.
-
-    Synthetic nodes are placeholder entries created when a channel message
-    arrives from a sender who is not yet in the connected device's contacts
-    roster.  They carry ``role=COMPANION`` (the only role capable of sending
-    channel messages).  The short name is intentionally omitted here — the
-    Ruby web app derives it at query time via
-    ``meshcore_companion_display_short_name`` for all COMPANION nodes.
-
-    When the real contact advertisement is later received, the Ruby web app
-    detects the matching long name, migrates all messages from the synthetic
-    node ID to the real one, and removes the placeholder row.
-
-    Parameters:
-        long_name: Sender name parsed from the ``"SenderName: body"`` prefix.
-
-    Returns:
-        Node dict compatible with the ``POST /api/nodes`` payload format,
-        with ``user.synthetic`` set to ``True``.
-    """
-    return {
-        "lastHeard": int(time.time()),
-        "protocol": "meshcore",
-        "user": {
-            "longName": long_name,
-            "shortName": "",
-            "role": "COMPANION",
-            "synthetic": True,
-        },
-    }
