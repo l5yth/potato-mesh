@@ -27,6 +27,7 @@ import sys
 MANIFESTS = (
     "Gemfile",
     "requirements.txt",
+    "requirements-dev.txt",
     "Cargo.toml",
     "pubspec.yaml",
     "package.json",

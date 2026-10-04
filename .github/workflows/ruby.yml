@@ -34,6 +34,9 @@ jobs:
         working-directory: ./web
     runs-on: ubuntu-latest
     strategy:
+      # The web image ships Ruby 3.4 (web/Dockerfile); CI tests it and 4.0.
+      # One leg's failure must not cancel the others' results.
+      fail-fast: false
       matrix:
         ruby-version: ['3.4', '4.0']
 
