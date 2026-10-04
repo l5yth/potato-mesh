@@ -16,6 +16,14 @@
 name = "potatomesh-matrix-bridge"
 version = "0.7.5"
 edition = "2021"
+description = "Bridges PotatoMesh LoRa mesh messages into a Matrix room, with one Matrix puppet user per mesh node."
+license = "Apache-2.0"
+repository = "https://github.com/l5yth/potato-mesh"
+homepage = "https://potatomesh.net"
+readme = "README.md"
+keywords = ["matrix", "meshtastic", "lora", "mesh", "bridge"]
+categories = ["command-line-utilities", "network-programming"]
+authors = ["l5yth & contributors"]
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

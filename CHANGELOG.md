@@ -9,6 +9,7 @@
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
+* Matrix: the bridge crate declares its crates.io package metadata, and its README screenshot no longer links outside the crate (#879)
 * Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
 * Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
 * Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
