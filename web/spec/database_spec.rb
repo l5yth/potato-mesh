@@ -617,6 +617,91 @@ RSpec.describe PotatoMesh::App::Database do
     end
   end
 
+  # Seed meshcore message rows into a database that already ran the
+  # version-2 sweep, boot it, and return the ids the #880 purge leaves.
+  #
+  # @param rows [Array<Array>] +[id, rx_time, from_id, to_id, channel,
+  #   channel_name, text]+ tuples.
+  # @param boots [Integer] number of +ensure_schema_upgrades+ passes.
+  # @return [Array<Integer>] surviving message ids, ascending.
+  def purge_from_version_2(rows, boots: 1)
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute("PRAGMA user_version = 2")
+      rows.each do |id, rx_time, from_id, to_id, channel, channel_name, text|
+        db.execute(
+          "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,channel_name,text,protocol) VALUES (?,?,?,?,?,?,?,?,?)",
+          [id, rx_time, Time.at(rx_time).utc.iso8601, from_id, to_id, channel, channel_name, text, "meshcore"],
+        )
+      end
+    end
+    boots.times { harness_class.ensure_schema_upgrades }
+    db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+    db.execute("SELECT id FROM messages ORDER BY id").flatten
+  ensure
+    db&.close
+  end
+
+  it "re-runs the purge once at backfill version 3 for copies whose sender resolved differently (#880)" do
+    # A database that already ran the version-2 sweep.  Two ingestors stored
+    # one #bot transmission at local slots 4 and 6; one resolved Alice to her
+    # pubkey id, the other to the name-derived synthetic id.  The 91xx pair was
+    # converged afterwards by the synthetic->real merge; the 92xx pair never
+    # merged.  Direct messages and broadcasts without a usable "Name:" prefix
+    # keep their from_id leg, so the 93xx-95xx pairs survive.
+    survivors = purge_from_version_2([
+      [9_101, 1_776_760_000, "!a1a2a3a4", "^all", 4, "#bot", "Alice: dedup me"],
+      [9_102, 1_776_760_002, "!a1a2a3a4", "^all", 6, "#bot", "Alice: dedup me"],
+      [9_201, 1_776_761_000, "!a1a2a3a4", "^all", 4, "#bot", "Alice: again"],
+      [9_202, 1_776_761_003, "!3bc51062", "^all", 6, "#bot", "Alice: again"],
+      [9_301, 1_776_762_000, "!b1b1b1b1", "!0000aaaa", 0, nil, "re: meet at five"],
+      [9_302, 1_776_762_002, "!c2c2c2c2", "!0000aaaa", 0, nil, "re: meet at five"],
+      [9_401, 1_776_763_000, "!b1b1b1b1", "^all", 4, "#bot", "no sender prefix"],
+      [9_402, 1_776_763_002, "!c2c2c2c2", "^all", 6, "#bot", "no sender prefix"],
+      [9_501, 1_776_764_000, "!b1b1b1b1", "^all", 4, "#bot", " \t: blank name"],
+      [9_502, 1_776_764_002, "!c2c2c2c2", "^all", 6, "#bot", " \t: blank name"],
+    ], boots: 2)
+
+    expect(survivors).to eq([9_101, 9_201, 9_301, 9_302, 9_401, 9_402, 9_501, 9_502])
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.get_first_value("PRAGMA user_version").to_i).to eq(3)
+    end
+  end
+
+  it "keeps an attributed broadcast when the only earlier copy has no sender (#880)" do
+    # The earlier copy cannot vouch for who sent the text, so it must not
+    # delete the later one that names a sender.
+    survivors = purge_from_version_2([
+      [9_601, 1_776_765_000, nil, "^all", 4, "#bot", "Alice: unattributed first"],
+      [9_602, 1_776_765_002, "!a1a2a3a4", "^all", 6, "#bot", "Alice: unattributed first"],
+    ])
+
+    expect(survivors).to eq([9_601, 9_602])
+  end
+
+  it "keeps a broadcast whose only earlier match is a direct message with the same text (#880)" do
+    # Neither row knows its channel name, so only the recipient tells the
+    # direct message apart from the broadcast.
+    survivors = purge_from_version_2([
+      [9_701, 1_776_766_000, "!b1b1b1b1", "!0000aaaa", 0, nil, "Alice: same words"],
+      [9_702, 1_776_766_002, "!a1a2a3a4", "^all", 4, nil, "Alice: same words"],
+    ])
+
+    expect(survivors).to eq([9_701, 9_702])
+  end
+
+  it "purges a sender-keyed duplicate that has no recipient (#880)" do
+    # A row with no recipient belongs to the sender-keyed sweep.  Its text has
+    # a "Name:"-like prefix, so comparing the NULL to_id with "=" instead of
+    # "IS" would yield NULL and drop the row from both statements.
+    survivors = purge_from_version_2([
+      [9_801, 1_776_767_000, "!a1a2a3a4", nil, 0, nil, "re: no recipient"],
+      [9_802, 1_776_767_002, "!a1a2a3a4", nil, 0, nil, "re: no recipient"],
+    ])
+
+    expect(survivors).to eq([9_801])
+  end
+
   it "purges cross-ingestor duplicates on the same boot that adds the channel_name column" do
     # Upgrade path from a pre-#825 schema (no channel_name column): the same
     # ensure_schema_upgrades pass adds the column AND the one-shot purge must
@@ -726,8 +811,9 @@ RSpec.describe PotatoMesh::App::Database do
     # First boot seeds the backfill target; migration collapses the pair and
     # sets user_version.  Second boot seeds NEW duplicates post-bump — the
     # gated migration must leave them alone so we are not paying for a
-    # self-join on every single startup.  The runtime guard in
-    # insert_message is what keeps new duplicates from piling up in prod.
+    # self-join on every single startup.  Rows inserted later are left to the
+    # runtime guard in insert_message, which does not stop every duplicate
+    # (#880), so clearing history again takes a backfill version bump.
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       seed_meshcore_message_tables(db)
       db.execute(
@@ -764,23 +850,38 @@ RSpec.describe PotatoMesh::App::Database do
     end
   end
 
-  it "creates the partial index backing the runtime content-dedup lookup" do
+  # Read the CREATE statement SQLite stored for an index.
+  #
+  # @param name [String] index name.
+  # @return [String, nil] the statement, or nil when the index does not exist.
+  def index_sql(name)
+    db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+    db.get_first_value("SELECT sql FROM sqlite_master WHERE type='index' AND name = ?", [name])
+  ensure
+    db&.close
+  end
+
+  it "creates the meshcore partial indexes when upgrading an existing schema" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       seed_meshcore_message_tables(db)
     end
 
     harness_class.ensure_schema_upgrades
 
-    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
-      row = db.get_first_row(
-        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_messages_meshcore_content'",
-      )
-      expect(row).not_to be_nil
-      index_sql = row.first
-      expect(index_sql).to include("meshcore")
-      expect(index_sql).to include("from_id")
-      expect(index_sql).to include("channel")
-      expect(index_sql).to include("rx_time")
-    end
+    content_index = index_sql("idx_messages_meshcore_content")
+    expect(content_index).not_to be_nil
+    expect(content_index).to include("meshcore")
+    expect(content_index).to include("from_id")
+    expect(content_index).to include("channel")
+    expect(content_index).to include("rx_time")
+    # The index every content-dedup lookup and both purge statements search
+    # (#880, SPEC MX6).
+    expect(index_sql("idx_messages_meshcore_text")).to include("(text, rx_time)").and include("protocol = 'meshcore'")
+  end
+
+  it "creates the meshcore text index with the schema of a fresh database (#880)" do
+    harness_class.init_db
+
+    expect(index_sql("idx_messages_meshcore_text")).to include("(text, rx_time)").and include("protocol = 'meshcore'")
   end
 end

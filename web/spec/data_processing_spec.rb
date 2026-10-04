@@ -16,42 +16,11 @@
 
 require "spec_helper"
 require "sqlite3"
+require_relative "support/data_processing_harness"
 
 RSpec.describe PotatoMesh::App::DataProcessing do
   # Build a minimal host class so we can call the module methods in isolation.
-  let(:harness_class) do
-    Class.new do
-      include PotatoMesh::App::DataProcessing
-      include PotatoMesh::App::Helpers
-
-      def debug_log(message, **); end
-
-      def warn_log(message, **); end
-
-      def with_busy_retry
-        yield
-      end
-
-      def update_prometheus_metrics(*); end
-
-      def prom_report_ids
-        []
-      end
-
-      def private_mode?
-        false
-      end
-
-      def normalize_node_id(_db, node_ref)
-        parts = canonical_node_parts(node_ref)
-        parts ? parts[0] : nil
-      end
-
-      def resolve_protocol(_db, _ingestor, cache: nil)
-        "meshtastic"
-      end
-    end
-  end
+  let(:harness_class) { DataProcessingHarness.build }
 
   subject(:dp) { harness_class.new }
 
@@ -216,54 +185,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(parts).not_to be_nil
       expect(parts[1]).to eq(0xaabbccdd)
     end
-  end
-
-  shared_context "with isolated db" do
-    around do |example|
-      Dir.mktmpdir("dp-spec-") do |dir|
-        db_path = File.join(dir, "mesh.db")
-        RSpec::Mocks.with_temporary_scope do
-          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
-          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
-          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:four_weeks_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
-          db_helper = Object.new.extend(PotatoMesh::App::Database)
-          db_helper.init_db
-          db_helper.ensure_schema_upgrades
-          example.run
-        end
-      end
-    end
-
-    def open_db
-      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-      db.results_as_hash = true
-      db
-    end
-
-    # Return the full node row for the canonical test node ID.
-    def read_node(db)
-      db.execute("SELECT * FROM nodes WHERE node_id = '!aabbccdd'").first
-    end
-
-    # Insert the canonical test node with full user info and CLIENT_BASE role.
-    def seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", {
-        "lastHeard" => now - 100,
-        "num" => 0xaabbccdd,
-        "user" => {
-          "role" => "CLIENT_BASE",
-          "longName" => "Real Long Name",
-          "shortName" => "RLN",
-          "macaddr" => "aa:bb:cc:dd:ee:ff",
-          "hwModel" => "TBEAM",
-          "publicKey" => "abc123",
-        },
-      })
-    end
-
-    let(:now) { Time.now.to_i }
   end
 
   # ---------------------------------------------------------------------------
@@ -2260,18 +2181,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # ---------------------------------------------------------------------------
   describe "#insert_message — meshcore duplicate-copy sender resolution" do
     include_context "with isolated db"
+    include MeshcoreNodeSeeds
 
     let(:now) { Time.now.to_i }
-
-    # Seed a keyed (synthetic=0) meshcore node whose evidence age is
-    # controlled by +heard+.
-    def seed_keyed_node(db, node_id, name, key_byte, heard)
-      dp.upsert_node(db, node_id, {
-        "lastHeard" => heard,
-        "protocol" => "meshcore",
-        "user" => { "longName" => name, "shortName" => key_byte, "role" => "COMPANION", "publicKey" => key_byte * 32 },
-      }, protocol: "meshcore")
-    end
 
     def duplicate_copy(from_id, rx_time)
       {
@@ -2614,8 +2526,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
     it "never issues the content-dedup SELECT for non-meshcore traffic" do
       # Pins the performance contract: meshtastic traffic must skip the
-      # partial-index lookup entirely so any future regression that makes
-      # the pre-check unconditional surfaces as a failing test.
+      # meshcore content-dedup lookup (an +idx_messages_meshcore_text+
+      # search, SPEC MX6) entirely so any future regression that makes the
+      # pre-check unconditional surfaces as a failing test.
       db = open_db
       content_select_pattern = /SELECT\s+id\s+FROM\s+messages\s+WHERE\s+protocol\s*=\s*'meshcore'/im
       captured_sql = []
