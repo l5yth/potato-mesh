@@ -64,7 +64,7 @@ jobs:
         mv "${APK_DIR}/app-release.apk" "${APK_DIR}/potatomesh-reader-android-${TAG_NAME}.apk"
         (cd "${APK_DIR}" && sha256sum "potatomesh-reader-android-${TAG_NAME}.apk" > "potatomesh-reader-android-${TAG_NAME}.apk.sha256sum")
     - name: Upload release artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: potatomesh-reader-android-${{ env.TAG_NAME }}
         path: |
@@ -99,7 +99,7 @@ jobs:
         mv "${IPA_FILE}" "${IPA_DIR}/potatomesh-reader-ios-${TAG_NAME}.ipa"
         (cd "${IPA_DIR}" && shasum -a 256 "potatomesh-reader-ios-${TAG_NAME}.ipa" > "potatomesh-reader-ios-${TAG_NAME}.ipa.sha256sum")
     - name: Upload release artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: potatomesh-reader-ios-${{ env.TAG_NAME }}
         path: |
