@@ -322,6 +322,49 @@ def is_primary_only() -> bool:
     return bool(getattr(config, "PRIMARY_CHANNEL_ONLY", False))
 
 
+def ingest_filter_reason(
+    channel_index: int | None, *, via_mqtt: bool = False
+) -> str | None:
+    """Return why a received record must not be forwarded, or ``None``.
+
+    The single ingest-filter policy shared by the packet router and the
+    node-list snapshot (SPEC CF2/VM2).  The channel filters run in the order
+    the message path has always applied them - ``PRIMARY_CHANNEL_ONLY``, then
+    ``ALLOWED_CHANNELS``, then ``HIDDEN_CHANNELS`` - followed by
+    ``DROP_VIA_MQTT``.
+
+    The name matched is the one captured from the radio.  When none was
+    captured for channel 0 - the passive UDP transport names no channels - the
+    operator's ``PRIMARY_CHANNEL_NAME`` stands in, for matching only.
+
+    Parameters:
+        channel_index: Local channel index the record was heard on, or ``None``
+            when the record carries no channel attribution at all (records of
+            protocols without channels, such as MeshCore telemetry pulls).
+            Unattributed records skip the channel filters.
+        via_mqtt: Whether the radio flagged the record as relayed via_mqtt.
+
+    Returns:
+        ``"non-primary-channel"``, ``"disallowed-channel"``,
+        ``"hidden-channel"`` or ``"via_mqtt"`` when the record must be
+        dropped, otherwise ``None``.
+    """
+
+    if channel_index is not None:
+        if is_primary_only() and not is_primary_channel(channel_index):
+            return "non-primary-channel"
+        name = channel_name(channel_index)
+        if name is None and is_primary_channel(channel_index):
+            name = getattr(config, "PRIMARY_CHANNEL_NAME", "") or None
+        if not is_allowed_channel(name):
+            return "disallowed-channel"
+        if is_hidden_channel(name):
+            return "hidden-channel"
+    if via_mqtt and getattr(config, "DROP_VIA_MQTT", False):
+        return "via_mqtt"
+    return None
+
+
 def _reset_channel_cache() -> None:
     """Clear cached channel data. Intended for use in tests only."""
 
@@ -337,6 +380,7 @@ __all__ = [
     "register_channel",
     "allowed_channel_names",
     "hidden_channel_names",
+    "ingest_filter_reason",
     "is_allowed_channel",
     "is_hidden_channel",
     "is_primary_channel",

@@ -366,7 +366,7 @@
               channelIndex = lib.mkOption {
                 type = lib.types.int;
                 default = 0;
-                description = "Channel index to ingest from";
+                description = "Channel index the activity announcement is sent on; not an ingest filter";
               };
 
               energySaving = lib.mkOption {
@@ -403,6 +403,12 @@
                 type = lib.types.bool;
                 default = false;
                 description = "Ingest only channel 0. Unconditional when transport=udp; this option affects the api transport only";
+              };
+
+              dropViaMqtt = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Drop Meshtastic packets and nodes carrying the viaMqtt flag (relayed through an MQTT gateway)";
               };
 
               primaryChannelKey = lib.mkOption {
@@ -523,10 +529,6 @@
                 INSTANCE_DOMAIN = cfg.instanceDomain;
               } // lib.optionalAttrs (cfg.mapZoom != null) {
                 MAP_ZOOM = toString cfg.mapZoom;
-              } // lib.optionalAttrs (cfg.allowedChannels != null) {
-                ALLOWED_CHANNELS = cfg.allowedChannels;
-              } // lib.optionalAttrs (cfg.hiddenChannels != null) {
-                HIDDEN_CHANNELS = cfg.hiddenChannels;
               } // lib.optionalAttrs (cfg.apiToken != null) {
                 API_TOKEN = cfg.apiToken;
               };
@@ -565,6 +567,7 @@
                 MESHCORE_TELEMETRY_POLL_SECONDS = toString cfg.ingestor.meshcoreTelemetryPollSeconds;
                 MESHCORE_TELEMETRY_POLL_24H_EXEMPT = cfg.ingestor.meshcoreTelemetryPoll24hExempt;
                 PRIMARY_CHANNEL_ONLY = if cfg.ingestor.primaryChannelOnly then "1" else "0";
+                DROP_VIA_MQTT = if cfg.ingestor.dropViaMqtt then "1" else "0";
                 PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;
                 MESH_UDP_GROUP = cfg.ingestor.meshUdpGroup;
                 MESH_UDP_PORT = toString cfg.ingestor.meshUdpPort;

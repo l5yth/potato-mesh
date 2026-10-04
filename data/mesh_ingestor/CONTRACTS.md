@@ -84,6 +84,17 @@ cross-protocol collision can still attach position/telemetry or advance
 
 Deployment ordering. The web whitelist must accept a protocol before any ingestor posts it: if an ingestor ships a protocol the deployed web tier does not yet know, protocol resolution files those records under the `meshtastic` default and the misclassification persists after the web tier is upgraded. Concretely for reticulum: deploy (or merge) the web change before or together with the ingestor change, never after.
 
+### Ingest filters
+
+`ALLOWED_CHANNELS`, `HIDDEN_CHANNELS`, `PRIMARY_CHANNEL_ONLY` and `DROP_VIA_MQTT` are enforced by the ingestor before anything is POSTed; the web app applies no channel filter (SPEC CF1-CF3, VM1-VM2). One policy, `channels.ingest_filter_reason`, covers every record attributed to a channel: each packet `store_packet_dict` routes (messages, positions, telemetry, node info, traceroutes, waypoints, neighbor info, store-forward heartbeats) and each entry of the Meshtastic node-list snapshot, whose `channel` is the channel the node's last NodeInfo was heard on.
+
+- A Meshtastic packet or nodeDB entry without `channel` was heard on index 0: proto3 omits the field when it is 0.
+- A packet of another protocol without a `channel` key carries no channel attribution and skips the channel filters (a MeshCore telemetry pull). A protocol whose traffic is channel-scoped must stamp `channel` on the packets it hands to `store_packet_dict`. Records that never pass through it (MeshCore contacts and adverts, Reticulum announces) are not channel-filtered.
+- An index whose name was never captured matches no `ALLOWED_CHANNELS` or `HIDDEN_CHANNELS` entry, except channel 0, which is matched by `PRIMARY_CHANNEL_NAME` (the passive UDP transport captures no channel names). That name is used for matching only; message payloads keep their `channel_name` rules.
+- `DROP_VIA_MQTT` drops a packet carrying `viaMqtt: true` or `via_mqtt: true` (the latter from a proto-field-name conversion) and a nodeDB entry carrying `viaMqtt: true`; presence means true. The UDP transport maps the same `viaMqtt` key.
+- `POST /api/nodes` bodies never carry the meshtastic library's `lastReceived` copy of a node's last packet.
+- Known limit: a snapshot entry is published when its NodeInfo channel passes, and it carries the nodeDB's latest position, metrics and signal details (`lastHeard`, `snr`, `hopLimit`), which the radio stores whatever channel they were heard on.
+
 ### Ingest HTTP routes and payload shapes
 
 Future providers should emit payloads that match these shapes (keys + types), which are validated by existing tests (notably `tests/test_mesh.py`).

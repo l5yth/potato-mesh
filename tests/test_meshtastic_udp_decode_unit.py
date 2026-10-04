@@ -342,7 +342,7 @@ class TestMeshpacketToPacketDict:
         assert "text" not in d["decoded"]
 
     def test_optional_fields_absent_when_falsy(self):
-        """``rxSnr``/``rxRssi``/``hopLimit`` are omitted when the source field is falsy."""
+        """``rxSnr``/``rxRssi``/``hopLimit``/``viaMqtt`` are omitted when the source field is falsy."""
         mp = mesh_pb2.MeshPacket()
         mp.id = 1
         setattr(mp, "from", 1)
@@ -355,9 +355,10 @@ class TestMeshpacketToPacketDict:
         assert "rxSnr" not in d
         assert "rxRssi" not in d
         assert "hopLimit" not in d
+        assert "viaMqtt" not in d
 
     def test_optional_fields_present_when_truthy(self):
-        """``rxSnr``/``rxRssi``/``hopLimit`` are included when the source field is set."""
+        """``rxSnr``/``rxRssi``/``hopLimit``/``viaMqtt`` are included when the source field is set."""
         mp = mesh_pb2.MeshPacket()
         mp.id = 1
         setattr(mp, "from", 1)
@@ -367,12 +368,15 @@ class TestMeshpacketToPacketDict:
         mp.rx_snr = 7.5
         mp.rx_rssi = -42
         mp.hop_limit = 3
+        mp.via_mqtt = True
 
         d = udp.meshpacket_to_packet_dict(mp)
 
         assert d["rxSnr"] == pytest.approx(7.5)
         assert d["rxRssi"] == -42
         assert d["hopLimit"] == 3
+        # The DROP_VIA_MQTT gate reads this key, as it does from the API transport.
+        assert d["viaMqtt"] is True
 
     def test_rx_time_present_uses_packet_value(self):
         """A non-zero ``rx_time`` on the packet is used verbatim."""

@@ -237,11 +237,11 @@ def meshpacket_to_packet_dict(mp: "mesh_pb2.MeshPacket") -> dict:
     Returns:
         A dict with ``from``, ``fromId``, ``to``, ``toId``, ``id``,
         ``channel``, ``rxTime``, and ``decoded`` always present; ``rxSnr``,
-        ``rxRssi``, and ``hopLimit`` present only when the corresponding
-        source field is non-zero. The ``decoded`` sub-dict is enriched with the
-        same protobuf-derived sections the Meshtastic library populates (see
-        :func:`_enrich_decoded`) so downstream handlers behave identically to
-        the API/serial transport.
+        ``rxRssi``, ``hopLimit`` and ``viaMqtt`` present only when the
+        corresponding source field is set. The ``decoded`` sub-dict is
+        enriched with the same protobuf-derived sections the Meshtastic
+        library populates (see :func:`_enrich_decoded`) so downstream
+        handlers behave identically to the API/serial transport.
     """
     try:
         portnum_name = portnums_pb2.PortNum.Name(mp.decoded.portnum)
@@ -280,4 +280,8 @@ def meshpacket_to_packet_dict(mp: "mesh_pb2.MeshPacket") -> dict:
         packet["rxRssi"] = int(mp.rx_rssi)
     if mp.hop_limit:
         packet["hopLimit"] = int(mp.hop_limit)
+    # Same key and presence-means-true shape as the library's MessageToDict,
+    # so the DROP_VIA_MQTT gate sees UDP packets too (SPEC VM2).
+    if mp.via_mqtt:
+        packet["viaMqtt"] = True
     return packet

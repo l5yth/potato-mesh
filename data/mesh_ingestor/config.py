@@ -64,7 +64,7 @@ SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
 """Interval, in seconds, between state snapshot uploads."""
 
 CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
-"""Index of the LoRa channel to select when connecting."""
+"""Channel index activity announcements are sent on (SPEC MA8); not an ingest filter."""
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
@@ -123,6 +123,8 @@ def _env_flag(name: str, *, default: bool, on_invalid: bool) -> bool:
     space in a ``.env`` file is inert, matching :data:`MESH_UDP_PORT`), and
     resolves anything it cannot understand to *on_invalid* — which each caller
     sets to whichever value means "do not transmit" — after warning loudly.
+    Ingest-filter switches (:data:`PRIMARY_CHANNEL_ONLY`, :data:`DROP_VIA_MQTT`)
+    pass ``on_invalid=True`` for the same reason: a typo filters, never opens.
 
     A blank value is treated as unset so an empty ``.env`` line means "default",
     not "off" — the same blank tolerance :data:`MESH_UDP_PORT` has.
@@ -297,8 +299,12 @@ if _raw_transport not in ("api", "udp"):
 TRANSPORT = _raw_transport
 """Active ingestor transport: ``api`` (Meshtastic library) or ``udp`` (passive multicast)."""
 
-PRIMARY_CHANNEL_ONLY = os.environ.get("PRIMARY_CHANNEL_ONLY") == "1"
-"""When ``True``, only channel index 0 (PRIMARY) is ingested; all else is dropped."""
+PRIMARY_CHANNEL_ONLY = _env_flag("PRIMARY_CHANNEL_ONLY", default=False, on_invalid=True)
+"""When ``True``, only channel index 0 (PRIMARY) is ingested; all else is dropped.
+
+Covers every record attributed to a channel - each Meshtastic packet type and
+the node-list snapshot (SPEC CF1) - and parses like the ``TX_*`` flags (CF5).
+"""
 
 _raw_primary_key = os.environ.get("PRIMARY_CHANNEL_KEY", "AQ==").strip() or "AQ=="
 try:
@@ -619,6 +625,13 @@ HIDDEN_CHANNELS = _parse_hidden_channels(os.environ.get("HIDDEN_CHANNELS"))
 ALLOWED_CHANNELS = _parse_channel_names(os.environ.get("ALLOWED_CHANNELS"))
 """Explicitly permitted channel names; when set, other channels are ignored."""
 
+DROP_VIA_MQTT = _env_flag("DROP_VIA_MQTT", default=False, on_invalid=True)
+"""When ``True``, drop Meshtastic packets and nodeDB entries flagged ``viaMqtt``.
+
+Off by default (SPEC VM1).  Applied by the gate that applies the channel
+filters, to every packet type and to the node-list snapshot.
+"""
+
 
 def _resolve_instance_domain() -> str:
     """Resolve the configured instance domain from the environment.
@@ -746,6 +759,7 @@ __all__ = [
     "DEBUG",
     "HIDDEN_CHANNELS",
     "ALLOWED_CHANNELS",
+    "DROP_VIA_MQTT",
     "INSTANCE",
     "INSTANCES",
     "API_TOKEN",

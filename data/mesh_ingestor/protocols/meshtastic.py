@@ -16,9 +16,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pubsub import pub
 
-from .. import activity, config, daemon as _daemon, handlers, interfaces, tx_policy
+from .. import (
+    activity,
+    channels,
+    config,
+    daemon as _daemon,
+    handlers,
+    interfaces,
+    tx_policy,
+)
+from ..serialization import _coerce_int
 from ..utils import _retry_dict_snapshot
 
 
@@ -95,6 +106,35 @@ class MeshtasticProvider:
             )
             return []
         return result
+
+    def snapshot_filter_reason(self, node_id: str, node: object) -> str | None:
+        """Return why the node-list snapshot must not publish ``node`` (SPEC CF3).
+
+        An **optional**, duck-typed provider hook (like ``self_node_item``):
+        :func:`~data.mesh_ingestor.daemon._try_send_snapshot` asks it about
+        each entry and skips the ones it names.  A nodeDB entry records in
+        ``channel`` the local channel index the radio last heard the node's
+        NodeInfo on; proto3 omits it when it is ``0``, so an entry without one
+        belongs to the primary channel.  ``viaMqtt`` drives ``DROP_VIA_MQTT``.
+        Only that channel decides: a published entry still carries the
+        nodeDB's latest position and metrics, which the radio stores whatever
+        channel they were heard on (a documented limit, SPEC CF3).
+
+        Parameters:
+            node_id: Canonical id of the entry (unused; part of the hook shape).
+            node: The nodeDB entry.
+
+        Returns:
+            The :func:`~data.mesh_ingestor.channels.ingest_filter_reason`
+            verdict, or ``None`` for an entry that is not a mapping.
+        """
+
+        if not isinstance(node, Mapping):
+            return None
+        return channels.ingest_filter_reason(
+            _coerce_int(node.get("channel")) or 0,
+            via_mqtt=bool(node.get("viaMqtt")),
+        )
 
     def send_channel_announcement(self, iface: object, text: str) -> None:
         """Broadcast an activity announcement on the default channel (SPEC MA6/MA9).

@@ -39,8 +39,6 @@ x-web-base: &web-base
     OG_IMAGE_URL: ${OG_IMAGE_URL:-}
     PAGES_DIR: ${PAGES_DIR:-/app/pages}
     PROM_REPORT_IDS: ${PROM_REPORT_IDS:-}
-    ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-}
-    HIDDEN_CHANNELS: ${HIDDEN_CHANNELS:-}
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
@@ -64,6 +62,7 @@ x-ingestor-base: &ingestor-base
     CHANNEL_INDEX: ${CHANNEL_INDEX:-0}
     ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-}
     HIDDEN_CHANNELS: ${HIDDEN_CHANNELS:-}
+    DROP_VIA_MQTT: ${DROP_VIA_MQTT:-0}
     API_TOKEN: ${API_TOKEN}
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN:-http://web:41447}
     DEBUG: ${DEBUG:-0}

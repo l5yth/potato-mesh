@@ -278,14 +278,15 @@ Configure with the environment variables below.
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
 | `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint - see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
-| `CHANNEL_INDEX` | `0` | Which channel index to ingest from. |
+| `CHANNEL_INDEX` | `0` | Channel index the activity announcement is sent on (see `TX_ANNOUNCE`). It does not filter what is ingested. |
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
 | `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |
 | `CHANNEL` | _unset_ | Deprecated alias for `MESHTASTIC_PRESET`. |
-| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts (e.g. `Chat,Ops`); when set, all other channels are skipped before hidden filters. |
-| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
+| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts (e.g. `Chat,Ops`); when set, messages, positions, telemetry and node info heard on any other channel are dropped, before `HIDDEN_CHANNELS` applies. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
+| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor drops: messages, positions, telemetry and node info heard on them are not forwarded. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
+| `DROP_VIA_MQTT` | `0` | Set to `1` to drop Meshtastic packets and nodes the radio marks as relayed via MQTT. |
 | `TRANSPORT` | `api` | Ingestor transport: `api` (Meshtastic library over serial/TCP/BLE) or `udp` (passive LAN multicast; see [Passive UDP transport](#passive-udp-transport)). |
-| `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). |
+| `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
 | `PRIMARY_CHANNEL_KEY` | `AQ==` | Base64 PSK used to decrypt the primary channel in UDP transport (default = Meshtastic default key). |
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
 | `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
