@@ -43,7 +43,19 @@ class MeshProtocol(Protocol):
         """
 
     def extract_host_node_id(self, iface: object) -> str | None:
-        """Best-effort extraction of the connected host node id."""
+        """Best-effort extraction of the connected host node id.
+
+        The daemon calls it at connect and again on every loop while it
+        returns ``None``, so an id that becomes known only after connect still
+        registers. It must be cheap and must not raise: the loop does not
+        catch an exception from it.
+
+        Parameters:
+            iface: Interface returned by :meth:`connect`.
+
+        Returns:
+            Canonical ``!xxxxxxxx`` host node id, or ``None`` while unknown.
+        """
 
     def node_snapshot_items(self, iface: object) -> Iterable[tuple[str, object]]:
         """Return iterable of (node_id, node_obj) for initial snapshot."""

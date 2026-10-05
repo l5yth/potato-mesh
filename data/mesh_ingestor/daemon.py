@@ -167,11 +167,21 @@ def _is_ble_interface(iface_obj) -> bool:
     return "ble_interface" in module_name
 
 
-def _process_ingestor_heartbeat(iface, *, ingestor_announcement_sent: bool) -> bool:
+def _process_ingestor_heartbeat(
+    iface, *, provider: MeshProtocol, ingestor_announcement_sent: bool
+) -> bool:
     """Send ingestor liveness heartbeats when a host id is known.
 
+    While no host id is registered, the provider is asked for one on every
+    loop, so an id it can only resolve after connect still registers.
+    Reticulum is that case: its id is the host's primary identity, which is
+    discoverable only once a local app announces (SPEC RE8).
+
     Parameters:
-        iface: Active mesh interface used to extract a host node id when absent.
+        iface: Active mesh interface, passed to the provider while the host
+            id is unknown.
+        provider: Active :class:`~data.mesh_ingestor.mesh_protocol.MeshProtocol`
+            whose ``extract_host_node_id`` resolves the host id.
         ingestor_announcement_sent: Whether an initial heartbeat has already
             been sent during the current session.
 
@@ -182,7 +192,7 @@ def _process_ingestor_heartbeat(iface, *, ingestor_announcement_sent: bool) -> b
 
     host_id = handlers.host_node_id()
     if host_id is None and iface is not None:
-        extracted = interfaces._extract_host_node_id(iface)
+        extracted = provider.extract_host_node_id(iface)
         if extracted:
             handlers.register_host_node_id(extracted)
             host_id = handlers.host_node_id()
@@ -652,7 +662,9 @@ def _loop_iteration(state: _DaemonState) -> bool:
     if _check_inactivity_reconnect(state):
         return True
     state.ingestor_announcement_sent = _process_ingestor_heartbeat(
-        state.iface, ingestor_announcement_sent=state.ingestor_announcement_sent
+        state.iface,
+        provider=state.provider,
+        ingestor_announcement_sent=state.ingestor_announcement_sent,
     )
     # Periodically re-upsert the host self-node so that its protocol and radio
     # metadata are corrected after the ingestor heartbeat is registered, and

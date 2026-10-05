@@ -3199,8 +3199,10 @@ def test_process_ingestor_heartbeat_updates_flag(mesh_module, monkeypatch):
         def __init__(self):
             self.myNodeNum = 0xCAFEBABE
 
+    # MeshtasticProvider.extract_host_node_id is this helper.
+    provider = SimpleNamespace(extract_host_node_id=mesh._extract_host_node_id)
     updated = mesh._process_ingestor_heartbeat(
-        DummyIface(), ingestor_announcement_sent=False
+        DummyIface(), provider=provider, ingestor_announcement_sent=False
     )
 
     assert updated is True
@@ -3216,8 +3218,14 @@ def test_process_ingestor_heartbeat_skips_without_host(mesh_module, monkeypatch)
     mesh.ingestors.STATE.last_heartbeat = None
 
     monkeypatch.setattr(mesh.ingestors, "queue_ingestor_heartbeat", lambda **_: False)
+    # Without an interface the provider is never asked.
+    provider = SimpleNamespace(
+        extract_host_node_id=lambda _iface: pytest.fail("provider was asked")
+    )
 
-    updated = mesh._process_ingestor_heartbeat(None, ingestor_announcement_sent=False)
+    updated = mesh._process_ingestor_heartbeat(
+        None, provider=provider, ingestor_announcement_sent=False
+    )
 
     assert updated is False
     assert mesh.ingestors.STATE.node_id is None

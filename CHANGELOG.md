@@ -27,7 +27,7 @@
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
 * Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
-* Data: `PROTOCOL=reticulum` no longer requires `INGESTOR_NODE_ID` (SPEC RE5)
+* Data: `PROTOCOL=reticulum` needs `INGESTOR_NODE_ID` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the node id is derived once a local app announces (SPEC RE5/RE8)
 * Data: a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum` - the ingestor now logs that it is dropping the value (SPEC RN10)
 * Data: `RETICULUM_INTERFACES` now resolves interface names through the shared RNS instance, fixing an allowlist that matched nothing on a shared stack (SPEC RE3)
 * Data: a Reticulum announce with no display name no longer overwrites a stored name
