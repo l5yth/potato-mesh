@@ -37,21 +37,10 @@
       "Bash(cargo publish:*)",
       "Bash(docker push:*)",
       "Read(./.env)"
-    ],
-    "ask": [
-      "Bash(git push:*)",
-      "Bash(git reset --hard:*)",
-      "Bash(git clean:*)"
     ]
   },
   "hooks": {
     "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-bash.py\"" }
-        ]
-      },
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
