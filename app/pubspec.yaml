@@ -18,7 +18,7 @@ dependencies:
   shared_preferences: ^2.3.2
   flutter_local_notifications: ^22.3.1
   workmanager: ^0.10.10
-  shared_preferences_android: any
+  shared_preferences_android: 2.4.28
   shared_preferences_foundation: any
 
 dev_dependencies:
