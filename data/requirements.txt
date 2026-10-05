@@ -7,7 +7,7 @@ meshcore==2.3.15
 bleak==3.0.2
 protobuf==7.36.2
 # armv7 images compile cryptography from source with the Rust of the base
-# image's Alpine (3.22: Rust 1.87); a release needing a newer Rust breaks that
+# image's Alpine (3.24: Rust 1.96); a release needing a newer Rust breaks that
 # build (DK-A2), so check its rust-version before bumping.
 cryptography==50.0.2  # AES-CTR decryption for the passive UDP transport
 rns==1.5.6  # Reticulum announce listener (PROTOCOL=reticulum)

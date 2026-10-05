@@ -56,7 +56,8 @@
 * Web: `web/Gemfile.lock` is committed, so CI and the web image install the locked gems (SPEC DP2)
 * Data: `data/requirements.txt` pins the runtime dependencies with `==` and no longer installs black and pytest into the ingestor image; the dev tools move to `data/requirements-dev.txt` (SPEC DP3)
 * Web: the web image and the Nix web app run Ruby 3.4, the version CI tests, instead of Ruby 3.3 (SPEC DP5)
-* CI: the Python workflow also tests Python 3.12, the runtime the ingestor image ships; neither CI matrix fails fast (SPEC DP5)
+* Data: the ingestor image runs Python 3.13, the version CI tests, instead of Python 3.12 (SPEC DP5)
+* CI: the Python workflow tests Python 3.13 and 3.14; neither CI matrix fails fast (SPEC DP5)
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
 
