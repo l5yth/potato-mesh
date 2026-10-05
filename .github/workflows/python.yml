@@ -42,11 +42,11 @@ jobs:
   ingestor:
     runs-on: ubuntu-latest
     strategy:
-      # The ingestor image ships Python 3.12 (data/Dockerfile), so CI tests it
-      # too; one leg's failure must not cancel the other's result.
+      # The ingestor image ships Python 3.13 (data/Dockerfile); CI tests it
+      # and 3.14. One leg's failure must not cancel the other's result.
       fail-fast: false
       matrix:
-        python-version: ['3.12', '3.13']
+        python-version: ['3.13', '3.14']
     steps:
     - uses: actions/checkout@v5
     - name: Set up Python ${{ matrix.python-version }}

@@ -114,6 +114,10 @@ DEV_TOOLS = ("black", "pytest", "pytest-cov")
 # it, so the pin must never drop below the 2.3.8 floor (ACCEPTANCE EC-A2).
 MESHCORE_FLOOR = Version("2.3.8")
 
+# rns 1.5.0/1.5.1 carried a security fix; the pin must never drop below 1.5.1
+# (ACCEPTANCE DP-A14).
+RNS_FLOOR = Version("1.5.1")
+
 # A trailing ``# comment``. A ``#`` that belongs to a value is never preceded
 # by whitespace in these files, so this cannot cut a value short.
 _COMMENT = re.compile(r"(^|\s)#.*$")
@@ -341,6 +345,19 @@ def _pins(path: Path) -> dict[str, Version | None]:
     return {canonicalize_name(req.name): _exact_pin(req) for req in requirements}
 
 
+def _assert_pinned_at_least(name: str, floor: Version) -> None:
+    """Assert that ``data/requirements.txt`` pins ``name`` with ``==`` at ``floor`` or above.
+
+    Args:
+        name: Project name; matched by its canonical form, as ``_pins`` keys.
+        floor: Lowest acceptable pinned version.
+    """
+
+    pinned = _pins(RUNTIME_REQUIREMENTS).get(canonicalize_name(name))
+    assert pinned is not None, f"{name} is not pinned with == in data/requirements.txt"
+    assert pinned >= floor, f"{name}=={pinned} is below {floor}"
+
+
 def test_dependabot_ecosystems_are_documented() -> None:
     """Every ``package-ecosystem`` value is one GitHub documents."""
 
@@ -456,9 +473,13 @@ def test_dev_requirements_extend_runtime_with_pinned_tools() -> None:
 def test_meshcore_pin_defines_contact_deleted() -> None:
     """The pinned ``meshcore`` is at least 2.3.8 (``EventType.CONTACT_DELETED``)."""
 
-    pinned = _pins(RUNTIME_REQUIREMENTS).get("meshcore")
-    assert pinned is not None, "meshcore is not pinned with == in data/requirements.txt"
-    assert pinned >= MESHCORE_FLOOR, f"meshcore=={pinned} is below {MESHCORE_FLOOR}"
+    _assert_pinned_at_least("meshcore", MESHCORE_FLOOR)
+
+
+def test_rns_pin_keeps_the_security_fix() -> None:
+    """The pinned ``rns`` is at least 1.5.1, past the 1.5 security fix."""
+
+    _assert_pinned_at_least("rns", RNS_FLOOR)
 
 
 def test_edit_guard_watches_every_requirements_file() -> None:
