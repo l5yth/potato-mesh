@@ -130,7 +130,7 @@ class LocalNotificationClient implements NotificationClient {
     final androidInit = buildAndroidInitializationSettings();
     final iosInit = buildDarwinInitializationSettings();
     final settings = InitializationSettings(android: androidInit, iOS: iosInit);
-    await _plugin.initialize(settings);
+    await _plugin.initialize(settings: settings);
 
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
@@ -234,10 +234,10 @@ class LocalNotificationClient implements NotificationClient {
         ? message.text.trim()
         : 'New message on $channel';
     await _plugin.show(
-      message.id.hashCode.abs(),
-      title,
-      body,
-      _notificationDetails(),
+      id: message.id.hashCode.abs(),
+      title: title,
+      body: body,
+      notificationDetails: _notificationDetails(),
       payload: domain,
     );
   }
