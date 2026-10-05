@@ -455,6 +455,10 @@ One row per announced destination, newest `last_heard` first.
 - No retention floor. A destination is a relationship, not an event, and the
   nodes it belongs to already clamp their own window - a floor here would hide
   the addresses of a node the table is still showing.
+- Privacy. Honors the node opt-out marker: rows whose `node_id` names an
+  opted-out node are omitted, so `?node_id=` for that node returns `[]`. The
+  opt-out is node-level: a marker in a non-headline destination's own name hides
+  nothing, so the operator puts the marker in the node's headline name.
 - This route holds no response cache, so `since`/`before` have no cached path to
   bypass; the weak ETag varies with the cursor because it is hashed from the
   body the cursor produced.

@@ -316,13 +316,18 @@ module PotatoMesh
       # bind parameters.
       STATS_WINDOWS = %w[hour day week month].freeze
 
-      # Per-protocol scopes counted alongside the unfiltered +total+, paired with
-      # the short column-alias prefix used in the generated SQL.
       # Fetch the destinations a node has announced on (SPEC RE-A6).
       #
-      # A Reticulum identity announces on several destinations -- one per aspect
-      # -- and each is its own +nodes+ row, so this table is what lets a reader
-      # group those rows back into one peer via +identity_hash+.
+      # A Reticulum identity is one +nodes+ row (SPEC RE7) that announces on
+      # several destinations -- one per aspect -- so each destination is a row
+      # here, linked to that node by +node_id+ and to its identity by
+      # +identity_hash+.
+      #
+      # Honors the node opt-out marker (Invariant II): rows whose +node_id+
+      # names an opted-out node are never returned, so +node_id:+ set to such a
+      # node yields an empty list. The opt-out is node-level, decided on the
+      # +nodes+ row: a marker only in a non-headline destination's own name
+      # hides nothing.
       #
       # @param limit [Integer] maximum rows to return.
       # @param node_id [String, nil] restrict to one node's destinations.
@@ -351,6 +356,11 @@ module PotatoMesh
           params << threshold
         end
         append_before_filter(clauses, params, before, column: "last_heard")
+        # Node-level opt-out (Invariant II): the +node_id+ fragment the positions,
+        # telemetry and waypoints reads already apply. Filtering in SQL keeps
+        # +LIMIT+ counting visible rows only, so a short page still means the
+        # window is exhausted for a backward pager (SPEC RA8).
+        append_opt_out_filter(clauses, params, opt_out_node_id_filter("node_id"))
         sql = +"SELECT id, node_id, identity_hash, name, aspect, role, interface, " \
                "first_heard, last_heard, protocol FROM destinations"
         sql << " WHERE #{clauses.join(" AND ")}" if clauses.any?
@@ -361,6 +371,8 @@ module PotatoMesh
         handle&.close unless db
       end
 
+      # Per-protocol scopes counted alongside the unfiltered +total+, paired with
+      # the short column-alias prefix used in the generated SQL.
       STATS_PROTOCOL_SCOPES = [["meshcore", "mc"], ["meshtastic", "mt"], ["reticulum", "rt"]].freeze
 
       # Return exact activity counts for /api/stats as a scope → metric → window

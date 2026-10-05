@@ -340,6 +340,44 @@ RSpec.describe "Reticulum protocol support" do
         "aspect" => "lxmf.delivery",
       )
     end
+
+    it "omits the destinations of an opted-out node (Invariant II)" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+      marker = PotatoMesh::Config.node_opt_out_marker
+      opted_identity = "0badcafe#{"00" * 12}"
+      opted = reticulum_node_fixture(last_heard: now - 20, dest_id: RETICULUM_DEST_HASH2)
+      opted["user"]["longName"] = "Quiet #{marker} Station"
+      opted["identityHash"] = opted_identity
+      payload = {
+        RETICULUM_NODE_ID2 => opted,
+        "ingestor" => RETICULUM_INGESTOR_ID,
+        "protocol" => "reticulum",
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(201)
+
+      # Preconditions: ingest is not refused, so the destination row is stored,
+      # and the node row itself is already hidden (A2c). Only the destinations
+      # read path is left to leak it.
+      with_db(readonly: true) do |db|
+        stored = db.execute("SELECT id FROM destinations WHERE node_id = ?", [RETICULUM_NODE_ID2])
+        expect(stored.map { |r| r["id"] }).to eq([RETICULUM_DEST_HASH2])
+      end
+      get "/api/nodes"
+      expect(JSON.parse(last_response.body).map { |n| n["node_id"] }).not_to include(RETICULUM_NODE_ID2)
+
+      get "/api/destinations"
+      expect(last_response.status).to eq(200)
+      rows = JSON.parse(last_response.body)
+      expect(rows.map { |r| r["id"] }).to eq([RETICULUM_DEST_HASH])
+      expect(rows.map { |r| r["identity_hash"] }).not_to include(opted_identity)
+      expect(rows.map { |r| r["name"] }).not_to include("Quiet #{marker} Station")
+
+      get "/api/destinations?node_id=#{RETICULUM_NODE_ID2}"
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to eq([])
+    end
   end
 
   describe "GET /api/destinations?node_id=" do

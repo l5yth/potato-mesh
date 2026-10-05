@@ -34,7 +34,7 @@
 * Docs: document the Reticulum config directory, its Docker volume, and how to add interfaces to it
 * Data: `ALLOWED_CHANNELS`, `HIDDEN_CHANNELS`, and `MAP_ZOOM` no longer break on the packaged Compose default's quoted-empty value (ACCEPTANCE CH-A1-CH-A3)
 * Data/Web: one Reticulum node row per announced destination, grouped by `nodes.identity_hash` (SPEC RE1)
-* Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations` (SPEC RE2)
+* Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations`, which honors the node opt-out marker (SPEC RE2)
 * Data: new `RETICULUM_INTERFACES` allowlist scopes announce ingestion by interface, applied from one hop out; the operator's own nodes are always ingested (SPEC RN4/RE4)
 * Web: the `/charts` mesh-activity figure draws the Reticulum series (SPEC RN2)
 * Web: `instances.reticulum_nodes_count` gets its own migration (SPEC RN7)
