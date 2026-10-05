@@ -41,5 +41,5 @@ clap = { version = "4", features = ["derive"] }
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"
-serial_test = "3"
+serial_test = "4"
 tower = "0.5"
