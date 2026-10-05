@@ -54,14 +54,19 @@ Interface scope. An RNS stack can carry LoRa and IP interfaces at once, and an a
 
 Config isolation. `RETICULUM_CONFIG_DIR` defaults to an app-owned directory (`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`) and never to RNS's user default `~/.reticulum`: installing a dashboard ingestor does not imply consent to run the operator's transport-node configuration (SPEC RN3).
 
-The ingestor's own node id derives from the transport identity already in
-the config dir (`rnstatus` shows it as "Transport Instance"), so
-`INGESTOR_NODE_ID` is an override for this protocol, not a requirement,
-and the heartbeat comes up unaided. A supplied value is canonicalised through
-the Reticulum mapping, not the shared `canonical_node_id` (which truncates
-a 16-byte identity hash from the wrong end -- SPEC RE5). A protocol adding its
-own self-id must keep the derived id stable across restarts, or it is worse
-than none.
+The ingestor's own node id is the host's primary identity, never the transport
+identity (SPEC RE8; see "Host-owned destinations" below). There is none until
+something on the ingestor's RNS stack announces: `extract_host_node_id` returns
+`None` and the daemon asks the provider again on every loop, so the heartbeat
+registers on the loop after a local app announces. `INGESTOR_NODE_ID` overrides
+the derived id. It is required where nothing on that stack announces, as with
+Docker's default `potatomesh_reticulum` volume, and to pin the id when two
+identities tie, since a tie is not guessed. A supplied value is canonicalised
+through the Reticulum mapping, not the shared `canonical_node_id` (which
+truncates a 16-byte identity hash from the wrong end -- SPEC RE5). A protocol
+adding its own self-id must keep the derived id stable across restarts, or it
+is worse than none. Its `extract_host_node_id` runs at connect and on every
+loop while it returns `None`, so it must be cheap and must not raise.
 
 `CONNECTION` does not apply. It names a single serial, TCP, or BLE endpoint; an RNS stack is a set of interfaces with no such endpoint. Its counterparts are disjoint rather than overlapping: `RETICULUM_CONFIG_DIR` selects the stack, `RETICULUM_INTERFACES` selects which of its interfaces to ingest from. A set `CONNECTION` is ignored and logged as ignored, because the shipped container image carries a serial default for every protocol (SPEC RN10).
 
@@ -429,8 +434,9 @@ from the operator's own stack.
 ### Host-owned destinations (SPEC RE8)
 
 The ingestor's own aspects never arrive as announces -- nothing relays our own
-announce back to us -- so they are discovered instead and re-emitted on every
-node snapshot.
+announce back to us -- so they are discovered instead and emitted with the node
+snapshot, which the daemon sends once per connection. An aspect the host starts
+announcing later is posted on the next connection.
 
 - Source: 0-hop entries of the running stack's path table, mapped to their
   owning identity via `RNS.Identity.recall`.
@@ -519,9 +525,10 @@ One row per announced destination, newest `last_heard` first.
   add rather than dedup); `reticulum.packets.hour` shipped as an always-zero
   stub and reports the real rate since the Reticulum ingestor landed. The rate
   only moves when the reticulum ingestor's heartbeat registers, which needs a
-  node id; the provider derives one from the config dir's transport identity, so
-  no operator configuration is required and `INGESTOR_NODE_ID` merely overrides
-  it (SPEC RE5). Unlike
+  node id: the provider derives one from the host's primary identity once
+  something on its RNS stack announces and no two identities tie, and otherwise
+  needs `INGESTOR_NODE_ID`,
+  as with Docker's default `potatomesh_reticulum` volume (SPEC RE8). Unlike
   `messages`, it is not privacy-gated
   (packets are a public aggregate, no message content). Additive to the 0.7.x
   `/api/stats` tree - no version bump; the ingestor dogfeeds it for the activity

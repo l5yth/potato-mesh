@@ -1564,11 +1564,13 @@ class TestReticulumDeploymentSurface:
                 rf"^#\s*{name}=", text, re.MULTILINE
             ), f"{name} is not documented in .env.example"
 
-    def test_docs_no_longer_call_ingestor_node_id_required(self):
-        """The variable became an override (SPEC RE5); docs saying otherwise mislead.
+    def test_docs_drop_the_blanket_ingestor_node_id_requirement(self):
+        """No doc says every Reticulum setup needs the variable (SPEC RE5/RE8).
 
-        A README that still tells operators to set it would send them hunting
-        for a value the ingestor derives for itself.
+        The id is derived wherever something on the ingestor's RNS stack
+        announces, so the old unconditional wording would send operators
+        hunting for a value the ingestor finds itself. The docs name the cases
+        that need it instead: Docker, no local announcer, a tie.
         """
         for name in ("README.md", ".env.example"):
             text = (REPO_ROOT / name).read_text(encoding="utf-8")
@@ -1577,7 +1579,7 @@ class TestReticulumDeploymentSurface:
                 r"^Set `INGESTOR_NODE_ID`\.",
                 text,
                 re.MULTILINE | re.IGNORECASE,
-            ), f"{name} still presents INGESTOR_NODE_ID as required for reticulum"
+            ), f"{name} still says every reticulum setup needs INGESTOR_NODE_ID"
 
     def test_docs_do_not_key_the_ingestor_on_the_transport_identity(self):
         """RE8 excludes the transport identity from the pick; docs must agree.

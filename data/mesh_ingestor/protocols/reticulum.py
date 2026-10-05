@@ -29,10 +29,12 @@ node id, so the ingestor discovers it: the 0-hop entries of the running
 stack's path table are the destinations announced by apps on this machine, and
 :func:`RNS.Identity.recall` maps each back to its owning identity.  The
 identity fronting the most of them is the host's **primary identity**, and its
-first four bytes are the node id (SPEC RE8).  Ties are not guessed — path-table
-ordering is unstable, so an ambiguous host must set
-:envvar:`INGESTOR_NODE_ID`, which otherwise remains an **override**, not a
-requirement.
+first four bytes are the node id (SPEC RE8).  Nothing is found until a local
+app announces; the daemon asks again on every loop until then.  Ties are not
+guessed: path-table ordering is unstable, so an ambiguous host must set
+:envvar:`INGESTOR_NODE_ID`.  So must a stack on which nothing announces, such
+as Docker's default ``potatomesh_reticulum`` volume.  Everywhere else the
+variable is an **override**.
 
 The *transport* identity is deliberately **not** the node id.  RNS generates it
 as an independent keypair in ``storage/transport_identity``, so it matches none
@@ -551,8 +553,8 @@ class _ReticulumAnnounceHandler:
 
         Counts the announce as a received frame (SPEC MA1) via
         :func:`~data.mesh_ingestor.handlers._mark_packet_seen`, stores the
-        node dict in the interface snapshot so the daemon's periodic snapshot
-        keeps re-reporting it, and queues an immediate ``POST /api/nodes``.
+        node dict in the interface snapshot, which the daemon's node snapshot
+        reads once per connection, and queues an immediate ``POST /api/nodes``.
         Errors are logged and suppressed — a malformed announce must never
         kill the RNS callback thread or the transport.
 
@@ -1292,7 +1294,9 @@ class ReticulumProvider:
             # only the line above would otherwise think it had failed.
             config._debug_log(
                 "Host node id not resolved yet; retrying until a local "
-                "destination is heard. Set INGESTOR_NODE_ID to pin it.",
+                "destination is heard. Set INGESTOR_NODE_ID to pin it if two "
+                "local identities tie or nothing on this RNS stack announces "
+                "(e.g. Docker's default volume).",
                 context="reticulum.connect",
                 severity="info",
             )
@@ -1324,10 +1328,10 @@ class ReticulumProvider:
     def host_destination_nodes(self) -> list[dict]:
         """Return node records for the host's own local destinations.
 
-        Called by :meth:`node_snapshot_items` so the host's aspects are
-        (re)reported on every snapshot — an hourly-or-better refresh that picks
-        up an aspect the operator started announcing after the ingestor did,
-        without a restart (SPEC RE8).
+        Called by :meth:`node_snapshot_items`, so the host's aspects are posted
+        with the node snapshot, which the daemon sends once per connection
+        (SPEC RE8).  An aspect the operator starts announcing later is posted
+        on the next connection; a periodic refresh is a follow-up.
 
         Returns:
             Node dicts for the host's aspects, or empty when the host's
@@ -1410,8 +1414,8 @@ class ReticulumProvider:
             return []
         items = iface.nodes_snapshot()
         # The host's own aspects are not learned from announces — nothing
-        # relays our own announce back to us — so they are folded in here, on
-        # every snapshot, which doubles as the periodic refresh (SPEC RE8).
+        # relays our own announce back to us — so they are folded in here.
+        # The daemon takes this snapshot once per connection (SPEC RE8).
         seen_destinations = {
             node.get("destination", {}).get("id")
             for _nid, node in items

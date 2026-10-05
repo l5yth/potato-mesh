@@ -291,7 +291,7 @@ Configure with the environment variables below.
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
 | `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Optional for `PROTOCOL=reticulum`, which derives one from your primary announced identity; set it there only to override that. |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Required for `PROTOCOL=reticulum` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the id is derived from your primary identity and this overrides it. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
 | `RETICULUM_FREQ` | _from RNS config_ | Frequency shown for Reticulum nodes. Overrides the value read from your `RNodeInterface` section. |
 | `RETICULUM_PRESET` | _from RNS config_ | Radio preset shown for Reticulum nodes. Overrides the value derived from your bandwidth/spreading-factor/coding-rate. |
@@ -393,6 +393,9 @@ bridge network:
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
   and run with host networking.
 
+In Docker, also set `INGESTOR_NODE_ID`. With the `potatomesh_reticulum` volume
+nothing announces, so without it the ingestor heartbeat never registers.
+
 The ingestor derives its node id from your primary identity - the one
 announcing the most destinations on this machine. `INGESTOR_NODE_ID` overrides
 it. It reports the id it resolved at startup:
@@ -401,9 +404,11 @@ it. It reports the id it resolved at startup:
 context=reticulum.connect ... node_id='!27716218' Reticulum announce listener registered
 ```
 
-`node_id='pending'` means nothing local has been heard yet; the ingestor
-retries each loop and logs again once it resolves. Not the transport identity
- -  not the hash `rnstatus` prints as "Transport Instance".
+`node_id='pending'` means nothing on this machine has announced yet, or two
+identities tie. The ingestor retries every minute and registers the id once
+something announces. Set `INGESTOR_NODE_ID` to pin it in a tie, or if nothing
+on the ingestor's RNS stack announces. The id is neither the transport identity
+nor the hash `rnstatus` prints as "Transport Instance".
 
 Changing the id strands the old row. Setting, changing, or removing
 `INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in

@@ -78,8 +78,9 @@ x-ingestor-base: &ingestor-base
     # Read from the RNS config when unset; these only override it.
     RETICULUM_FREQ: ${RETICULUM_FREQ:-}
     RETICULUM_PRESET: ${RETICULUM_PRESET:-}
-    # Required for PROTOCOL=reticulum and TRANSPORT=udp: without it the ingestor
-    # heartbeat never registers and the protocol's packets/hour stays at zero.
+    # Required for TRANSPORT=udp, and for PROTOCOL=reticulum: with the
+    # potatomesh_reticulum volume nothing announces, so without it the heartbeat
+    # never registers and the protocol's packets/hour stays at zero.
     INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
     ENERGY_SAVING: ${ENERGY_SAVING:-0}
     MESHCORE_SELF_TELEMETRY_SECONDS: ${MESHCORE_SELF_TELEMETRY_SECONDS:-3600}

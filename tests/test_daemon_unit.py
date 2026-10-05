@@ -159,16 +159,14 @@ def test_ble_interface_detection():
 
 
 def test_process_ingestor_heartbeat_with_extracted_host(monkeypatch):
-    """Host id extraction triggers heartbeat announcement flag updates."""
+    """Host id extraction through the provider updates the heartbeat flag."""
 
     host_ids: list[str | None] = [None]
     ingestor_ids: list[str | None] = []
     queued: list[bool] = []
+    provider = types.SimpleNamespace(extract_host_node_id=lambda iface: "!abcd")
 
     monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: host_ids[0])
-    monkeypatch.setattr(
-        daemon.interfaces, "_extract_host_node_id", lambda iface: "!abcd"
-    )
     monkeypatch.setattr(
         daemon.handlers,
         "register_host_node_id",
@@ -182,7 +180,9 @@ def test_process_ingestor_heartbeat_with_extracted_host(monkeypatch):
     )
 
     assert (
-        daemon._process_ingestor_heartbeat(object(), ingestor_announcement_sent=False)
+        daemon._process_ingestor_heartbeat(
+            object(), provider=provider, ingestor_announcement_sent=False
+        )
         is True
     )
     assert host_ids[0] == "!abcd"
@@ -196,7 +196,9 @@ def test_process_ingestor_heartbeat_with_extracted_host(monkeypatch):
         lambda force: queued.append(force) or False,
     )
     assert (
-        daemon._process_ingestor_heartbeat(object(), ingestor_announcement_sent=True)
+        daemon._process_ingestor_heartbeat(
+            object(), provider=provider, ingestor_announcement_sent=True
+        )
         is True
     )
     assert queued[-1] is False
@@ -771,6 +773,79 @@ def test_loop_iteration_full_pass_returns_false(monkeypatch):
     )
     monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
     assert daemon._loop_iteration(state) is False
+
+
+def test_loop_iteration_retries_host_id_through_the_provider(monkeypatch):
+    """A host id the provider resolves after connect is registered next loop.
+
+    Reticulum learns its id only once a local app announces, which can be long
+    after connect (SPEC RE8). The loop's retry must ask the provider: the
+    Meshtastic helper it used before never sees a non-Meshtastic id. It must
+    also stop asking once an id is registered, since each Reticulum lookup is
+    a path-table RPC.
+    """
+
+    class _LateIdProvider:
+        name = "reticulum"
+
+        def __init__(self):
+            self.resolved: str | None = None
+            self.calls = 0
+
+        def subscribe(self):
+            return []
+
+        def node_snapshot_items(self, iface):
+            return []
+
+        def extract_host_node_id(self, iface):
+            self.calls += 1
+            return self.resolved
+
+    host = {"id": None}
+    monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: host["id"])
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda nid: host.update(id=nid)
+    )
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    ingestor = {"id": None}
+    beats: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda nid: ingestor.update(id=nid)
+    )
+
+    def _queue(*, force):
+        # Mirrors ingestors.queue_ingestor_heartbeat: no id, no heartbeat.
+        if not ingestor["id"]:
+            return False
+        beats.append((ingestor["id"], force))
+        return True
+
+    monkeypatch.setattr(daemon.ingestors, "queue_ingestor_heartbeat", _queue)
+    monkeypatch.setattr(daemon, "_process_announcements", lambda s: s.last_announce)
+
+    provider = _LateIdProvider()
+    state = _make_state(
+        provider=provider, iface=DummyInterface(), initial_snapshot_sent=True
+    )
+
+    daemon._loop_iteration(state)  # nothing local has announced yet
+    assert host["id"] is None
+    assert beats == []
+    assert provider.calls == 1
+
+    provider.resolved = "!27716218"  # a local destination is now discoverable
+    daemon._loop_iteration(state)
+
+    assert host["id"] == "!27716218"
+    assert ingestor["id"] == "!27716218"
+    assert beats == [("!27716218", True)]  # first heartbeat is forced
+    assert state.ingestor_announcement_sent is True
+    assert provider.calls == 2
+
+    daemon._loop_iteration(state)  # registered: the provider is not asked again
+    assert host["id"] == "!27716218"
+    assert provider.calls == 2
 
 
 # ---------------------------------------------------------------------------
