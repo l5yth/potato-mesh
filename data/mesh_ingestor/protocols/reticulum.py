@@ -73,8 +73,9 @@ cross-ingestor dedup requirement).
 and this listener hears every announce reachable over any of them — on a LAN
 with an ``AutoInterface`` that is the entire local Reticulum network.
 :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` restricts ingestion to
-announces whose path was received on a matching interface; it is empty by
-default, which ingests everything.
+announces whose path was received on a matching interface.  Unset, it admits
+RNode interfaces only, recognised by their RNS class (:func:`_is_rnode_interface`);
+``*`` admits every interface.
 
 **Transmit policy (SPEC MA7).**  This provider is receive-only: it never sends
 an announce, a message, or a poll, so it has no transmit site to gate.  Note
@@ -106,6 +107,7 @@ import RNS
 from RNS.vendor import umsgpack
 
 from .. import config, handlers
+from . import reticulum_interfaces
 
 _ASPECT_ROLES: dict[str, str] = {
     "lxmf.propagation": "PROPAGATION",
@@ -389,6 +391,100 @@ def _announce_interface_name(dest_hash: object) -> str | None:
         return None
 
 
+def _running_instance() -> object | None:
+    """Return the running :class:`RNS.Reticulum` for the interface-class map.
+
+    Resolved via the module-level ``RNS`` name at call time, so test fakes
+    installed with ``monkeypatch.setattr(_mod, "RNS", ...)`` apply.
+
+    Returns:
+        The instance, or ``None`` when no stack runs.
+    """
+    return RNS.Reticulum.get_instance()
+
+
+_INTERFACE_CLASSES = reticulum_interfaces.InterfaceClassCache(_running_instance)
+"""Interface classes of the running stack, read for the RNode default (RN4)."""
+
+
+def _is_rnode_interface(interface_name: str) -> bool:
+    """Report whether an interface drives an RNode radio (SPEC RN4, amended).
+
+    The class decides, read from ``get_interface_stats()``: a multi-radio
+    RNode receives on sub-interfaces printed as ``<parent>[<sub>]``, with no
+    "rnode" in the name.  When the stack cannot say (no stats, a failed read,
+    or a name it does not list) the name decides instead, since a single-radio
+    RNode prints as ``RNodeInterface[...]``.
+
+    Parameters:
+        interface_name: Interface an announce arrived on.
+
+    Returns:
+        ``True`` for an ``RNodeInterface``, ``RNodeMultiInterface`` or
+        ``RNodeSubInterface``.
+    """
+    kind = _INTERFACE_CLASSES.class_of(interface_name)
+    if kind is None:
+        return "rnode" in interface_name.lower()
+    return kind in reticulum_interfaces.RNODE_INTERFACE_CLASSES
+
+
+def _interface_scope() -> str | list[str]:
+    """Describe the active interface scope for the logs (SPEC RN4).
+
+    Returns:
+        ``"rnode"`` for the default, ``"*"`` for every interface, or the
+        allowlist's fragments.
+    """
+    allowlist = config.RETICULUM_INTERFACES
+    if not allowlist:
+        return "rnode"
+    if config.RETICULUM_ALL_INTERFACES in allowlist:
+        return config.RETICULUM_ALL_INTERFACES
+    return list(allowlist)
+
+
+def _check_rnode_scope() -> None:
+    """Warn once per connect when the RNode default can only ingest 0 hops.
+
+    Runs for the default scope only: a list or ``*`` is the operator's own
+    choice.  A stack listing no RNode keeps this machine's announces alone,
+    and the scope never widens to every interface by itself.  A stack that
+    rejects the stats RPC (a shared instance authenticates it with the config
+    dir's identity, SPEC RE3) rejects the name lookup as well, so every
+    announce reads ``LocalInterface[...]`` and is dropped.  A stack without
+    stats at all stays silent, because names then decide.
+    """
+    if config.RETICULUM_INTERFACES:
+        return
+    try:
+        classes = _INTERFACE_CLASSES.read()
+    except Exception as exc:
+        config._debug_log(
+            "Cannot read this RNS stack's interfaces, so announces from beyond "
+            "this machine read LocalInterface and are dropped; point "
+            "RETICULUM_CONFIG_DIR at the config dir rnsd uses, or set "
+            "RETICULUM_INTERFACES=*",
+            context="reticulum.connect",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        return
+    if classes is None:
+        return
+    if not reticulum_interfaces.RNODE_INTERFACE_CLASSES & set(classes.values()):
+        config._debug_log(
+            "No RNode interface on this RNS stack; add one or set "
+            "RETICULUM_INTERFACES=*",
+            context="reticulum.connect",
+            severity="warn",
+            # Classes, not names: a spawned interface's name can carry a
+            # peer's address (a TCP server's clients, AutoInterface peers).
+            interface_classes=sorted(set(classes.values())),
+        )
+
+
 def _announce_admitted(hops: int | None, interface_name: str | None) -> bool:
     """Decide whether an announce is in scope for this ingestor (SPEC RN4).
 
@@ -404,7 +500,10 @@ def _announce_admitted(hops: int | None, interface_name: str | None) -> bool:
     **Anything further out is scoped by interface.**  From one hop the
     receiving interface is a real one, so
     :data:`~data.mesh_ingestor.config.RETICULUM_INTERFACES` can discriminate.
-    An empty allowlist — the default — admits everything.
+    ``*`` admits every interface.  An unknown interface is rejected.  The
+    default, an empty allowlist, admits an RNode interface only
+    (:func:`_is_rnode_interface`); any other allowlist admits a name that
+    contains one of its fragments.
 
     Parameters:
         hops: Hop count for the announce, or ``None`` when unknown.
@@ -416,10 +515,12 @@ def _announce_admitted(hops: int | None, interface_name: str | None) -> bool:
     if hops == 0:
         return True
     allowlist = config.RETICULUM_INTERFACES
-    if not allowlist:
+    if config.RETICULUM_ALL_INTERFACES in allowlist:
         return True
     if not interface_name:
         return False
+    if not allowlist:
+        return _is_rnode_interface(interface_name)
     lowered = interface_name.lower()
     return any(fragment in lowered for fragment in allowlist)
 
@@ -578,7 +679,7 @@ class _ReticulumAnnounceHandler:
                     aspect=self.aspect_filter,
                     hops=hops,
                     interface=interface_name,
-                    allowlist=list(config.RETICULUM_INTERFACES),
+                    allowlist=_interface_scope(),
                 )
                 return
             handlers._mark_packet_seen()
@@ -896,13 +997,20 @@ def _is_lora_interface(interface: object) -> bool:
     LoRa involved, so attributing the operator's radio settings to it would
     publish (and federate) a claim about that peer that is simply untrue.
 
+    The test is the RNode default scope's (:func:`_is_rnode_interface`): by
+    class where the stack reports it, so a multi-radio RNode's sub-interface
+    counts although its name carries no "rnode", and by name otherwise.  It
+    tags the record this provider builds; ``handlers.upsert_node`` currently
+    stamps the configured values on every posted record whatever the
+    interface (a known gap outside this provider).
+
     Parameters:
         interface: Interface string an announce arrived on, if known.
 
     Returns:
         ``True`` only for an RNode interface.
     """
-    return isinstance(interface, str) and "rnode" in interface.lower()
+    return isinstance(interface, str) and _is_rnode_interface(interface)
 
 
 def _attach_radio_metadata(node: dict) -> None:
@@ -1285,9 +1393,10 @@ class ReticulumProvider:
             context="reticulum.connect",
             severity="info",
             aspects=list(_ANNOUNCE_ASPECTS),
-            interfaces=list(config.RETICULUM_INTERFACES) or "all",
+            interfaces=_interface_scope(),
             node_id=host_node_id or "pending",
         )
+        _check_rnode_scope()
         if not host_node_id:
             # Say so explicitly: a fresh stack has nothing 0-hop in its path
             # table yet, the daemon retries every loop, and an operator reading
@@ -1441,6 +1550,7 @@ __all__ = [
     "_identity_from_announce",
     "_identity_public_key_hex",
     "_announce_admitted",
+    "_is_rnode_interface",
     "_reticulum_hash_hex",
     "_reticulum_node_id",
     "_reticulum_short_name",

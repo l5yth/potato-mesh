@@ -427,11 +427,19 @@ class TestReticulumConfigDir:
 class TestReticulumInterfaces:
     """Tests for the RETICULUM_INTERFACES ingest allowlist (#888)."""
 
-    def test_empty_by_default(self):
-        """An unset or blank allowlist admits every interface."""
+    def test_unset_is_the_rnode_default(self):
+        """Unset or blank parses to ``()``: the RNode scope (SPEC RN4, amended).
+
+        The provider reads ``()`` as "RNode interfaces only"; every interface
+        takes an explicit ``*`` (see :meth:`test_star_means_every_interface`).
+        An unset variable reaches the parser as ``""``.
+        """
         assert config._parse_reticulum_interfaces("") == ()
         assert config._parse_reticulum_interfaces("   ") == ()
         assert config._parse_reticulum_interfaces(",, ,") == ()
+        assert config._parse_reticulum_interfaces("") != (
+            config._parse_reticulum_interfaces("*")
+        )
 
     def test_splits_lowercases_dedupes_and_sorts(self):
         """Entries are normalised so matching is case-insensitive and stable."""
@@ -440,8 +448,8 @@ class TestReticulumInterfaces:
             "serial",
         )
 
-    def test_quote_only_value_resolves_to_no_allowlist(self):
-        """A literal '\"\"' must mean *no* allowlist, not one matching nothing.
+    def test_quote_only_value_is_the_rnode_default(self):
+        """A literal '\"\"' is the RNode default, not an allowlist matching nothing.
 
         Compose substitutes a ``${VAR:-""}`` default as literal text, so the
         ingestor can receive the two-character string ``""``.  Read naively
@@ -451,6 +459,17 @@ class TestReticulumInterfaces:
         assert config._parse_reticulum_interfaces('""') == ()
         assert config._parse_reticulum_interfaces("''") == ()
         assert config._parse_reticulum_interfaces('" "') == ()
+
+    def test_star_means_every_interface(self):
+        """``*`` anywhere in the list is every interface, alone; ``all`` is a name.
+
+        The provider admits every interface on ``("*",)`` (SPEC RN4, amended),
+        so the rest of a list naming ``*`` is dropped rather than shown.
+        """
+        for raw in ("*", " * ", "rnode, *", "*,serial,RNode"):
+            assert config._parse_reticulum_interfaces(raw) == ("*",), raw
+        assert config._parse_reticulum_interfaces("all") == ("all",)
+        assert config.RETICULUM_ALL_INTERFACES == "*"
 
     def test_fragments_with_content_are_taken_literally(self):
         """Only quote-*only* fragments are dropped; content is never rewritten.

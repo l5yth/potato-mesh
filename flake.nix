@@ -408,7 +408,7 @@
               reticulumInterfaces = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Comma-separated case-insensitive substrings of RNS interface names to ingest from; null ingests from every interface";
+                description = "RNS interfaces to ingest from; null ingests RNode interfaces only, * ingests every interface, otherwise comma-separated case-insensitive substrings of interface names";
               };
 
               primaryChannelOnly = lib.mkOption {

@@ -36,6 +36,8 @@
 * Data/Web: one Reticulum node row per announced destination, grouped by `nodes.identity_hash` (SPEC RE1)
 * Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations`, which honors the node opt-out marker (SPEC RE2)
 * Data: new `RETICULUM_INTERFACES` allowlist scopes announce ingestion by interface, applied from one hop out; the operator's own nodes are always ingested (SPEC RN4/RE4)
+* Data: `PROTOCOL=reticulum` ingests only RNode interfaces by default; set `RETICULUM_INTERFACES=*` to ingest every interface as before (SPEC RN4)
+* Config: `configure.sh` asks for `INGESTOR_NODE_ID` under `PROTOCOL=reticulum` (SPEC RE8)
 * Web: the `/charts` mesh-activity figure draws the Reticulum series (SPEC RN2)
 * Web: `instances.reticulum_nodes_count` gets its own migration (SPEC RN7)
 * Docs: every environment variable the ingestor or web app reads is documented (SPEC DOC2)

@@ -28,6 +28,8 @@ on:
       - 'README.md'
       - 'docker-compose.yml'
       - 'flake.nix'
+      # tests/test_configure_script.py runs it.
+      - 'configure.sh'
       - 'web/lib/potato_mesh/config.rb'
       # tests/test_dockerfile_sync.py compares these two files.
       - 'Dockerfile'
