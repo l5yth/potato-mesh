@@ -8,7 +8,7 @@ This repo’s ingestion pipeline is split into:
 - Python collector (`data/mesh_ingestor/*`) which normalizes packets/events and POSTs JSON to the web app.
 - Sinatra web app (`web/`) which accepts those payloads on `POST /api/*` ingest routes and persists them into SQLite tables defined under `data/*.sql`.
 
-This document records the contracts that future protocols must preserve. The intent is to enable adding new protocols (MeshCore, Reticulum, …) without changing the Ruby/DB/UI read-side.
+This document records the contracts that future protocols must preserve. New protocols (MeshCore, Reticulum, …) reuse the shared read side (`nodes`, `/api/nodes`, the stats scopes, the federation record) and extend it only additively. A read-side addition for one protocol needs its own SPEC decision and leaves the other protocols' shapes unchanged, as Reticulum's `destinations` table and `GET /api/destinations` do (SPEC Invariant IV).
 
 ### Canonical node identity
 
