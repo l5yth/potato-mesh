@@ -173,12 +173,12 @@ module PotatoMesh
             node_columns << "last_advert_heard"
           end
 
-          # Identity back-reference (SPEC RE-A5).  A Reticulum row is keyed on
-          # one announced destination, and several such rows share an identity;
-          # this groups them back into one peer.  Supersedes the short-lived
-          # +dest_hash+ JSON column, which modelled the same relationship from
-          # the other side and is dropped below.  NULL for protocols with no
-          # such indirection.
+          # Identity back-reference (SPEC RE2/RE7).  A Reticulum row is keyed on
+          # its identity: +node_id+ is the first four bytes of the identity
+          # hash, and this column keeps the full hash, as each of the node's
+          # +destinations+ rows does.  Supersedes the short-lived +dest_hash+
+          # JSON column, which modelled the destinations from the node side and
+          # is dropped below.  NULL for protocols with no such identity.
           unless node_columns.include?("identity_hash")
             db.execute("ALTER TABLE nodes ADD COLUMN identity_hash TEXT")
             node_columns << "identity_hash"

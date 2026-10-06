@@ -50,11 +50,10 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- (message touches, chat placeholders) never write it; NULL means no keyed
   -- evidence has been recorded since the column shipped (SPEC MR1).
   last_advert_heard  INTEGER,
-  -- Protocol-native identity this node's destination belongs to.  A Reticulum
-  -- row is keyed on one announced destination (SPEC RE-A5), and several such
-  -- rows can share an identity -- this is what groups them back into one peer.
-  -- The destinations themselves live in the `destinations` table.  NULL for
-  -- protocols with no such indirection.
+  -- Full protocol-native identity hash of this node.  A Reticulum row is keyed
+  -- on its identity (SPEC RE7): `node_id` is the hash's first four bytes.  Its
+  -- destinations live in the `destinations` table.  NULL for protocols with no
+  -- such identity.
   identity_hash      TEXT
 );
 

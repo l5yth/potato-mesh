@@ -17,6 +17,19 @@
 module PotatoMesh
   module App
     module Queries
+      # Expand a node reference into every form it may be stored under.
+      #
+      # Feeds {#node_lookup_clause} and the federation lookups: strings match
+      # +node_id+-style columns, integers +num+-style columns. The raw
+      # reference is kept, stripped if a string and truncated if a non-integer
+      # number; when +canonical_node_parts+ resolves it, its canonical
+      # +!xxxxxxxx+ id (lower and upper case) and node number are added.
+      #
+      # @param node_ref [String, Integer, Numeric, nil] raw node reference from
+      #   the request.
+      # @return [Hash{Symbol=>Array}] +:string_values+ (unique non-empty
+      #   strings) and +:numeric_values+ (unique integers); both empty for
+      #   +nil+ or blank.
       def node_reference_tokens(node_ref)
         parts = canonical_node_parts(node_ref)
         canonical_id, numeric_id = parts ? parts[0, 2] : [nil, nil]

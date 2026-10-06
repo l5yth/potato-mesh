@@ -17,9 +17,9 @@
 --
 -- Reticulum identifies a peer by an identity, and that identity announces on
 -- several destinations -- one per aspect (lxmf.delivery, nomadnetwork.node,
--- lxmf.propagation) -- each with its own display name and implied role. Those
--- are distinct things, so each gets its own row here and its own `nodes` row
--- (SPEC RE-A5); `nodes.identity_hash` is what groups them back into one peer.
+-- lxmf.propagation) -- each with its own display name and implied role. The
+-- identity is one `nodes` row (SPEC RE7); each destination is one row here,
+-- linked to it by `node_id` and to the identity by `identity_hash` (SPEC RE2).
 --
 -- Protocols whose nodes have exactly one destination simply never populate it.
 

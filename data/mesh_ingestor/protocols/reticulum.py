@@ -16,13 +16,17 @@
 Attaches to a Reticulum stack via :class:`RNS.Reticulum` (joining an existing
 shared instance when one is running, otherwise starting one from the config
 directory in :data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR`) and
-registers announce handlers for the ``lxmf.delivery`` and
-``nomadnetwork.node`` destination aspects.  Every announce heard on the
-network is converted into a ``POST /api/nodes`` upsert with
-``protocol="reticulum"``.
+registers one announce handler per aspect in :data:`_ANNOUNCE_ASPECTS`
+(``lxmf.delivery``, ``lxmf.propagation`` and ``nomadnetwork.node``).  Every
+admitted announce is converted into a ``POST /api/nodes`` upsert with
+``protocol="reticulum"``.  The host's own destinations are also read from the
+stack's 0-hop path table, and its ``rns.transport`` destination, when the stack
+has transport enabled, from the transport identity (SPEC RE8/RE9).  No LXMF
+message, position or telemetry is ingested.
 
 Like :class:`~data.mesh_ingestor.protocols.meshtastic_udp.MeshtasticUdpProvider`
-this provider is receive-only: it never transmits and has no roster to fetch.
+this provider is receive-only: the provider itself never transmits and has no
+roster to fetch.
 
 **Own node id.**  Reticulum has no protocol-level handshake revealing "our"
 node id, so the ingestor discovers it: the 0-hop entries of the running
@@ -63,11 +67,11 @@ peer's aspects nor a public key.  One physical peer announcing both
 destination hashes.  The canonical ``!%08x`` node id is consequently derived
 from the **identity hash** (first four bytes), which is one per peer, so both
 aspects collapse onto a single node row.  ``user.publicKey`` carries the
-announcing identity's **real public key**, and the destination hashes ride
-their own ``destHash`` list, accumulating as further aspects are heard.  The
-mapping is deterministic and sender-side, so the same announce heard by
-multiple ingestors collapses onto one node row (the CONTRACTS.md
-cross-ingestor dedup requirement).
+announcing identity's **real public key**, and the destination the announce
+arrived on rides as ``destination`` (``{id, aspect, role}``), one
+``destinations`` row per aspect (SPEC RE2).  The mapping is deterministic and
+sender-side, so the same announce heard by multiple ingestors collapses onto
+one node row (the CONTRACTS.md cross-ingestor dedup requirement).
 
 **Interface scope.**  An RNS stack may carry LoRa and IP interfaces at once,
 and this listener hears every announce reachable over any of them — on a LAN
@@ -82,18 +86,19 @@ an announce, a message, or a poll, so it has no transmit site to gate.  Note
 that the underlying RNS stack is *not* silent at the interface layer — an
 ``AutoInterface`` multicasts peer discovery, and a config with
 ``enable_transport`` set relays other nodes' traffic.  That is interface-level
-behaviour owned by the Reticulum config, which is why the ingestor keeps its
-own isolated config directory rather than adopting the operator's
-(:func:`~data.mesh_ingestor.config._resolve_reticulum_config_dir`).
+behaviour owned by the Reticulum config, which the ingestor shares with the
+operator's ``rnsd`` (``~/.reticulum`` by default, SPEC RE3; see
+:func:`~data.mesh_ingestor.config._resolve_reticulum_config_dir`).  With no
+shared instance running, :meth:`ReticulumProvider.connect` starts the stack in
+this process, which then transmits whatever that config enables (SPEC RN5).
 
 **Display names.**  ``lxmf.delivery`` announces carry the peer's display name
 in ``app_data`` — either raw UTF-8 bytes (pre-0.5 LXMF) or a msgpack array
 whose first element is the display name (LXMF >= 0.5, which appends the stamp
 cost).  ``nomadnetwork.node`` announces carry the node name as raw UTF-8.
 Undecodable ``app_data`` falls back to ``"Reticulum <SHORT>"`` — the protocol
-label plus the upper-cased last four hex of the canonical node id.  It names the
-*node*, not whichever destination announced, and matches the placeholder form the
-web upsert refuses to overwrite a real name with.
+label plus the upper-cased first four hex of the canonical node id.  It names the
+*node*, not whichever destination announced.
 """
 
 from __future__ import annotations
@@ -565,15 +570,16 @@ def _announce_to_node_dict(
 ) -> dict | None:
     """Convert a Reticulum announce into a ``POST /api/nodes`` node dict.
 
-    One record per **announced destination** (SPEC RE-A5).  Each aspect carries
-    its own display name and implies its own role, so a record names exactly the
-    destination it came from.  The announcing identity rides along as
-    ``identityHash`` — the rows for one peer are grouped by it, which is a
-    separate design pass.
+    One record per announce, keyed on the announcing **identity** (SPEC RE7):
+    every aspect of a peer posts to the same node id.  The destination it
+    arrived on rides as ``destination`` (``{id, aspect, role}``), which the web
+    tier writes to the ``destinations`` table (SPEC RE2), and the full identity
+    hash as ``identityHash``.
 
     Parameters:
-        dest_hash: 16-byte destination hash the announce arrived for.  Keys the
-            node row.
+        dest_hash: 16-byte destination hash the announce arrived for.  Becomes
+            ``destination.id``; keys the node row only when no identity
+            resolves.
         app_data: Raw announce application data (see
             :func:`_decode_display_name`).
         identity: Announcing :class:`RNS.Identity`; supplies the real public key
@@ -586,8 +592,8 @@ def _announce_to_node_dict(
         last_heard: Unix seconds of announce receipt; defaults to now.
 
     Returns:
-        Node dict for the ``POST /api/nodes`` payload, or ``None`` when
-        *dest_hash* cannot be mapped to a canonical node ID.
+        Node dict for the ``POST /api/nodes`` payload, or ``None`` when neither
+        the identity nor *dest_hash* maps to a canonical node ID.
     """
     node_id = _announce_node_id(identity, dest_hash)
     if node_id is None:
@@ -610,11 +616,6 @@ def _announce_to_node_dict(
         "protocol": "reticulum",
         "user": user,
     }
-    # Radio metadata rides on the node record (SPEC RL3). The web upsert already
-    # reads these keys; a Reticulum node never received them because the other
-    # protocols stamp them from position and telemetry payloads, and an announce
-    # carries neither -- so the table's Frequency and LoRa Preset columns and the
-    # chat/log tags all rendered blanks.
     identity_hash = _reticulum_hash_hex(getattr(identity, "hash", None))
     if identity_hash:
         node["identityHash"] = identity_hash
@@ -626,8 +627,16 @@ def _announce_to_node_dict(
         node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
     if interface:
         node["interface"] = interface
+    # Radio metadata rides on the node record (SPEC RL3). The web upsert already
+    # reads these keys; a Reticulum node never received them because the other
+    # protocols stamp them from position and telemetry payloads, and an announce
+    # carries neither -- so the table's Frequency and LoRa Preset columns and the
+    # chat/log tags all rendered blanks.
+    #
     # After the interface is known: the values describe the host's LoRa radio
     # only, so a peer heard over an IP interface must not be stamped with them.
+    # The posted record is stamped anyway: handlers.upsert_node applies the
+    # configured values to every node (ACCEPTANCE Known gap RL-A3).
     _attach_radio_metadata(node)
     if hops is not None:
         node["hopsAway"] = hops
@@ -1326,8 +1335,10 @@ class ReticulumProvider:
         exists in this process (RNS is a singleton without teardown, so the
         daemon's reconnect path re-attaches rather than re-initialising),
         otherwise starts one from
-        :data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR` — an app-owned
-        directory, never the operator's ``~/.reticulum`` (#888).  One announce
+        :data:`~data.mesh_ingestor.config.RETICULUM_CONFIG_DIR`, by default the
+        operator's ``~/.reticulum`` (SPEC RE3).  That attaches to a running
+        ``rnsd`` as a client; with none running, this process runs the stack
+        itself and opens every interface the config enables.  One announce
         handler is registered per :data:`_ANNOUNCE_ASPECTS` entry.
 
         Parameters:
