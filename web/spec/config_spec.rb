@@ -143,6 +143,14 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".federation_seed_domains" do
+    it "lists the default seed domains" do
+      expect(described_class.federation_seed_domains).to eq(
+        %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro mesh.dmz.pt],
+      )
+    end
+  end
+
   describe ".federation_enabled?" do
     it "returns true when FEDERATION is unset" do
       within_env("FEDERATION" => nil, "PRIVATE" => "0") do

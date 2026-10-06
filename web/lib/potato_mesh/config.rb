@@ -82,7 +82,7 @@ module PotatoMesh
     DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS = 3
     DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS = 300
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
-    DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro].freeze
+    DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro mesh.dmz.pt].freeze
     DEFAULT_OG_IMAGE_TTL_SECONDS = 3_600
     # Cache lifetime for the +GET /api/stats+ activity aggregation. The recompute
     # is CPU-bound and, on a single-process MRI deployment, holds the GVL for its
