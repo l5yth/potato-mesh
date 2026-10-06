@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -210,6 +211,26 @@ void main() {
       expect(calls[1].scheme, 'https');
       expect(calls[1].path, '/api/messages');
       expect(calls[1].queryParameters['protocol'], 'meshtastic');
+    });
+
+    test('README names only the protocol the client requests', () async {
+      final calls = <Uri>[];
+      final client = MockClient((request) async {
+        calls.add(request.url);
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      await fetchMessages(client: client, domain: 'mesh.example.org');
+
+      final requested = calls.single.queryParameters['protocol']!;
+      final supports = File('README.md')
+          .readAsLinesSync()
+          .firstWhere((line) => line.startsWith('Supports '))
+          .toLowerCase();
+      expect(supports, contains(requested));
+      for (final other in ['meshcore', 'reticulum']) {
+        expect(supports, isNot(contains(other)));
+      }
     });
   });
 

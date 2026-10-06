@@ -104,8 +104,21 @@ export function getNodeDisplayNameForOverlay(node) {
 }
 
 /**
+ * Normalise a node-payload ``protocol`` field for the fallback helpers: trimmed
+ * and lower-cased, or ``''`` when absent.  The label and the short name both
+ * read it, so they always agree on which protocol a row belongs to.
+ *
+ * @param {*} protocol Raw protocol value from the node payload.
+ * @returns {string} Normalised protocol identifier, or ``''`` when absent.
+ */
+function normalizeFallbackProtocol(protocol) {
+  return protocol == null ? '' : String(protocol).trim().toLowerCase();
+}
+
+/**
  * Map a node-payload ``protocol`` field to the display label used in fallback
- * long names.  Unknown or absent protocol values resolve to ``"Unknown"``
+ * long names.  Every protocol the web knows has its own label (SPEC S6, RL8);
+ * unknown or absent protocol values resolve to ``"Unknown"``
  * rather than defaulting to a specific protocol — a missing stamp means the
  * sender's protocol genuinely cannot be determined here, and guessing
  * silently mislabels cross-protocol chat senders.  ``message-node-hydrator.js``
@@ -113,15 +126,36 @@ export function getNodeDisplayNameForOverlay(node) {
  * fallback so chat lookups for 404'd senders pick the right label.
  *
  * @param {*} protocol Raw protocol value from the node payload.
- * @returns {string} Display label such as ``Meshtastic``, ``Meshcore``, or
- *   ``Unknown``.
+ * @returns {string} Display label: ``Meshtastic``, ``Meshcore``,
+ *   ``Reticulum``, or ``Unknown``.
  */
 function protocolFallbackLabel(protocol) {
-  if (protocol == null) return 'Unknown';
-  const normalized = String(protocol).trim().toLowerCase();
+  const normalized = normalizeFallbackProtocol(protocol);
   if (normalized === 'meshcore') return 'Meshcore';
   if (normalized === 'meshtastic') return 'Meshtastic';
+  if (normalized === 'reticulum') return 'Reticulum';
   return 'Unknown';
+}
+
+/**
+ * Pick the fallback short name of a nameless node.
+ *
+ * Protocol-scoped like the web tier's ``placeholder_short_id`` and the
+ * ingestor's ``_reticulum_short_name`` (SPEC RA10).  A Reticulum id is the
+ * head of a hash and its badge shows the first four hex digits, so
+ * ``!27716218`` gives ``2771``.  Meshtastic and MeshCore ids keep their last
+ * four characters, as does a Reticulum id too short to have a head.
+ *
+ * @param {string} nodeId Canonical node identifier.
+ * @param {*} protocol Raw protocol value from the node payload.
+ * @returns {string} Fallback short name.
+ */
+function fallbackShortName(nodeId, protocol) {
+  const hex = nodeId.replace(/^!/, '');
+  if (normalizeFallbackProtocol(protocol) === 'reticulum' && hex.length >= 4) {
+    return hex.slice(0, 4);
+  }
+  return nodeId.slice(-4);
 }
 
 /**
@@ -152,6 +186,8 @@ export function buildNodePlaceholder(nodeId, source) {
  * senders rendered from a hydrator placeholder are not mislabelled as
  * Meshtastic.  Callers without protocol context (e.g. neighbour overlays)
  * may leave the field unset and accept the neutral ``"Unknown"`` label.
+ * The long name is ``<label> <node id>`` (``Reticulum !27716218``); the
+ * short name follows {@link fallbackShortName}.
  *
  * @param {Object} node Node payload.
  * @returns {void}
@@ -163,7 +199,7 @@ export function applyNodeNameFallback(node) {
   if (short || long) return;
   const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
   if (!nodeId) return;
-  const fallbackShort = nodeId.slice(-4);
+  const fallbackShort = fallbackShortName(nodeId, node.protocol);
   const fallbackLong = `${protocolFallbackLabel(node.protocol)} ${nodeId}`;
   node.short_name = fallbackShort;
   node.long_name = fallbackLong;

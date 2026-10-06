@@ -389,13 +389,13 @@
               reticulumFreq = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Frequency shown for Reticulum nodes; overrides the value read from the RNS config";
+                description = "Frequency shown for Reticulum nodes; overrides the value read from the RNS config. Also feeds the web footer join strip, which hides the Reticulum line until both Reticulum values are set";
               };
 
               reticulumPreset = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Radio preset shown for Reticulum nodes; overrides the value derived from the RNS config's bandwidth/spreading factor/coding rate";
+                description = "Radio preset shown for Reticulum nodes; overrides the value derived from the RNS config's bandwidth/spreading factor/coding rate. Also feeds the web footer join strip, which hides the Reticulum line until both Reticulum values are set";
               };
 
               reticulumInterfaces = lib.mkOption {
@@ -530,6 +530,10 @@
                 MESHCORE_PRESET = cfg.meshcorePreset;
               } // lib.optionalAttrs (cfg.meshcoreFreq != null) {
                 MESHCORE_FREQ = cfg.meshcoreFreq;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumPreset != null) {
+                RETICULUM_PRESET = cfg.ingestor.reticulumPreset;
+              } // lib.optionalAttrs (cfg.ingestor.reticulumFreq != null) {
+                RETICULUM_FREQ = cfg.ingestor.reticulumFreq;
               } // lib.optionalAttrs (cfg.instanceDomain != null) {
                 INSTANCE_DOMAIN = cfg.instanceDomain;
               } // lib.optionalAttrs (cfg.mapZoom != null) {

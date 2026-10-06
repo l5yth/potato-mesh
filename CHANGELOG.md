@@ -60,6 +60,7 @@
 * CI: the Python workflow tests Python 3.13 and 3.14; neither CI matrix fails fast (SPEC DP5)
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
+* Web, bridge, app: Reticulum is named as its own protocol in the bridge tag (`[RT]`), the footer join strip (`RETICULUM_PRESET` and `RETICULUM_FREQ`), the `/nodes` page description and the client fallback label; the site description names no protocol; the app README states the app is Meshtastic only (SPEC RL8)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

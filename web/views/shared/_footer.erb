@@ -19,12 +19,17 @@
   <%# Join strip (SPEC UX12; audit follow-up 04): the radio settings a newcomer
       needs, moved here from the meta row. The old `details` link is dropped —
       the About link in the footer links row below sits right beside it. The
-      MeshCore entry appears only when both preset values are configured. %>
+      MeshCore and Reticulum entries each appear only when both of their
+      preset values are configured (SPEC RL8). %>
   <div class="join-line footer-join">
     <span class="join-line__entry"><span class="join-line__proto">Meshtastic</span> · <%= Rack::Utils.escape_html(sanitized_channel) %> · <%= Rack::Utils.escape_html(sanitized_frequency) %></span>
     <% if sanitized_meshcore_preset && sanitized_meshcore_freq %>
       <span class="join-line__separator" aria-hidden="true">—</span>
       <span class="join-line__entry"><span class="join-line__proto">Meshcore</span> · <%= Rack::Utils.escape_html(sanitized_meshcore_preset) %> · <%= Rack::Utils.escape_html(sanitized_meshcore_freq) %></span>
+    <% end %>
+    <% if sanitized_reticulum_preset && sanitized_reticulum_freq %>
+      <span class="join-line__separator" aria-hidden="true">—</span>
+      <span class="join-line__entry"><span class="join-line__proto">Reticulum</span> · <%= Rack::Utils.escape_html(sanitized_reticulum_preset) %> · <%= Rack::Utils.escape_html(sanitized_reticulum_freq) %></span>
     <% end %>
   </div>
   <div class="footer-content">
