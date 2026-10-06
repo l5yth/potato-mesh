@@ -19,7 +19,7 @@ dependencies:
   flutter_local_notifications: ^22.3.1
   workmanager: ^0.10.10
   shared_preferences_android: 2.4.28
-  shared_preferences_foundation: any
+  shared_preferences_foundation: 2.5.7
 
 dev_dependencies:
   flutter_test:
