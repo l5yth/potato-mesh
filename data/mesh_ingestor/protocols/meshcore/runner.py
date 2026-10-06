@@ -26,6 +26,7 @@ from .channels import _ensure_channel_names
 from .connection import _make_connection
 from .handlers import _make_event_handlers
 from .interface import ClosedBeforeConnectedError, _MeshcoreInterface
+from .route import enable_rx_log_join, read_default_flood_scope
 from .telemetry import _telemetry_poll_loop
 
 
@@ -133,14 +134,16 @@ async def _run_meshcore(
         mc = MeshCore(cx)
         iface._mc = mc
 
-        # Enable the library's RX-log⇆message join (SPEC RF2): with channel
+        # Enable the library's RX-log decryption (SPEC RF2/SC1): with channel
         # secrets registered (``_ensure_channel_names`` fetches every channel,
         # and the reader auto-registers each secret into its packet parser),
-        # the lib matches each CHANNEL_MSG_RECV to its on-air frame and injects
-        # RSSI / path / recv_time.  Purely local decryption with keys already
-        # on the radio; a miss (no RX-log frame) simply leaves those fields
-        # absent, so this degrades gracefully on firmware without RX logging.
-        mc.decrypt_channels = True
+        # the lib stamps each GRP_TXT RX-log frame with ``msg_hash``, which the
+        # handlers use to match a channel message to the copy the radio
+        # delivered (SC2).  Purely local decryption with keys already on the
+        # radio; a miss (no RX-log frame) leaves path/RSSI/scope absent.  The
+        # switch is a method: ``MeshCore`` has no ``decrypt_channels``
+        # attribute, and assigning one left the join off (#765).
+        enable_rx_log_join(mc)
 
         handlers_map = _make_event_handlers(iface, target)
         # Subscribe only to events the *installed* meshcore library actually
@@ -242,6 +245,19 @@ async def _run_meshcore(
             config._debug_log(
                 "Failed to fetch channel names",
                 context="meshcore.channels",
+                severity="warning",
+                error=str(exc),
+            )
+
+        # The radio's default flood scope is the one region a scoped channel
+        # message can be named by (SPEC SC3).  A companion-link read, not a
+        # transmission; unsupported firmware simply leaves it unset.
+        try:
+            iface._route.region = await read_default_flood_scope(mc)
+        except Exception as exc:
+            config._debug_log(
+                "Failed to read default flood scope",
+                context="meshcore.scope",
                 severity="warning",
                 error=str(exc),
             )

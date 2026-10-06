@@ -33,10 +33,10 @@ from .interface import _MeshcoreInterface
 from .messages import (
     _derive_message_id,
     _normalize_hops,
-    _normalize_path,
     _parse_sender_name,
 )
 from .position import _store_meshcore_position
+from .route import without_decrypted_text
 from .telemetry import _make_telemetry_handlers
 
 
@@ -277,6 +277,14 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # across all receivers regardless of roster state.
         sender_identity = (sender_name or "").strip().lower()
 
+        # Path, RSSI and flood scope come from the RX-log copy the radio
+        # delivered: the earliest one whose hop count equals ``path_len``
+        # (SPEC SC2-SC4).  The library's own ``path``/``RSSI`` fields name the
+        # newest copy and are ignored.  No matching copy (frame never logged,
+        # expired, join off) leaves all three absent; ``hops`` stays (SC9).
+        hops = _normalize_hops(payload.get("path_len"))
+        route = iface._route.channel_route(payload, hops)
+
         packet = {
             "id": _derive_message_id(
                 sender_identity, sender_ts, f"c{channel_idx}", text
@@ -287,11 +295,10 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             "to_id": "^all",
             "channel": channel_idx,
             "snr": payload.get("SNR"),
-            "rssi": payload.get("RSSI"),
-            "hops": _normalize_hops(payload.get("path_len")),
-            # Injected by the decrypt_channels RX-log join (RF2); absent on a
-            # join miss or RX-log-less firmware, never required.
-            "path": _normalize_path(payload.get("path")),
+            "rssi": route.get("rssi"),
+            "hops": hops,
+            "path": route.get("path"),
+            "scope": route.get("scope"),
             "protocol": "meshcore",
             "decoded": {
                 "portnum": "TEXT_MESSAGE_APP",
@@ -358,14 +365,19 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # malformed-advert skip, so no received frame — ignored, errored, or
         # unimplemented — is under-reported.
         _handlers._mark_packet_seen()
+        # Remember each decrypted channel-message copy so on_channel_msg can
+        # take its delivered copy's route (SPEC SC2); other frames are ignored.
+        iface._route.observe(payload)
         if payload.get("payload_typename") != "ADVERT":
             # Non-ADVERT RF frames keep their DEBUG-only observability, routed
             # explicitly now that RX_LOG_DATA is a handled event and no longer
-            # reaches the unhandled catch-all (RF3).  Resolved via the parent
-            # package so test fakes installed with monkeypatch apply.
+            # reaches the unhandled catch-all (RF3).  The capture never keeps
+            # the library-decrypted channel text (SPEC SC8).  Resolved via the
+            # parent package so test fakes installed with monkeypatch apply.
             pkg = sys.modules["data.mesh_ingestor.protocols.meshcore"]
             pkg._record_meshcore_message(
-                payload, source=f"{target or 'auto'}:RX_LOG_DATA"
+                without_decrypted_text(payload),
+                source=f"{target or 'auto'}:RX_LOG_DATA",
             )
             return
 

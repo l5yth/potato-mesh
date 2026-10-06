@@ -355,6 +355,12 @@ module PotatoMesh
             db.execute("ALTER TABLE messages ADD COLUMN path TEXT")
           end
 
+          # MeshCore flood scope (SPEC SC4/SC5): region name, "*" or "?";
+          # additive, NULL for legacy rows and other protocols.
+          unless message_columns.include?("scope")
+            db.execute("ALTER TABLE messages ADD COLUMN scope TEXT")
+          end
+
           reply_index_exists =
             db.get_first_value(
               "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_reply_id'",

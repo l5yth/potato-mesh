@@ -54,6 +54,7 @@ class MessageEvent(_MessageEventRequired, total=False):
     hop_limit: int | None
     hops: int | None
     path: str | None
+    scope: str | None
     reply_id: int | None
     emoji: str | None
     channel_name: str

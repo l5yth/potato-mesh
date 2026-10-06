@@ -8,6 +8,7 @@
 * Data: Reticulum node roles are derived from the announce aspect, so a multi-aspect peer no longer flips roles (SPEC RD4/RE10)
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 * Web: mesh.dmz.pt joins the default federation seed nodes and potatomesh.jmrp.io leaves them
+* Data/Web: MeshCore channel messages carry their path, RSSI and flood scope, and chat shows a route chip with hops and scope; path and RSSI were never captured before (#765, SPEC SC1-SC10)
 
 ### Fixes
 * Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)

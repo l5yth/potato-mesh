@@ -21,6 +21,7 @@ import threading
 
 from .decode import _contact_to_node_dict
 from .identity import _meshcore_node_id, _pubkey_prefix_to_node_id
+from .route import RouteTracker
 
 
 class ClosedBeforeConnectedError(ConnectionError):
@@ -56,6 +57,8 @@ class _MeshcoreInterface:
         self.isConnected: bool = False
         self._self_info_payload: dict | None = None
         """Most recent SELF_INFO payload received from the device, or ``None``."""
+        self._route = RouteTracker()
+        """RX-log copies and the default flood scope for channel-message routes."""
 
     # ------------------------------------------------------------------
     # Contact management (called from the asyncio thread)

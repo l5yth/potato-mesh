@@ -25,18 +25,20 @@ def _normalize_hops(path_len: object) -> int | None:
     """Convert a MeshCore ``path_len`` event field to a hops-travelled count.
 
     ``CONTACT_MSG_RECV`` / ``CHANNEL_MSG_RECV`` payloads carry ``path_len`` as
-    the number of repeater relays the message travelled, except that a direct
-    (zero-hop) reception is encoded as the :data:`~._constants._DIRECT_PATH_LEN`
-    sentinel (``255``) rather than ``0`` (SPEC RF1).
+    the number of repeater relays a flood-routed message travelled.  A
+    direct-routed message is encoded as the
+    :data:`~._constants._DIRECT_PATH_LEN` sentinel (``255``) instead: its hop
+    count is unknown, so it is reported as ``None``, never ``0`` (SPEC RF1 as
+    amended by SC9).
 
     Parameters:
         path_len: Raw ``path_len`` value from the event payload, or ``None``
             when the firmware frame omitted it.
 
     Returns:
-        ``0`` for the direct sentinel, the non-negative hop count otherwise,
-        or ``None`` when the value is absent or unparseable (defensive: the
-        library masks the field to 0–63 or 255, but payloads are untyped).
+        The non-negative hop count, or ``None`` for the direct sentinel and
+        for an absent or unparseable value (defensive: the library masks the
+        field to 0–63 or 255, but payloads are untyped).
     """
     if path_len is None:
         return None
@@ -44,9 +46,7 @@ def _normalize_hops(path_len: object) -> int | None:
         value = int(path_len)
     except (TypeError, ValueError):
         return None
-    if value == _DIRECT_PATH_LEN:
-        return 0
-    if value < 0:
+    if value == _DIRECT_PATH_LEN or value < 0:
         return None
     return value
 
@@ -54,11 +54,11 @@ def _normalize_hops(path_len: object) -> int | None:
 def _normalize_path(path: object) -> str | None:
     """Normalize a MeshCore hop-hash route string for storage.
 
-    The ``decrypt_channels`` RX-log join injects ``path`` into
-    ``CHANNEL_MSG_RECV`` payloads as a hex string of concatenated
+    An RX-log frame carries ``path`` as a hex string of concatenated
     ``path_hash_size``-byte repeater hashes in travel order (last hash = the
-    repeater heard directly).  Stored verbatim as raw material for a future
-    topology view — no hash→node resolution is attempted (SPEC RF2).
+    repeater heard directly); a channel message takes it from its delivered
+    copy (:mod:`~.route`).  Stored verbatim - no hash→node resolution is
+    attempted (SPEC RF2/SC8).
 
     Parameters:
         path: Raw ``path`` value from the event payload.

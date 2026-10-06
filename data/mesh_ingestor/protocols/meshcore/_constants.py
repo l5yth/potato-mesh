@@ -79,10 +79,11 @@ assertion (SPEC RF4) must preserve them via read-modify-write.
 """
 
 _DIRECT_PATH_LEN = 255
-"""Sentinel ``path_len`` value meaning the packet was received directly.
+"""Sentinel ``path_len`` value meaning the packet was routed directly.
 
-The companion protocol encodes a direct (zero-hop) reception as ``0xFF``
-instead of ``0``; any other value is the masked 6-bit hop count (the
-``meshcore`` library strips the 2-bit ``path_hash_mode`` prefix before
-dispatching, so handlers only ever see ``0``–``63`` or this sentinel).
+The companion protocol reports a flood-routed message's hop count and a
+direct-routed one as ``0xFF``, whose hop count is unknown (stored as ``NULL``,
+SPEC RF1/SC9); any other value is the masked 6-bit hop count (the ``meshcore``
+library strips the 2-bit ``path_hash_mode`` prefix before dispatching, so
+handlers only ever see ``0``–``63`` or this sentinel).
 """

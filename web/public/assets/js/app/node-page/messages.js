@@ -28,6 +28,7 @@ import {
   formatChatMessagePrefix,
   formatChatPresetTag,
 } from '../chat-format.js';
+import { formatChatRouteChip } from '../chat-route-chip.js';
 import { buildMessageIndex } from '../message-replies.js';
 import { renderChatEntryContent } from '../chat-entry-renderer.js';
 import { formatMessageTimestamp } from '../node-page-charts.js';
@@ -160,6 +161,8 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
       });
       const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
       const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
+      // Route chip (hops + flood scope) after the sender badge (SPEC SC7).
+      const routeChip = formatChatRouteChip(message);
 
       // Render the message body through the shared chat-entry renderer so
       // the node page matches the dashboard in mention/reply/emoji handling.
@@ -207,7 +210,7 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
         source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${bodyHtml}</div>`;
+      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml}${routeChip} ${bodyHtml}</div>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';

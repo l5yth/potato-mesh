@@ -2324,7 +2324,9 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     # Text has no "SenderName:" prefix so from_id cannot be resolved.
     assert pkt["from_id"] is None
     assert pkt["snr"] == 5
-    assert pkt["rssi"] == -80
+    # The library join's RSSI names the newest RX-log copy, not the delivered
+    # one, so it is ignored; no indexed copy means no RSSI (SPEC SC2).
+    assert pkt["rssi"] is None
     # ID must be the hash-derived value, not the raw timestamp.  The text has no
     # "Name:" prefix so the sender-identity component is the empty string.
     assert pkt["id"] == _derive_message_id("", 1_758_000_000, "c2", "hello mesh")
@@ -2521,13 +2523,14 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
 
 
 def test_normalize_hops_maps_path_len_to_hops_travelled():
-    """_normalize_hops passes counts through, maps the 255 sentinel to 0, and
-    rejects absent/unparseable/negative values (SPEC RF1)."""
+    """_normalize_hops passes counts through and rejects the 255 direct-route
+    sentinel (hop count unknown) and absent/unparseable/negative values
+    (SPEC RF1, amended for #765)."""
     assert _normalize_hops(None) is None
     assert _normalize_hops(0) == 0
     assert _normalize_hops(3) == 3
     assert _normalize_hops("2") == 2
-    assert _normalize_hops(255) == 0
+    assert _normalize_hops(255) is None
     assert _normalize_hops("bogus") is None
     assert _normalize_hops(-1) is None
 
@@ -2554,8 +2557,8 @@ def test_on_channel_msg_includes_hops_from_path_len(monkeypatch):
     assert captured[0]["hops"] == 3
 
 
-def test_on_channel_msg_direct_sentinel_yields_zero_hops(monkeypatch):
-    """The 255 'direct' path_len sentinel normalizes to hops == 0."""
+def test_on_channel_msg_direct_sentinel_yields_no_hops(monkeypatch):
+    """The 255 'direct' path_len sentinel leaves hops unset (RF1, #765)."""
     import asyncio
 
     captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
@@ -2573,7 +2576,7 @@ def test_on_channel_msg_direct_sentinel_yields_zero_hops(monkeypatch):
     )
 
     assert len(captured) == 1
-    assert captured[0]["hops"] == 0
+    assert captured[0]["hops"] is None
 
 
 def test_on_channel_msg_hops_none_when_path_len_absent(monkeypatch):
@@ -2640,10 +2643,26 @@ def test_normalize_path_values():
 
 
 def test_on_channel_msg_includes_path_from_rx_log_join(monkeypatch):
-    """A channel message with a joined RX-log path stores it lowercased."""
+    """A channel message takes path and RSSI from its indexed RX-log copy,
+    lowercased, and ignores the library join's own fields (SC2)."""
     import asyncio
 
     captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt(
+                {
+                    "payload_typename": "GRP_TXT",
+                    "payload_type": 5,
+                    "route_type": 1,
+                    "msg_hash": 0x1234,
+                    "path_len": 3,
+                    "path": "F0BF44",
+                    "rssi": -96,
+                }
+            )
+        )
+    )
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -2651,7 +2670,9 @@ def test_on_channel_msg_includes_path_from_rx_log_join(monkeypatch):
                     "sender_timestamp": 1_758_000_014,
                     "text": "joined message",
                     "channel_idx": 0,
-                    "path": "F0BF44B53377",
+                    "txt_hash": 0x1234,
+                    "path": "F0BF4411AA",
+                    "RSSI": -100,
                     "path_len": 3,
                 }
             )
@@ -2659,12 +2680,15 @@ def test_on_channel_msg_includes_path_from_rx_log_join(monkeypatch):
     )
 
     assert len(captured) == 1
-    assert captured[0]["path"] == "f0bf44b53377"
+    assert captured[0]["path"] == "f0bf44"
+    assert captured[0]["rssi"] == -96
+    assert captured[0]["scope"] == "*"
     assert captured[0]["hops"] == 3
 
 
 def test_on_channel_msg_path_none_on_join_miss_or_invalid(monkeypatch):
-    """A join miss (absent path) or malformed path leaves the field None."""
+    """A message with no indexed RX-log copy stores no path, whatever the
+    library join's own (absent or malformed) path field says."""
     import asyncio
 
     captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
@@ -4492,12 +4516,17 @@ def _make_fake_meshcore_mod(
             # Mirrors the upstream property the runner flips on to keep the
             # contact roster live across re-adverts (meshcore adverts gap).
             self.auto_update_contacts = False
-            # Mirrors the upstream property enabling the RX-log⇆message join
-            # (SPEC RF2); the runner must flip it on before connecting.
-            self.decrypt_channels = False
+            # Records the upstream ``set_decrypt_channel_logs`` switch that
+            # enables RX-log decryption (SPEC RF2/SC1).  ``MeshCore`` has no
+            # ``decrypt_channels`` attribute; the old fake invented one, which
+            # hid the runner assigning it to no effect (#765).
+            self.decrypt_channel_logs = False
             # Records every non-catch-all subscription so tests can assert the
             # runner wires the ADVERTISEMENT handler.
             self.subscribed_events = []
+
+        def set_decrypt_channel_logs(self, value):
+            self.decrypt_channel_logs = value
 
         def subscribe(self, event_type, callback):
             if event_type is None:
@@ -5029,8 +5058,8 @@ def test_on_advertisement_ignores_unmappable_pubkey(monkeypatch):
 
 def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
     """_run_meshcore must enable contact auto-update, enable the RX-log join
-    (decrypt_channels, RF2), and subscribe the advert + contact-deleted
-    handlers."""
+    (set_decrypt_channel_logs, RF2/SC1), and subscribe the advert +
+    contact-deleted handlers."""
     import asyncio
     import data.mesh_ingestor.protocols.meshcore as _mod
 
@@ -5045,7 +5074,8 @@ def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
 
     assert error_holder[0] is None
     assert iface._mc.auto_update_contacts is True
-    assert iface._mc.decrypt_channels is True
+    assert iface._mc.decrypt_channel_logs is True
+    assert "decrypt_channels" not in vars(iface._mc)
     assert fake_mod.EventType.ADVERTISEMENT in iface._mc.subscribed_events
     assert fake_mod.EventType.CONTACT_DELETED in iface._mc.subscribed_events
     assert fake_mod.EventType.RX_LOG_DATA in iface._mc.subscribed_events

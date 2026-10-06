@@ -599,6 +599,11 @@ def store_packet_dict(packet: Mapping) -> None:
     path = _first(packet, "path", default=None)
     if not isinstance(path, str):
         path = None
+    # Flood scope stamped by the MeshCore handler (SPEC SC4): a region name,
+    # ``*`` (unscoped) or ``?`` (scoped, region unknown).  Same string guard.
+    scope = _first(packet, "scope", default=None)
+    if not isinstance(scope, str):
+        scope = None
 
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
@@ -635,6 +640,7 @@ def store_packet_dict(packet: Mapping) -> None:
         "hop_limit": int(hop) if hop is not None else None,
         "hops": hops,
         "path": path,
+        "scope": scope,
         "reply_id": reply_id,
         "emoji": emoji,
         "ingestor": _state.host_node_id(),
