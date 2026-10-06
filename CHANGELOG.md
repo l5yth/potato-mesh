@@ -60,6 +60,7 @@
 * CI: the Python workflow tests Python 3.13 and 3.14; neither CI matrix fails fast (SPEC DP5)
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
+* Data/Web: a Reticulum destination's placeholder name never replaces its real name or names its node; a node with no announced name reads its own placeholder; a nameless destination is named from its own hash (SPEC RA10, RE10)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

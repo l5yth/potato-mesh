@@ -459,22 +459,24 @@ def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
     mismatch that breaks ~85% of the id space — which is exactly how the first
     attempt at this fix passed its own test while still clobbering names.
     """
-    for node_id, expected in (
+    identity = _FakeIdentity(bytes.fromhex(_FIELD_PRIMARY))
+    for dest_ref, expected in (
         ("!0001beef", "Reticulum 0001"),  # digits only - matches even lower-cased
         ("!c0ffee00", "Reticulum C0FF"),
         ("!beefcafe", "Reticulum BEEF"),
         ("!deadbeef", "Reticulum DEAD"),
         ("!0000000a", "Reticulum 0000"),
     ):
-        # The placeholder names the row, and the row is keyed on the
-        # identity — so walk identity hashes, not destinations. The expected
+        # The placeholder names the row it lands on, the destination (SPEC
+        # RA10(b)), so walk destination hashes under one identity. The expected
         # strings below are the *web tier's* rule (placeholder_short_id in
-        # identity.rb): first four hex, upper-cased, for reticulum. If the two
-        # sides drift, the web upsert stops recognising these as placeholders
-        # and they start overwriting real display names.
-        idn = _FakeIdentity(bytes.fromhex(node_id[1:] + "11" * 12))
-        node = _announce_to_node_dict(_DEST_HASH, None, identity=idn, last_heard=1)
-        assert node["user"]["longName"] == expected, node_id
+        # identity.rb, which upsert_destination applies to "!" plus the first
+        # eight hex of the destination): first four hex, upper-cased, for
+        # reticulum. If the two sides drift, the web upsert stops recognising
+        # these as placeholders and they start overwriting real display names.
+        dest = bytes.fromhex(dest_ref[1:] + "11" * 12)
+        node = _announce_to_node_dict(dest, None, identity=identity, last_heard=1)
+        assert node["user"]["longName"] == expected, dest_ref
 
 
 # ---------------------------------------------------------------------------
@@ -741,8 +743,11 @@ def test_host_destinations_carry_their_interface_and_announced_name(monkeypatch)
 def test_host_destination_falls_back_to_the_placeholder_without_a_name(monkeypatch):
     """A destination the stack has never heard a name for keeps the placeholder.
 
-    The generic name is wanted -- it is the web upsert's recognised fallback
-    form -- but only where there is no real one to prefer.
+    The generic name is wanted, but only where there is no real one to prefer.
+    The web upsert recognises both placeholder forms, the node id's head and the
+    destination's own head, so it stores this one on a first sighting, never
+    lets it replace a real name, and never lets it head the node, which keeps
+    its own ``Reticulum 2771`` (web/spec/reticulum_spec.rb pins the same string).
     """
     _local_stack(monkeypatch, {_FIELD_LXMF: _FIELD_PRIMARY})
     record = ReticulumProvider().host_destination_nodes()[0]
@@ -751,6 +756,28 @@ def test_host_destination_falls_back_to_the_placeholder_without_a_name(monkeypat
     assert record["user"]["longName"] == "Reticulum 4CF9"
     # No interface in the path entry -> the key is omitted, not set to None.
     assert "interface" not in record
+
+
+def test_peer_destination_placeholder_names_its_own_hash():
+    """A nameless peer announce names its destination from that destination.
+
+    SPEC RA10(b): each row is named from its own hash. The host path above
+    does this; the announce path built the fallback from the identity's node
+    id, so the field peer's ``lxmf.delivery`` destination ``4cf985bf...`` was
+    stored as ``Reticulum 2771``, the node's name, instead of its own
+    ``Reticulum 4CF9``. The node keeps its own short name (RA10(a)).
+    """
+    node = _announce_to_node_dict(
+        bytes.fromhex(_FIELD_LXMF),
+        None,
+        identity=_FakeIdentity(bytes.fromhex(_FIELD_PRIMARY)),
+        aspect="lxmf.delivery",
+        last_heard=1,
+    )
+    assert node["nodeId"] == "!27716218"
+    assert node["user"]["shortName"] == "2771"
+    assert node["destination"]["id"] == _FIELD_LXMF
+    assert node["user"]["longName"] == "Reticulum 4CF9"
 
 
 def test_transport_aspect_is_gated_on_transport_enabled(monkeypatch):
@@ -885,16 +912,23 @@ def test_announce_to_node_dict_public_key_none_when_unreadable():
     assert node["user"]["publicKey"] is None
 
 
-def test_announce_to_node_dict_long_name_falls_back_to_the_node_placeholder():
-    """Undecodable app_data falls back to a placeholder naming the *node*.
+def test_announce_to_node_dict_long_name_falls_back_to_its_destination_placeholder():
+    """Undecodable app_data falls back to a placeholder naming the destination.
 
-    Not the destination: the row is keyed on the identity (SPEC RE7), and the
-    web upsert only yields to the "<Label> <short id>" form it recognises.
+    The web stores this name on the destination row, so it is built from the
+    destination's own hash (SPEC RA10(b)); the node keeps its own headline
+    (RE10). Only an unusable destination hash, which writes no destination
+    row, falls back to the node id's placeholder.
     """
     node = _announce_to_node_dict(
         _DEST_HASH, b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
     )
-    assert node["user"]["longName"] == "Reticulum BEEF"
+    assert node["user"]["longName"] == "Reticulum AABB"
+    salvaged = _announce_to_node_dict(
+        b"\xaa", b"\xff\xfe", identity=_FakeIdentity(), last_heard=1
+    )
+    assert "destination" not in salvaged
+    assert salvaged["user"]["longName"] == "Reticulum BEEF"
 
 
 def test_announce_to_node_dict_omits_hops_when_unknown():
@@ -1401,9 +1435,10 @@ def test_node_snapshot_items_returns_heard_announces(monkeypatch):
     as_dict = dict(items)
     assert set(as_dict) == {"!beef0001", "!c0ffee00"}
     assert as_dict["!beef0001"]["user"]["longName"] == "Alice"
-    # Name-less announce falls back to a placeholder built from its own node
-    # id, so it can never carry another destination's hex.
-    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum C0FF"
+    # Name-less announce falls back to a placeholder built from the
+    # destination it arrived on (SPEC RA10(b)), never from another
+    # destination's hex.
+    assert as_dict["!c0ffee00"]["user"]["longName"] == "Reticulum 1122"
 
 
 def test_update_node_ignores_a_falsy_node_id():

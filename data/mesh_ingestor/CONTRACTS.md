@@ -470,6 +470,13 @@ One row per announced destination, newest `last_heard` first.
   body the cursor produced.
 - Fields: `id` (destination hash, hex), `node_id`, `identity_hash`, `name`,
   `aspect`, `role`, `interface`, `first_heard`, `last_heard`, `protocol`.
+- `name` is the destination's announced display name, else `Reticulum` plus the
+  upper-cased first four hex of its own `id`, the placeholder the ingestor sends
+  for a nameless destination on the announce and host paths alike (SPEC RA10).
+  A destination's placeholder is stored on a first sighting, never replaces a
+  stored name and never becomes the node's `long_name`, which is the
+  highest-ranked announced name, else a stored name that is not a placeholder,
+  else the node's own placeholder (SPEC RE10).
 - `identity_hash` groups rows belonging to one peer; several rows share it when
   an identity announces on several aspects.
 - Written only by the node ingest route, from each node record's `destination`
