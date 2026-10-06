@@ -211,9 +211,10 @@ def _resolve_reticulum_config_dir() -> str:
 RETICULUM_CONFIG_DIR = _resolve_reticulum_config_dir()
 """Reticulum config directory for ``PROTOCOL=reticulum``.
 
-Passed as ``configdir`` to :class:`RNS.Reticulum`.  Defaults to an app-owned
-directory under the user config root, never the operator's ``~/.reticulum``
-— see :func:`_resolve_reticulum_config_dir`."""
+Passed as ``configdir`` to :class:`RNS.Reticulum`.  Defaults to the operator's
+``~/.reticulum``, the directory ``rnsd`` uses unless ``/etc/reticulum/config``
+or ``~/.config/reticulum/config`` exists (SPEC RE3); see
+:func:`_resolve_reticulum_config_dir`."""
 
 
 def _clean_env_fragment(value: str) -> str:

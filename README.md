@@ -12,7 +12,7 @@
 
 [![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
 [![Meshcore](https://img.shields.io/badge/Meshcore-supported-1f2937)](https://meshcore.io)
-[![Reticulum](https://img.shields.io/badge/Reticulum-supported-7b61ff)](https://reticulum.network)
+[![Reticulum](https://img.shields.io/badge/Reticulum-experimental-7b61ff)](https://reticulum.network)
 
 A federated Meshtastic, Meshcore, and Reticulum node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
@@ -22,10 +22,10 @@ _No MQTT clutter, just local LoRa aether._
   * New-node and telemetry notifications in chat.
   * Search and filter nodes in map and table view.
   * Federates automatically with other communities running PotatoMesh.
-  * Supports Meshtastic, Meshcore, and Reticulum.
+  * Supports Meshtastic, Meshcore, and Reticulum (experimental, announce-only).
 * Python ingestor feeds the web app's `POST` APIs remotely.
   * Supports multiple ingestors per instance.
-  * Supports Meshtastic, Meshcore, and Reticulum.
+  * Supports Meshtastic, Meshcore, and Reticulum (experimental, announce-only).
 * Matrix bridge posts Meshtastic messages to a Matrix channel (no radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
 
@@ -282,11 +282,11 @@ Configure with the environment variables below.
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
 | `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |
 | `CHANNEL` | _unset_ | Deprecated alias for `MESHTASTIC_PRESET`. |
-| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts (e.g. `Chat,Ops`); when set, messages, positions, telemetry and node info heard on any other channel are dropped, before `HIDDEN_CHANNELS` applies. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
-| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor drops: messages, positions, telemetry and node info heard on them are not forwarded. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
+| `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts (e.g. `Chat,Ops`); when set, messages, positions, telemetry and node info heard on any other channel are dropped, before `HIDDEN_CHANNELS` applies. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. Ignored under `PROTOCOL=reticulum`. |
+| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor drops: messages, positions, telemetry and node info heard on them are not forwarded. The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. Ignored under `PROTOCOL=reticulum`. |
 | `DROP_VIA_MQTT` | `0` | Set to `1` to drop Meshtastic packets and nodes the radio marks as relayed via MQTT. |
 | `TRANSPORT` | `api` | Ingestor transport: `api` (Meshtastic library over serial/TCP/BLE) or `udp` (passive LAN multicast; see [Passive UDP transport](#passive-udp-transport)). |
-| `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. |
+| `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). The node list sent at connect can still carry a node's last position, metrics and signal details (last heard, SNR, hop limit) heard on a filtered channel. Ignored under `PROTOCOL=reticulum`. |
 | `PRIMARY_CHANNEL_KEY` | `AQ==` | Base64 PSK used to decrypt the primary channel in UDP transport (default = Meshtastic default key). |
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
 | `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
@@ -306,6 +306,8 @@ Configure with the environment variables below.
 
 By default a PotatoMesh ingestor never transmits. It listens, and forwards
 what it hears to your dashboard. Nothing below happens unless you turn it on.
+Under `PROTOCOL=reticulum` the RNS stack can transmit on its own; see
+[Reticulum](#reticulum).
 
 | Variable | Default | What turning it on means |
 | --- | --- | --- |
@@ -357,9 +359,15 @@ when not already set.
 
 ### Reticulum
 
-Set `PROTOCOL=reticulum` to ingest from a Reticulum (RNS) network. The ingestor
-listens for announces and files each one as a node. It never transmits, so
-`TX_ENABLED=0` (the default) is fine.
+Reticulum support is experimental and announce-only. Set `PROTOCOL=reticulum`
+to file each announce on a Reticulum (RNS) network as a node. Messages,
+positions and telemetry are not ingested.
+
+The ingestor sends no announces, messages or polls, so `TX_ENABLED=0` (the
+default) is fine. `TX_ENABLED` does not gate the RNS stack, which transmits
+whatever its config enables, such as `AutoInterface` discovery or relaying with
+`enable_transport`. With no `rnsd` running, the ingestor runs that stack
+itself, from `RETICULUM_CONFIG_DIR`.
 
 `CONNECTION` does not apply; if set, the ingestor ignores it and logs that it did.
 
@@ -427,8 +435,8 @@ is still one entry. Its destinations (addresses) are listed via
 `GET /api/destinations` and shown as sub-rows grouped under the identity in
 the dashboard table.
 
-Announces carry no SNR, battery, or position, so those columns show dashes and
-Reticulum nodes stay off the map.
+Reticulum nodes show dashes for battery and position, stay off the map, and
+have no messages.
 
 ### Passive UDP transport
 
