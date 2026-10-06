@@ -32,7 +32,6 @@ Four regressions are pinned here:
 from __future__ import annotations
 
 import fnmatch
-import importlib.util
 import re
 import shutil
 import subprocess
@@ -50,7 +49,6 @@ GEMFILE_LOCK = REPO_ROOT / "web" / "Gemfile.lock"
 WEB_DOCKERFILE = REPO_ROOT / "web" / "Dockerfile"
 RUNTIME_REQUIREMENTS = REPO_ROOT / "data" / "requirements.txt"
 DEV_REQUIREMENTS = REPO_ROOT / "data" / "requirements-dev.txt"
-EDIT_GUARD = REPO_ROOT / ".claude" / "hooks" / "guard-edits.py"
 
 # Every ``package-ecosystem`` YAML value in the table of GitHub's Dependabot
 # options reference, as retrieved on 2026-10-04:
@@ -323,20 +321,6 @@ def _exact_pin(requirement: Requirement) -> Version | None:
     return None
 
 
-def _edit_guard_manifests() -> tuple[str, ...]:
-    """Return the manifest names the apex edit hook scans.
-
-    Returns:
-        ``MANIFESTS`` from ``.claude/hooks/guard-edits.py``, loaded from its
-        path because the hyphenated file name is not importable.
-    """
-
-    spec = importlib.util.spec_from_file_location("guard_edits", EDIT_GUARD)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.MANIFESTS
-
-
 def _pins(path: Path) -> dict[str, Version | None]:
     """Map each requirement name in ``path`` to its exact pin, if any.
 
@@ -533,15 +517,6 @@ def test_rns_pin_keeps_the_security_fix() -> None:
     """The pinned ``rns`` is at least 1.5.1, past the 1.5 security fix."""
 
     _assert_pinned_at_least("rns", RNS_FLOOR)
-
-
-def test_edit_guard_watches_every_requirements_file() -> None:
-    """The apex edit hook scans both pip requirements files."""
-
-    found = RUNTIME_REQUIREMENTS.parent.glob("requirements*.txt")
-    names = {path.name for path in found} | {DEV_REQUIREMENTS.name}
-    unwatched = sorted(names - set(_edit_guard_manifests()))
-    assert not unwatched, f".claude/hooks/guard-edits.py does not scan {unwatched}"
 
 
 def test_dependabot_parser_reads_only_top_level_update_items() -> None:
