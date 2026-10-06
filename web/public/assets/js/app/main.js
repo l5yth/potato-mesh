@@ -5802,7 +5802,10 @@ export function initializeApp(config) {
       // The legend brackets a bare count itself (" (26)"), so a destination
       // count must not be bracketed twice -- that rendered "Reticulum (3 (8))".
       // With no destinations loaded the column is byte-identical to before.
-      const destinationTotal = countDestinations(destinationIndex) || null;
+      // Only the loaded nodes' destinations count: those of the identities the
+      // first number counts, which are the table's sub-rows.
+      const loadedIds = new Set(allNodes.map(node => node?.node_id));
+      const destinationTotal = countDestinations(destinationIndex, loadedIds) || null;
       const reticulumWeek = stats?.reticulum?.week ?? 0;
       reticulumCountEl.textContent = destinationTotal
         ? ` ${formatProtocolCount(reticulumWeek, destinationTotal)}`
@@ -5829,8 +5832,10 @@ export function initializeApp(config) {
       protocolToggleMeshtasticCount.textContent = String(stats?.meshtastic?.week ?? 0);
     }
     if (protocolToggleReticulumCount) {
+      // The loaded nodes' destinations only, as in the legend (SPEC RA3).
+      const loadedIds = new Set(allNodes.map(node => node?.node_id));
       protocolToggleReticulumCount.textContent =
-        formatProtocolCount(stats?.reticulum?.week ?? 0, countDestinations(destinationIndex) || null);
+        formatProtocolCount(stats?.reticulum?.week ?? 0, countDestinations(destinationIndex, loadedIds) || null);
     }
   }
 

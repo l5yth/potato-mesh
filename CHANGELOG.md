@@ -23,6 +23,7 @@
 * Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
+* Web: the Reticulum destination count matches the table, and `/api/destinations` serves only destinations of nodes inside the node window (SPEC RA3/RA8)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
 * Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)

@@ -238,13 +238,20 @@ export function formatProtocolCount(identities, destinations) {
 /**
  * Total destinations across an index, for the bracketed count.
  *
+ * The bracket counts the loaded destinations of the identities its first
+ * number counts (SPEC RA3), which are the table's sub-rows; the index can also
+ * hold identities the table does not show, so callers pass the loaded node ids.
+ *
  * @param {Map<string, Array<Object>>} index `node_id` → destination rows.
- * @returns {number} Total rows held.
+ * @param {?Set<string>} [nodeIds] Count only these identities' rows; absent or
+ *   `null` counts every row held.
+ * @returns {number} Total rows counted.
  */
-export function countDestinations(index) {
+export function countDestinations(index, nodeIds = null) {
   if (!index || typeof index.forEach !== 'function') return 0;
   let total = 0;
-  index.forEach(rows => {
+  index.forEach((rows, nodeId) => {
+    if (nodeIds instanceof Set && !nodeIds.has(nodeId)) return;
     total += Array.isArray(rows) ? rows.length : 0;
   });
   return total;

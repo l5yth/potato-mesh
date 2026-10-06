@@ -110,8 +110,13 @@ const occurrences = (html, needle) => (String(html).match(new RegExp(needle, 'g'
  * Stand the app up with a real `#nodes tbody` and one Reticulum identity
  * alongside a Meshtastic node, and hand back the pieces a test needs.
  */
-async function renderWith(destinations) {
+async function renderWith(destinations, { extraElements = [] } = {}) {
   const env = createDomEnvironment({ includeBody: true });
+  // Elements the app resolves by id at init (e.g. the toggle count spans)
+  // have to exist before `initializeApp` runs.
+  for (const id of extraElements) {
+    env.registerElement(id, env.createElement('span', id));
+  }
   const tbody = env.document.createElement('tbody');
   env.document.querySelector = selector => (selector === '#nodes tbody' ? tbody : null);
   // The delegated click listener attaches to `#nodes`'s own tbody, so the
@@ -243,6 +248,51 @@ test('the legend and toggle read identities (destinations) once loaded (SPEC RA3
     // itself the branch worth pinning; the string rule is covered in
     // identity-groups.test.js against formatProtocolCount directly.
     assert.ok(legend && toggle);
+  } finally {
+    cleanup();
+  }
+});
+
+test('the bracket counts only the destinations of identities the table holds (SPEC RA3/FU4)', async () => {
+  // The background walk can hold destinations of identities the table does
+  // not show: until the destinations read gained its node floor (SPEC RA8), it
+  // served those of identities that had aged out of the 7-day `/api/nodes`
+  // window. Field case (dweb.potatomesh.net, 2026-10-06): one identity in the
+  // window with four destinations, 79 aged-out identities holding 83 more; the
+  // toggle and legend read `1 (87)`, the table `1 (4)`.
+  const inWindow = [
+    ...DESTINATIONS,
+    { id: 'fbf8e338000000000000000000000000', node_id: IDENTITY,
+      identity_hash: '27716218762cfd2864141ef286c39940',
+      aspect: 'rns.transport', role: 'TRANSPORT', name: null, last_heard: NOW - 130 },
+  ];
+  const agedOut = Array.from({ length: 83 }, (_, i) => ({
+    id: `${String(i).padStart(4, '0')}${'0'.repeat(28)}`,
+    // 79 identities: the first four hold two destinations each.
+    node_id: `!${(0xa0000000 + (i < 8 ? Math.floor(i / 2) : i - 4)).toString(16)}`,
+    aspect: 'lxmf.propagation', role: 'PROPAGATION', name: null,
+    last_heard: NOW - 20 * 86400,
+  }));
+  const index = new Map([[IDENTITY, inWindow]]);
+  for (const row of agedOut) {
+    index.set(row.node_id, [...(index.get(row.node_id) ?? []), row]);
+  }
+  const { t, env, cleanup } = await renderWith(inWindow, {
+    extraElements: ['protocolToggleReticulumCount'],
+  });
+  try {
+    assert.equal(index.size, 80, 'fixture mirrors the field: 80 identities hold destinations');
+    t.setDestinationIndex(index);
+    const legend = env.createElement('span', 'legendReticulumCount');
+    t._setProtocolCountElements(null, null, legend);
+    const stats = { reticulum: { week: 1 }, meshtastic: { week: 1 } };
+    t.updateProtocolToggleCounts(stats);
+    t.updateLegendProtocolCounts(stats);
+    const toggle = env.document.getElementById('protocolToggleReticulumCount');
+    assert.equal(toggle.textContent, '1 (4)',
+      'the toggle bracket counts the destinations of the identities it counts');
+    assert.equal(legend.textContent, ' 1 (4)',
+      'the legend bracket counts the destinations of the identities it counts');
   } finally {
     cleanup();
   }
