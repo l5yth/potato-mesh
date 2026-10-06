@@ -34,7 +34,7 @@ jobs:
       run:
         working-directory: web
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Set up Node.js 22
       uses: actions/setup-node@v4
       with:
@@ -55,8 +55,11 @@ jobs:
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     - name: Upload test results to Codecov
-      uses: codecov/test-results-action@v1
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        report_type: test_results
         files: web/reports/javascript-junit.xml
         flags: frontend
+        fail_ci_if_error: false

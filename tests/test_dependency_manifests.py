@@ -14,7 +14,7 @@
 
 """Guard the dependency manifests that Dependabot, CI, and the images consume.
 
-Three regressions are pinned here:
+Four regressions are pinned here:
 
 * ``.github/dependabot.yml`` named ecosystems GitHub does not document
   (``ruby`` and ``python`` instead of ``bundler`` and ``pip``). The file was
@@ -24,6 +24,9 @@ Three regressions are pinned here:
 * ``data/requirements.txt`` carried only ``>=`` floors plus the dev tools, so
   the ingestor image installed black and pytest and whatever release was
   newest on build day.
+* The ``github-actions`` entry kept Dependabot's default limit of 5 open pull
+  requests, so its 2026-10-04 and 2026-10-05 runs computed the
+  ``actions/checkout`` major and then dropped it behind the open updates.
 """
 
 from __future__ import annotations
@@ -121,6 +124,11 @@ RNS_FLOOR = Version("1.5.1")
 # A trailing ``# comment``. A ``#`` that belongs to a value is never preceded
 # by whitespace in these files, so this cannot cut a value short.
 _COMMENT = re.compile(r"(^|\s)#.*$")
+# A workflow step's ``uses: owner/repo[/sub-path]@ref``, capturing the part
+# before ``@``.
+_USES = re.compile(
+    r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*[\"']?([^@\s\"'.][^@\s\"']*)@", re.MULTILINE
+)
 # A YAML block-sequence item, capturing its indentation and its body.
 _ITEM = re.compile(r"^(?P<indent>\s+)-\s+(?P<body>.*)$")
 # A YAML ``key: value`` line; nested keys are matched at any depth.
@@ -387,6 +395,51 @@ def test_dependabot_covers_every_manifest_directory() -> None:
     assert not not_weekly, f"Dependabot entries not on a weekly schedule: {not_weekly}"
 
 
+def _action_repositories(text: str) -> set[str]:
+    """Return the ``owner/repo`` of every remote action a workflow file uses.
+
+    Dependabot updates a repository once for all its sub-path actions
+    (``github/codeql-action/init`` and ``/analyze``), so a sub-path folds into
+    its repository. Local actions (``./``) and ``docker://`` images are not
+    GitHub Actions updates and are left out.
+
+    Args:
+        text: The contents of a workflow file.
+
+    Returns:
+        The ``owner/repo`` names, without duplicates.
+    """
+
+    return {
+        "/".join(name.split("/")[:2]) for name in _USES.findall(text) if ":" not in name
+    }
+
+
+def test_actions_pr_limit_covers_every_action() -> None:
+    """The ``github-actions`` limit fits one open pull request per action repository.
+
+    Dependabot drops an update it has computed once the entry already has
+    ``open-pull-requests-limit`` pull requests open (5 by default). A limit at
+    or above the number of action repositories the workflows use keeps every
+    update from waiting behind the others.
+    """
+
+    entries = _dependabot_entries(DEPENDABOT.read_text(encoding="utf-8"))
+    actions = [e for e in entries if e.get("package-ecosystem") == "github-actions"]
+    workflows = REPO_ROOT / _WORKFLOWS
+    files = sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])
+    used = set().union(
+        *(_action_repositories(f.read_text(encoding="utf-8")) for f in files)
+    )
+    assert len(actions) == 1, "expected one github-actions entry in dependabot.yml"
+    assert used, "no `uses: owner/action@ref` lines parsed from .github/workflows"
+    limit = int(actions[0].get("open-pull-requests-limit", "5"))
+    assert limit >= len(used), (
+        f"github-actions open-pull-requests-limit is {limit}, "
+        f"below the {len(used)} distinct actions in use"
+    )
+
+
 @requires_git
 def test_gemfile_lock_is_not_git_ignored() -> None:
     """No committed ``.gitignore`` rule ignores ``web/Gemfile.lock``.
@@ -518,6 +571,28 @@ def test_dependabot_parser_reads_only_top_level_update_items() -> None:
         },
         {"package-ecosystem": "cargo"},
     ]
+
+
+def test_action_repositories_fold_sub_paths_and_skip_local_actions() -> None:
+    """Actions count once per repository; local actions and images not at all."""
+
+    text = """jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v7
+      - name: Init
+        uses: "github/codeql-action/init@v4"
+      - uses: 'github/codeql-action/analyze@v4'
+      - uses: ./.github/actions/local
+      - uses: docker://alpine@sha256:0123abcd
+      - uses: dtolnay/rust-toolchain@stable
+"""
+
+    assert _action_repositories(text) == {
+        "actions/checkout",
+        "github/codeql-action",
+        "dtolnay/rust-toolchain",
+    }
 
 
 def test_required_entries_map_manifests_to_their_directories() -> None:
