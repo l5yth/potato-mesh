@@ -3223,6 +3223,20 @@ button.legend-item[aria-pressed="true"] {
   text-indent: 0;
 }
 
+/* Route chip (SPEC SC7): hop count and flood scope after the sender badge,
+   outside the 19ch prefix (FU9). It resets the inherited hanging indent like
+   the badge above; inline-block keeps it whole in the line, and without
+   nowrap a long region name still wraps inside it on a narrow panel (LC3). */
+.chat-route-chip {
+  display: inline-block;
+  text-indent: 0;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
 /* Chat date dividers separate days spatially (UX11, D-040). */
 .chat-entry-date {
   border-top: 1px solid var(--line);

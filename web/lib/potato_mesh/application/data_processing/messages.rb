@@ -185,6 +185,8 @@ module PotatoMesh
         # hop-hash route; both additive and absent for legacy senders.
         hops = coerce_integer(message["hops"])
         path = string_or_nil(message["path"])
+        # MeshCore flood scope (SPEC SC4/SC5): an invalid value stores NULL.
+        scope = normalize_message_scope(message["scope"])
         # A MeshCore channel sender is only name-matched by the ingestor, so a
         # stale roster can hand back a retired key; re-rank it before anything
         # is stored, deduplicated, or touched (SPEC GN3).
@@ -205,6 +207,7 @@ module PotatoMesh
           message["hop_limit"],
           hops,
           path,
+          scope,
           lora_freq,
           modem_preset,
           channel_name,
@@ -315,7 +318,7 @@ module PotatoMesh
           end
 
           existing = db.get_first_row(
-            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol, scope FROM messages WHERE id = ?",
             [target_id],
           )
           if existing
@@ -437,6 +440,14 @@ module PotatoMesh
               updates["ingestor"] = ingestor if existing_ingestor.nil?
             end
 
+            # A later copy fills a NULL scope or names a stored "?", nothing
+            # more; hops, path, snr and rssi stay with the first ingestor
+            # (SPEC SC6).
+            if scope
+              existing_scope = existing.is_a?(Hash) ? existing["scope"] : existing[12]
+              updates["scope"] = scope if message_scope_supersedes?(existing_scope, scope)
+            end
+
             existing_protocol = existing.is_a?(Hash) ? existing["protocol"] : existing[11]
             return if existing_protocol && existing_protocol != "meshtastic" && existing_protocol != protocol
             updates["protocol"] = protocol if (existing_protocol.nil? || existing_protocol == "meshtastic") && protocol != "meshtastic"
@@ -450,12 +461,12 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,hops,path,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor,protocol)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,hops,path,scope,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor,protocol)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               existing_row = db.get_first_row(
-                "SELECT text, encrypted, ingestor, protocol, from_id FROM messages WHERE id = ?",
+                "SELECT text, encrypted, ingestor, protocol, from_id, scope FROM messages WHERE id = ?",
                 [msg_id],
               )
               existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
@@ -512,6 +523,9 @@ module PotatoMesh
               fallback_updates["reply_id"] = reply_id unless reply_id.nil?
               fallback_updates["emoji"] = emoji if emoji
               fallback_updates["ingestor"] = ingestor if ingestor && existing_ingestor.nil?
+              # Same flood-scope precedence as the update path (SPEC SC6).
+              existing_fallback_scope = existing_row.is_a?(Hash) ? existing_row["scope"] : existing_row&.[](5)
+              fallback_updates["scope"] = scope if message_scope_supersedes?(existing_fallback_scope, scope)
               fallback_updates["protocol"] = protocol if (existing_fallback_protocol.nil? || existing_fallback_protocol == "meshtastic") && protocol != "meshtastic"
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")

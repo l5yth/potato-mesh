@@ -1793,3 +1793,25 @@ class TestStorePacketDictPath:
         harness = TestStorePacketDictHops()
         payload = harness._store(monkeypatch, harness._make_packet())
         assert payload["path"] is None
+
+
+class TestStorePacketDictScope:
+    """``store_packet_dict`` forwards the MeshCore flood scope (SC4/SC5)."""
+
+    def test_meshcore_scope_is_forwarded(self, monkeypatch):
+        """A handler-stamped scope string reaches the queued payload."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(monkeypatch, harness._make_packet(scope="de-be"))
+        assert payload["scope"] == "de-be"
+
+    def test_non_string_scope_is_dropped(self, monkeypatch):
+        """A malformed (non-string) scope value is dropped, not serialized."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(monkeypatch, harness._make_packet(scope=["*"]))
+        assert payload["scope"] is None
+
+    def test_scope_none_when_absent(self, monkeypatch):
+        """Meshtastic packets carry no scope -> payload scope is None."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(monkeypatch, harness._make_packet())
+        assert payload["scope"] is None

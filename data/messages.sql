@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
     hop_limit INTEGER,
     hops      INTEGER,
     path      TEXT,
+    scope     TEXT,
     lora_freq INTEGER,
     modem_preset TEXT,
     channel_name TEXT,
