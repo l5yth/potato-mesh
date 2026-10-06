@@ -657,6 +657,147 @@ RSpec.describe "Reticulum protocol support" do
     end
   end
 
+  describe "destinations node window (SPEC RA8)" do
+    # The destinations read serves a destination only while its node is inside
+    # the window the node read applies: seven days in bulk, as /api/nodes, and
+    # twenty-eight with ?node_id=, as /api/nodes/:id; and only while its own
+    # last_heard is inside the 28-day API cap. It had no floor, so the bulk read
+    # served the destinations of nodes /api/nodes had dropped, up to the
+    # 365-day retention horizon, and the dashboard counted them (SPEC RA3).
+    let(:outside_bulk) { now - PotatoMesh::Config.week_seconds - 3600 }
+    let(:outside_per_node) { now - PotatoMesh::Config.four_weeks_seconds - 3600 }
+    let(:inside_cap) { now - PotatoMesh::Config.four_weeks_seconds + 3600 }
+    let(:stale_node_id) { "!5ca1ab1e" }
+    let(:stale_dest) { "5ca1ab1e#{"00" * 12}" }
+    let(:older_aspect_dest) { "0ddba110#{"00" * 12}" }
+    let(:inside_cap_dest) { "c0ffee00#{"00" * 12}" }
+
+    before { register_reticulum_ingestor }
+
+    # POST one announce of +node_id+ on +dest_id+, heard at +heard+.
+    #
+    # @param node_id [String] canonical node id; it heads the identity hash.
+    # @param heard [Integer] announce time, unix seconds.
+    # @param dest_id [String] destination hash, hex.
+    # @param long_name [String, nil] announced name; the fixture's when nil.
+    # @return [void]
+    def announce(node_id, heard, dest_id, long_name: nil)
+      node = reticulum_node_fixture(last_heard: heard, dest_id: dest_id)
+      node["identityHash"] = "#{node_id.delete_prefix("!")}#{"00" * 12}"
+      node["user"]["longName"] = long_name if long_name
+      payload = { node_id => node, "ingestor" => RETICULUM_INGESTOR_ID, "protocol" => "reticulum" }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(201)
+    end
+
+    # Destination ids the read serves, newest first.
+    #
+    # @param query [String] query string, including its leading "?".
+    # @return [Array<String>] served destination ids.
+    def served(query = "")
+      get "/api/destinations#{query}"
+      expect(last_response.status).to eq(200)
+      JSON.parse(last_response.body).map { |r| r["id"] }
+    end
+
+    it "serves the destinations of a node inside the bulk window and none of a node outside it" do
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+      announce(RETICULUM_NODE_ID2, outside_bulk, RETICULUM_DEST_HASH2)
+      # Both rows are stored and /api/nodes lists only the fresh node, so the
+      # destinations read is the one left to drop the other.
+      with_db(readonly: true) do |db|
+        expect(db.get_first_value("SELECT COUNT(*) FROM destinations")).to eq(2)
+      end
+      get "/api/nodes"
+      listed = JSON.parse(last_response.body).map { |n| n["node_id"] }
+      expect(listed).to include(RETICULUM_NODE_ID)
+      expect(listed).not_to include(RETICULUM_NODE_ID2)
+
+      expect(served).to eq([RETICULUM_DEST_HASH])
+    end
+
+    it "keys the floor on the node, so a node in the window keeps an aspect heard before it" do
+      announce(RETICULUM_NODE_ID, outside_bulk, older_aspect_dest)
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+
+      expect(served).to eq([RETICULUM_DEST_HASH, older_aspect_dest])
+      expect(served("?node_id=#{RETICULUM_NODE_ID}")).to eq([RETICULUM_DEST_HASH, older_aspect_dest])
+    end
+
+    it "caps each destination's own last_heard at 28 days, in bulk and with ?node_id=" do
+      # A fresh node, so only the cap can drop its aspect last heard 28 days
+      # and an hour ago; the aspect an hour inside the cap stays, and a since
+      # older than the cap cannot widen it.
+      announce(RETICULUM_NODE_ID, outside_per_node, older_aspect_dest)
+      announce(RETICULUM_NODE_ID, inside_cap, inside_cap_dest)
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+      fresh = [RETICULUM_DEST_HASH, inside_cap_dest]
+
+      expect(served).to eq(fresh)
+      expect(served("?node_id=#{RETICULUM_NODE_ID}")).to eq(fresh)
+      expect(served("?since=#{outside_per_node - 60}")).to eq(fresh)
+    end
+
+    it "applies the per-node window with ?node_id=, as /api/nodes/:id does" do
+      announce(RETICULUM_NODE_ID2, outside_bulk, RETICULUM_DEST_HASH2)
+      announce(stale_node_id, outside_per_node, stale_dest)
+      # The stale node's destination is itself fresh, so only the node's
+      # window can drop it, not the 28-day cap on the destination.
+      with_db do |db|
+        db.execute("UPDATE destinations SET last_heard = ? WHERE id = ?", [now - 60, stale_dest])
+      end
+      get "/api/nodes/#{RETICULUM_NODE_ID2}"
+      expect(last_response.status).to eq(200)
+      get "/api/nodes/#{stale_node_id}"
+      expect(last_response.status).to eq(404)
+
+      expect(served("?node_id=#{RETICULUM_NODE_ID2}")).to eq([RETICULUM_DEST_HASH2])
+      expect(served("?node_id=#{stale_node_id}")).to eq([])
+      expect(served).to eq([])
+    end
+
+    it "still omits an opted-out node's destinations inside the window (SPEC RE2)" do
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+      announce(
+        RETICULUM_NODE_ID2, now - 20, RETICULUM_DEST_HASH2,
+        long_name: "Quiet #{PotatoMesh::Config.node_opt_out_marker} Station",
+      )
+
+      expect(served).to eq([RETICULUM_DEST_HASH])
+      expect(served("?node_id=#{RETICULUM_NODE_ID2}")).to eq([])
+    end
+
+    it "serves no destination whose node has no row" do
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+      with_db do |db|
+        db.execute(
+          "INSERT INTO destinations(id, node_id, aspect, role, first_heard, last_heard) " \
+          "VALUES (?, ?, ?, ?, ?, ?)",
+          [stale_dest, stale_node_id, "lxmf.delivery", "PEER", now - 60, now - 10],
+        )
+      end
+
+      expect(served).to eq([RETICULUM_DEST_HASH])
+      expect(served("?node_id=#{stale_node_id}")).to eq([])
+    end
+
+    it "filters ahead of ?limit=, so a backward walk pages only windowed rows" do
+      # Newest first by the destination's own last_heard: the fresh node's
+      # current aspect, the aged-out node's destination, the fresh node's older
+      # aspect. Filtered after LIMIT, the aged-out row would take a page slot.
+      announce(RETICULUM_NODE_ID, outside_bulk - 3600, older_aspect_dest)
+      announce(RETICULUM_NODE_ID, now - 30, RETICULUM_DEST_HASH)
+      announce(RETICULUM_NODE_ID2, outside_bulk, RETICULUM_DEST_HASH2)
+
+      get "/api/destinations?limit=2"
+      page = JSON.parse(last_response.body)
+      expect(page.map { |r| r["id"] }).to eq([RETICULUM_DEST_HASH, older_aspect_dest])
+      # A full page, so the walk continues from its oldest row: the inclusive
+      # boundary repeats that row once and the short page ends the walk.
+      expect(served("?limit=2&before=#{page.last["last_heard"]}")).to eq([older_aspect_dest])
+    end
+  end
+
   describe "POST /api/nodes" do
     it "stores reticulum nodes under their own protocol via the wrapper stamp" do
       register_reticulum_ingestor

@@ -165,6 +165,23 @@ module PotatoMesh
         "!#{trimmed}"
       end
 
+      # Lower bound of the window a node read applies (CONTRACTS "GET endpoint
+      # time windows").  Bulk listings stay on the seven-day window so the
+      # dashboard does not render stale nodes; a read naming one node widens to
+      # twenty-eight days so callers can backfill older records that fall
+      # outside the bulk floor.  {#query_destinations} bounds a destination's
+      # node by the same floor, so a node's destinations leave the API with the
+      # node (SPEC RA8).
+      #
+      # @param node_ref [Object, nil] the node a per-id read names; +nil+ for a
+      #   bulk read.
+      # @param now [Integer] reference unix timestamp in seconds.
+      # @return [Integer] unix timestamp of the window's lower bound.
+      def node_window_floor(node_ref, now)
+        window = node_ref ? PotatoMesh::Config.four_weeks_seconds : PotatoMesh::Config.week_seconds
+        now - window
+      end
+
       # Fetch node state optionally scoped by identifier and timestamp.
       #
       # @param limit [Integer] maximum number of rows to return.
@@ -178,10 +195,8 @@ module PotatoMesh
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
-        # Bulk listings stay on the seven-day window so the dashboard does not
-        # render stale nodes; per-id lookups widen to twenty-eight days so
-        # callers can backfill older records that fall outside the bulk floor.
-        since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
+        # Seven days in bulk, twenty-eight for a per-id lookup.
+        since_floor = node_window_floor(node_ref, now)
         since_threshold = normalize_since_threshold(since, floor: since_floor)
         params = []
         where_clauses = []
@@ -342,9 +357,17 @@ module PotatoMesh
       # +nodes+ row: a marker only in a non-headline destination's own name
       # hides nothing.
       #
+      # Serves a destination only while its node is inside the window the node
+      # read applies ({#node_window_floor}, SPEC RA8): seven days on the bulk
+      # read, twenty-eight with +node_id:+. A node's destinations leave the API
+      # with the node, although retention keeps the rows for a year. The
+      # destination's own +last_heard+ is capped at the 28-day API visibility
+      # window ({PotatoMesh::Config.four_weeks_seconds}) on both reads.
+      #
       # @param limit [Integer] maximum rows to return.
       # @param node_id [String, nil] restrict to one node's destinations.
-      # @param since [Object] inclusive lower bound on +last_heard+.
+      # @param since [Object] inclusive lower bound on the destination's
+      #   +last_heard+, clamped up to the 28-day cap.
       # @param before [Object] inclusive upper-bound cursor on +last_heard+
       #   (SPEC RA8); non-positive or non-integer values are ignored.
       # @param db [SQLite3::Database, nil] optional open handle to reuse.
@@ -358,16 +381,20 @@ module PotatoMesh
           clauses << "node_id = ?"
           params << node_id
         end
-        # +since+/+before+ bound +last_heard+, this route's primary sort column,
-        # matching the seven bulk collections (SPEC RA8/BP1). No retention floor
-        # is imposed: a destination is a relationship, not an event, and the
-        # nodes it belongs to already clamp their own window -- a floor here
-        # would hide the addresses of a node the table is still showing.
-        threshold = normalize_since_threshold(since)
-        if threshold.positive?
-          clauses << "last_heard >= ?"
-          params << threshold
-        end
+        now = Time.now.to_i
+        # Bound the node by the floor /api/nodes (bulk) or /api/nodes/:id
+        # (+node_id:+) applies, so a destination whose node aged out, or has no
+        # row, is not served. Both bounds below run in SQL ahead of +LIMIT+, so
+        # a short page still means the window is exhausted (SPEC RA8).
+        clauses << "node_id IN (SELECT node_id FROM nodes WHERE last_heard >= ?)"
+        params << node_window_floor(node_id, now)
+        # The destination's own +last_heard+, this route's primary sort column,
+        # is capped at the 28-day API visibility window on both reads: a node
+        # the table shows keeps every destination heard inside it. +since+ is
+        # clamped up to the cap and +before+ lowers the upper bound, matching
+        # the bulk collections (SPEC RA8/BP1); neither can widen either bound.
+        clauses << "last_heard >= ?"
+        params << normalize_since_threshold(since, floor: now - PotatoMesh::Config.four_weeks_seconds)
         append_before_filter(clauses, params, before, column: "last_heard")
         # Node-level opt-out (Invariant II): the +node_id+ fragment the positions,
         # telemetry and waypoints reads already apply. Filtering in SQL keeps

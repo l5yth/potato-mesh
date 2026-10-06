@@ -153,7 +153,18 @@ test('counts read identities (destinations) only where a node holds several', ()
 test('countDestinations totals the index', () => {
   const index = new Map([['!a', [1, 2]], ['!b', [3]], ['!c', null]]);
   assert.equal(countDestinations(index), 3);
+  assert.equal(countDestinations(index, null), 3);
   assert.equal(countDestinations(null), 0);
+});
+
+test('countDestinations counts only the identities it is given (SPEC RA3)', () => {
+  // The bracket counts the destinations of the identities its first number
+  // counts; the index can also hold identities the table does not show.
+  const index = new Map([['!a', [1, 2]], ['!b', [3]], ['!c', null]]);
+  assert.equal(countDestinations(index, new Set(['!a'])), 2);
+  assert.equal(countDestinations(index, new Set(['!b', '!c', '!absent'])), 1);
+  assert.equal(countDestinations(index, new Set()), 0);
+  assert.equal(countDestinations(null, new Set(['!a'])), 0);
 });
 
 test('planIdentityRows keeps sub-rows with their parent in sort order', () => {

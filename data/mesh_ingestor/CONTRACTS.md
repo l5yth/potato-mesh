@@ -361,6 +361,7 @@ Every read endpoint enforces a server-side rolling-window floor on the data it r
 | `GET /api/telemetry` | 7 days | filtered by `COALESCE(rx_time, telemetry_time)` |
 | `GET /api/instances` | 7 days | filtered by `instances.last_update_time` |
 | `GET /api/waypoints` | 7 days | filtered by `waypoints.rx_time`; rows past their `expire` timestamp are additionally excluded from the moment of expiry (SPEC W5). 404 under `PRIVATE=1` (message-grade privacy, SPEC W3). The per-author `GET /api/waypoints/:id` (SPEC W11 - feeds the node page's Waypoints section) uses the standard per-id 28-day window and the same expiry/privacy gates. |
+| `GET /api/destinations` | 7 days | filtered by the owning node's `nodes.last_heard`, the `/api/nodes` window; `?node_id=` takes the per-id 28-day window. The destination's own `last_heard` is capped at 28 days on both, and the `since` clamp applies to that cap (SPEC RA8). |
 | `GET /api/neighbors` | 28 days | sparse data; widened to keep slow scrapes visible |
 | `GET /api/traces` | 28 days | sparse data; same rationale |
 | `GET /api/ingestors` | 28 days | sparse heartbeats; same rationale |
@@ -477,9 +478,12 @@ One row per announced destination, newest `last_heard` first.
 - Query params: `?limit=` (capped like other collections), `?since=` and
   `?before=` bounding `last_heard` exactly as the other bulk collections do
   (SPEC RA8), and `?node_id=` to filter to one node. All four compose.
-- No retention floor. A destination is a relationship, not an event, and the
-  nodes it belongs to already clamp their own window - a floor here would hide
-  the addresses of a node the table is still showing.
+- Floor. A destination is served only while its node is inside the window the
+  node read applies - 7 days on `nodes.last_heard`, 28 days with `?node_id=`
+  (the per-id window) - and its own `last_heard` is inside 28 days, the API
+  visibility cap; `?since=` older than that cap is clamped to it. A node the
+  table shows keeps every destination heard inside 28 days. A destination whose
+  node aged out of the window, or has no node row, is not served (SPEC RA8).
 - Privacy. Honors the node opt-out marker: rows whose `node_id` names an
   opted-out node are omitted, so `?node_id=` for that node returns `[]`. The
   opt-out is node-level: a marker in a non-headline destination's own name hides
