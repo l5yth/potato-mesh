@@ -87,6 +87,7 @@ RETICULUM_CONFIG_DIR=$(grep "^RETICULUM_CONFIG_DIR=" .env 2>/dev/null | cut -d'=
 RETICULUM_INTERFACES=$(grep "^RETICULUM_INTERFACES=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 RETICULUM_FREQ=$(grep "^RETICULUM_FREQ=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 RETICULUM_PRESET=$(grep "^RETICULUM_PRESET=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+INGESTOR_NODE_ID=$(grep "^INGESTOR_NODE_ID=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 HIDDEN_CHANNELS=$(grep "^HIDDEN_CHANNELS=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
@@ -178,12 +179,28 @@ echo "🔌 Ingestor Connection"
 echo "----------------------"
 if [ "$PROTOCOL" = "reticulum" ]; then
     echo "Reticulum uses an RNS config directory, not a single endpoint."
-    echo "Leave the directory blank to use ~/.reticulum. Point it at the same"
-    echo "directory your rnsd uses so interface filtering can resolve names."
-    read_with_default "RNS config directory (blank = ~/.reticulum)" "$RETICULUM_CONFIG_DIR" RETICULUM_CONFIG_DIR
-    echo "Restrict ingestion to named interfaces (case-insensitive substring)."
-    echo "Leave blank to ingest announces from every interface."
-    read_with_default "Reticulum interfaces" "$RETICULUM_INTERFACES" RETICULUM_INTERFACES
+    echo "Leave the directory blank to use the potatomesh_reticulum volume. To share"
+    echo "the host's rnsd instead, see the Reticulum section of README.md."
+    read_with_default "RNS config directory (blank = potatomesh_reticulum volume)" "$RETICULUM_CONFIG_DIR" RETICULUM_CONFIG_DIR
+    echo "Required in Docker."
+    echo "Enter ! plus the first 8 hex of your primary identity hash, or the full 32-hex hash."
+    NODE_ID_PATTERN='^(![0-9a-fA-F]{8}|[0-9a-fA-F]{32})$'
+    # Offer the current value only when it is valid, so a blank answer keeps it.
+    NODE_ID_DEFAULT=""
+    if [[ "$INGESTOR_NODE_ID" =~ $NODE_ID_PATTERN ]]; then
+        NODE_ID_DEFAULT="$INGESTOR_NODE_ID"
+    fi
+    # Ask until the answer is valid; at end of input, read fails and set -e exits.
+    while :; do
+        read_with_default "Ingestor node id" "$NODE_ID_DEFAULT" INGESTOR_NODE_ID
+        if [[ "$INGESTOR_NODE_ID" =~ $NODE_ID_PATTERN ]]; then
+            break
+        fi
+        echo "Not a valid node id. Enter ! plus 8 hex, or the 32-hex identity hash."
+    done
+    echo "Leave interfaces blank to ingest RNode interfaces only. Enter * for every"
+    echo "interface, or names to match (case-insensitive substring)."
+    read_with_default "Reticulum interfaces (blank = RNode only, * = all)" "$RETICULUM_INTERFACES" RETICULUM_INTERFACES
     echo "Frequency and preset are read from your RNS config; leave blank unless"
     echo "you want to override what the dashboard displays."
     read_with_default "Reticulum frequency (blank = from RNS config)" "$RETICULUM_FREQ" RETICULUM_FREQ
@@ -284,6 +301,9 @@ if [ "$PROTOCOL" = "reticulum" ]; then
     # Reticulum has no single endpoint; drop any inherited serial default so the
     # ingestor does not log an ignored-CONNECTION warning on every start.
     sed -i.bak '/^CONNECTION=.*/d' .env
+    # Only the reticulum branch asks for it; other runs keep the value as is,
+    # because the Meshtastic UDP transport reads it too.
+    update_env_optional "INGESTOR_NODE_ID" "$INGESTOR_NODE_ID"
 else
     update_env "CONNECTION" "$CONNECTION"
 fi
@@ -333,8 +353,9 @@ case "$PROTOCOL" in
         echo "   Frequency: ${MESHCORE_FREQ:-'Not set'}"
         ;;
     reticulum)
-        echo "   RNS Config Dir: ${RETICULUM_CONFIG_DIR:-'~/.reticulum'}"
-        echo "   Interfaces: ${RETICULUM_INTERFACES:-'All'}"
+        echo "   RNS Config Dir: ${RETICULUM_CONFIG_DIR:-'potatomesh_reticulum volume'}"
+        echo "   Ingestor Node ID: ${INGESTOR_NODE_ID}"
+        echo "   Interfaces: ${RETICULUM_INTERFACES:-'RNode only'}"
         echo "   Frequency: ${RETICULUM_FREQ:-'From RNS config'}"
         echo "   Preset: ${RETICULUM_PRESET:-'From RNS config'}"
         ;;
