@@ -204,7 +204,7 @@ module PotatoMesh
         append_before_filter(where_clauses, params, before, column: "last_heard")
 
         if private_mode?
-          where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
+          where_clauses << hidden_client_filter
         end
 
         append_opt_out_filter(where_clauses, params, opt_out_self_filter)
@@ -437,7 +437,7 @@ module PotatoMesh
       # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
       # @return [Hash{String => Hash}] scope => window counts.
       def node_activity_counts(handle, cutoffs)
-        private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        private_clause = private_mode? ? " AND #{hidden_client_filter}" : ""
         # Bound the raw +last_heard+ column by the widest ("month") cutoff so
         # +idx_nodes_last_heard+ pre-filters +visible+ before aliasing (issue
         # #866). Lossless by SPEC S4: "month" is the widest window, so any row

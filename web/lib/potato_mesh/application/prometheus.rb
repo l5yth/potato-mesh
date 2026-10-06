@@ -223,6 +223,124 @@ module PotatoMesh
           end
         end
       end
+
+      # Node ids whose per-node series a scrape may print (SPEC PM1/PM2).
+      #
+      # Runs one read-only query with the filter +GET /api/nodes+ applies:
+      # neither name carries the opt-out marker and, with +PRIVATE=1+, the
+      # role is not +CLIENT_HIDDEN+.  It has no age window and no row cap,
+      # so the gauges keep their meaning; a node whose row retention deleted
+      # is absent, so its series are dropped too.
+      #
+      # @return [Set<String>] node ids a scrape may export.
+      def prometheus_visible_node_ids
+        db = open_database(readonly: true)
+        db.results_as_hash = true
+        where_clauses = []
+        params = []
+        where_clauses << hidden_client_filter if private_mode?
+        append_opt_out_filter(where_clauses, params, opt_out_self_filter)
+        sql = "SELECT node_id FROM nodes WHERE #{where_clauses.join(" AND ")}"
+        db.execute(sql, params).each_with_object(Set.new) { |row, ids| ids << row["node_id"] }
+      ensure
+        db&.close
+      end
+
+      # Registry view that +/metrics+ prints in place of the registry
+      # (SPEC PM1/PM2).
+      #
+      # Ingest keeps writing every series to the registry, and
+      # prometheus-client 5 cannot remove a label set, so the filter runs at
+      # export.  Each {#metrics} call asks +source+ once for the visible node
+      # ids and keeps a series of a family labelled +node+ only when its node
+      # is in that set.  Families without a +node+ label pass through
+      # unchanged.  If the lookup raises, the scrape carries no per-node
+      # family at all (fail closed).
+      class ExportRegistry
+        # Label that marks a metric family as per-node.
+        NODE_LABEL = :node
+
+        # @param registry [#metrics] registry the gauges write to.
+        # @param source [#prometheus_visible_node_ids, #warn_log] object that
+        #   runs the visibility query and logs a failed lookup.
+        def initialize(registry, source)
+          @registry = registry
+          @source = source
+        end
+
+        # Metric families for one scrape, in registry order.  This is the
+        # only registry method +Prometheus::Client::Formats::Text.marshal+
+        # calls.
+        #
+        # @return [Array<#name, #type, #docstring, #values>] families to
+        #   print; per-node families are wrapped in {NodeFamily}.
+        def metrics
+          visible = visible_node_ids
+          @registry.metrics.filter_map do |metric|
+            next metric unless metric.labels.include?(NODE_LABEL)
+
+            NodeFamily.new(metric, visible) if visible
+          end
+        end
+
+        private
+
+        # Look up the visible node ids, logging a failure instead of raising.
+        #
+        # @return [Set<String>, nil] visible node ids, or +nil+ when the
+        #   lookup raised.
+        def visible_node_ids
+          @source.prometheus_visible_node_ids
+        rescue StandardError => e
+          @source.warn_log(
+            "Withheld per-node metrics: visible node lookup failed",
+            context: "prometheus.export",
+            error_class: e.class.name,
+            error_message: e.message,
+          )
+          nil
+        end
+
+        # One per-node family limited to the series of visible nodes.  It
+        # offers the readers the text formatter calls (+name+, +type+,
+        # +docstring+, +values+) plus +labels+, and never writes to the
+        # wrapped metric.
+        class NodeFamily
+          # @param metric [Prometheus::Client::Metric] family labelled +node+.
+          # @param visible_node_ids [#include?] node ids whose series stay.
+          def initialize(metric, visible_node_ids)
+            @metric = metric
+            @visible_node_ids = visible_node_ids
+          end
+
+          # @return [Symbol] metric name.
+          def name
+            @metric.name
+          end
+
+          # @return [Symbol] metric type.
+          def type
+            @metric.type
+          end
+
+          # @return [String] help text.
+          def docstring
+            @metric.docstring
+          end
+
+          # @return [Array<Symbol>] label names of the family.
+          def labels
+            @metric.labels
+          end
+
+          # Series of visible nodes with their current values.
+          #
+          # @return [Hash{Hash => Object}] label set to value.
+          def values
+            @metric.values.select { |label_set, _value| @visible_node_ids.include?(label_set[NODE_LABEL]) }
+          end
+        end
+      end
     end
   end
 end

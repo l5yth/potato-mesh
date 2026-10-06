@@ -301,6 +301,16 @@ module PotatoMesh
         "NOT #{OPT_OUT_NAME_PREDICATE}"
       end
 
+      # SQL fragment that excludes +CLIENT_HIDDEN+ nodes.  Private mode
+      # (+PRIVATE=1+) keeps them out of public node reads, so callers append
+      # it only when +private_mode?+ is true.  Intended for queries that read
+      # directly from the +nodes+ table; a +NULL+ role stays visible.
+      #
+      # @return [String] SQL predicate suitable for AND-composition.
+      def hidden_client_filter
+        "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
+      end
+
       # Regex matching the only column-name shapes the +opt_out_node_*_filter+
       # helpers accept: bare identifiers (+node_id+), and dotted qualifiers
       # (+m.from_id+).  Anything else is rejected because the value is

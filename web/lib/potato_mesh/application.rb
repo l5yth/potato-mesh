@@ -236,7 +236,11 @@ module PotatoMesh
       use PotatoMesh::App::AssetCacheControl,
           immutable: APP_VERSION_PINNED
       use ::Prometheus::Middleware::Collector
-      use ::Prometheus::Middleware::Exporter
+      # The Exporter and the /metrics route print this one view, which drops
+      # per-node series of nodes /api/nodes would not list (SPEC PM1/PM2).
+      set :prometheus_export_registry,
+          App::Prometheus::ExportRegistry.new(::Prometheus::Client.registry, self)
+      use ::Prometheus::Middleware::Exporter, registry: prometheus_export_registry
 
       apply_logger_level!
 

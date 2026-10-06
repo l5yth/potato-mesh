@@ -107,7 +107,7 @@ The web app can be configured with environment variables (defaults shown):
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 | `OG_IMAGE_URL` | _unset_ | Absolute `http(s)://` URL for the social preview image; other schemes are ignored. Replaces the generated `/og-image.png`. Use HTTPS - most platforms won't render an HTTP preview. |
 | `PAGES_DIR` | `./pages` | The directory for static, custom-content pages. |
-| `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. |
+| `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. Opted-out nodes, and hidden clients under `PRIVATE=1`, are never exported. |
 
 `/robots.txt` and `/sitemap.xml` are generated automatically and respect
 `PRIVATE`/`FEDERATION`. Markdown files in `pages/` may set YAML frontmatter

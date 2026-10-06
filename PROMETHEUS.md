@@ -19,9 +19,9 @@ time series):
 
 - Unset or blank: only aggregate gauges (e.g. total node count) are exported.
 - `PROM_REPORT_IDS=*`: export metrics for every node.
-- `PROM_REPORT_IDS=ABCD1234,EFGH5678`: export metrics for the listed node ids only.
+- `PROM_REPORT_IDS='!abcd1234,!0a2f0001'`: export metrics for the listed node ids only. Ids are `!` plus 8 lowercase hex digits, as `/api/nodes` shows them. Quote the value; shells and YAML treat `!` specially.
 
-Applies to both the initial refresh and incremental updates.
+Applies to both the initial refresh and incremental updates. Opted-out nodes are never exported, and with `PRIVATE=1` neither are hidden clients.
 
 ## Available metrics
 
@@ -39,9 +39,9 @@ Applies to both the initial refresh and incremental updates.
 | `meshtastic_node_longitude` | Gauge | `node` | Longitude component of the last known position. |
 | `meshtastic_node_altitude` | Gauge | `node` | Altitude (in metres) of the last known position. |
 
-Per-node gauges are emitted only for ids in `PROM_REPORT_IDS`. A gauge does
-not appear until the device has sent the corresponding telemetry or position
-update at least once.
+Per-node gauges are emitted only for ids in `PROM_REPORT_IDS`, and never for
+an opted-out node. A gauge does not appear until the device has sent the
+corresponding telemetry or position update at least once.
 
 ## Accessing the `/metrics` endpoint
 

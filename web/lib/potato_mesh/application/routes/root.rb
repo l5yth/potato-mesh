@@ -530,7 +530,7 @@ module PotatoMesh
 
           app.get "/metrics" do
             content_type ::Prometheus::Client::Formats::Text::CONTENT_TYPE
-            ::Prometheus::Client::Formats::Text.marshal(::Prometheus::Client.registry)
+            ::Prometheus::Client::Formats::Text.marshal(settings.prometheus_export_registry)
           end
         end
       end
