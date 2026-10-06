@@ -103,15 +103,6 @@ module PotatoMesh
             end
           end
 
-          # Assemble the payload embedded into the node detail view. The
-          # payload provides a canonical identifier alongside any cached node,
-          # telemetry, or position rows that may already exist in the
-          # database. When no persisted data is available the method returns
-          # +nil+ so the caller can surface a 404 error.
-          #
-          # @param node_ref [Object] raw node identifier from the request.
-          # @return [Hash, nil] structured node reference payload or nil when
-          #   the node cannot be located.
           # Resolve a Reticulum destination reference to the node that owns it.
           #
           # The Destinations table shows full destination hashes and links each
@@ -138,6 +129,16 @@ module PotatoMesh
             handle&.close
           end
 
+          # Assemble the payload embedded into the node detail view. The
+          # payload provides a canonical identifier alongside any cached node,
+          # telemetry, or position rows that may already exist in the
+          # database. A reference to a Reticulum destination resolves to the
+          # node that owns it (SPEC RA5). When no persisted data is available
+          # the method returns +nil+ so the caller can surface a 404 error.
+          #
+          # @param node_ref [Object] raw node identifier from the request.
+          # @return [Hash, nil] structured node reference payload or nil when
+          #   the node cannot be located.
           def build_node_detail_reference(node_ref)
             tokens = canonical_node_parts(node_ref)
             search_ref = tokens ? tokens.first : node_ref

@@ -1303,12 +1303,11 @@ def test_connect_passes_active_candidate_through(monkeypatch, tmp_path):
 
 
 def test_connect_is_silent_when_ingestor_node_id_is_unset(monkeypatch, tmp_path):
-    """An unset ``INGESTOR_NODE_ID`` is no longer a warning (SPEC RE5).
+    """An unset ``INGESTOR_NODE_ID`` is not a warning (SPEC RE5/RE8).
 
     It used to leave the heartbeat unregistered, so connect warned about it.
-    The id is now derived from the config dir's transport identity, which makes
-    the variable an override — warning about an override nobody has to set
-    would train operators to ignore the log.
+    The id is now derived from the host's primary identity once a local app
+    announces, and connect logs ``node_id='pending'`` at info until then.
     """
     fake, _state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)

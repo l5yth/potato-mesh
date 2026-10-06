@@ -25,23 +25,22 @@ Note: non-Meshtastic protocols need a strategy to map their native node identifi
 
 The Reticulum provider (`PROTOCOL=reticulum`, `data/mesh_ingestor/protocols/reticulum.py`) maps announces into the canonical id space as follows:
 
-- Canonical node id = `!` + the first 4 bytes (8 lowercase hex chars) of the 16-byte destination hash, mirroring MeshCore's first-4-bytes-of-pubkey rule. Deterministic and sender-side (per the rule above).
-- One row per identity (SPEC RE7). A Reticulum identity announces on several destinations -- one per aspect (`lxmf.delivery`, `nomadnetwork.node`, `lxmf.propagation`) -- and all of them are one node: `node_id` is the first four bytes of the *identity* hash. Each aspect becomes a row in the `destinations` table carrying its own name and role. A destination hash keys a row only when no identity can be resolved at all. Consequence: the node-level `long_name`/`role` reflect the most recent announce and can alternate on a multi-aspect peer; the destinations table holds the per-aspect truth.
+- Canonical node id = `!` + the first 4 bytes (8 lowercase hex chars) of the 16-byte identity hash, mirroring MeshCore's first-4-bytes-of-pubkey rule. Deterministic and sender-side (per the rule above).
+- One row per identity (SPEC RE7). A Reticulum identity announces on several destinations -- one per aspect (`lxmf.delivery`, `nomadnetwork.node`, `lxmf.propagation`) -- and all of them are one node: `node_id` is the first four bytes of the *identity* hash. Each aspect becomes a row in the `destinations` table carrying its own name and role. A destination hash keys a row only when no identity can be resolved at all.
 - `user.publicKey` is the announcing identity's real public key (64 bytes / 128 hex), never a destination hash -- a destination hash is a truncated hash over the identity and name hashes, not a key.
 - `destination` is `{id, aspect, role}` for the destination this announce arrived on. Role is derived from the aspect: `lxmf.delivery` -> `PEER`, `nomadnetwork.node` -> `NODE`, `lxmf.propagation` -> `PROPAGATION`. `TRANSPORT` is reserved and never emitted for remote peers (see SPEC RE9 below).
 - `interface` is the interface the announce was heard on, when known. Retrieved through `RNS.Reticulum`'s shared-instance-aware accessors, which RPC to a running `rnsd` and return its view; `RNS.Transport.next_hop_interface` reads only the local process's path table and answers `LocalInterface[...]` for everything.
 - `identityHash` is the announcing identity's 16-byte hash.
-- `user.shortName` = the first 4 hex chars of the node id; `user.longName` = the display name decoded from announce `app_data`, falling back to `"Reticulum <SHORT>"` -- the protocol label plus the upper-cased last four hex of the canonical id, which is the exact form the web upsert recognises as a placeholder and therefore refuses to overwrite a real name with.
+- `user.shortName` = the first 4 hex chars of the node id; `user.longName` = the display name decoded from announce `app_data`, falling back to `"Reticulum <SHORT>"` -- the protocol label plus the upper-cased first four hex of the canonical id.
 
 Scope. `hops == 0` means the announce came from an app on this machine (`Transport.inbound` adds a hop to every inbound packet and takes it back for a local-client or shared-instance interface), so those are always ingested -- the operator's own nodes must never be hidden by a filter. From one hop out, `RETICULUM_INTERFACES` applies: unset admits an RNode interface only, `*` admits every interface, and a list is a case-insensitive substring match on the interface name (see "Interface scope" below).
 
-Known limitation. The accumulator is in-memory and per-process, and the web
-upsert writes `role=COALESCE(excluded.role, nodes.role)`, so an ingestor restart
--- or a second ingestor that hears only the lower aspect -- can *demote* a stored
-role. Within one session the rank holds. A rank-aware SQL merge (the treatment
-the `destinations` table already gets, via its own forward-only statement
-outside the freshness guard) is a tracked follow-up; a new protocol should not
-copy the in-memory accumulator as though it were durable.
+Headline name and role. The node-level `long_name`/`role` come from the node's
+highest-ranked destination, `NODE` > `PEER` > `PROPAGATION` > `TRANSPORT`,
+re-derived in SQL from its `destinations` rows on every destination write
+(SPEC RE10). Name and role resolve independently, so a nameless top-ranked
+aspect cannot blank the name. The result survives a restart and agrees across
+ingestors.
 
 `TRANSPORT` is emitted for the ingestor's own host only (SPEC RE9), under
 the synthetic aspect `rns.transport` and only when the local stack reports
@@ -52,7 +51,7 @@ another protocol must not emit `TRANSPORT` for anything but its own host.
 
 Interface scope. An RNS stack can carry LoRa and IP interfaces at once, and an announce listener hears every announce reachable over any of them - with RNS's default `AutoInterface` (IPv6 link-local multicast) that is the entire local Reticulum network. `RETICULUM_INTERFACES` scopes ingestion by the interface the announce's path arrived on. Unset, blank or quote-only (the default) admits an RNode only: an interface whose class in `get_interface_stats()`, read through the shared instance like the name, is `RNodeInterface`, `RNodeMultiInterface` or `RNodeSubInterface`. A sub-interface prints as `<parent>[<sub>]`, with no "rnode" in it, and is matched by that name against the stats entries; the map is cached and re-read on a miss at most every 30 s. When the stats cannot be read, or do not list the interface, the name must contain `rnode`. A stack listing no RNode keeps only 0-hop announces and the host's own destinations, and warns once per connect. `*` admits every interface. Any other value is a comma-separated, case-insensitive substring allowlist of interface names (e.g. `rnode`). A filtered-out announce is not counted as this mesh's traffic. Reticulum exposes no protocol-level "this peer is on LoRa" marker, so the interface a path arrived on is the only available proxy (SPEC RN4).
 
-Config isolation. `RETICULUM_CONFIG_DIR` defaults to an app-owned directory (`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`) and never to RNS's user default `~/.reticulum`: installing a dashboard ingestor does not imply consent to run the operator's transport-node configuration (SPEC RN3).
+Config dir. `RETICULUM_CONFIG_DIR` defaults to RNS's user default `~/.reticulum`, the directory the operator's `rnsd` uses unless `/etc/reticulum/config` or `~/.config/reticulum/config` exists (SPEC RE3, amending RN3). Interface scoping asks the shared instance which interface an announce arrived on, and that RPC authenticates with a key derived from the config dir's identity, so an ingestor with a private directory attaches to `rnsd` but cannot query it. The container images set it to `/app/.config/potato-mesh/reticulum`, where Compose mounts the `potatomesh_reticulum` volume.
 
 The ingestor's own node id is the host's primary identity, never the transport
 identity (SPEC RE8; see "Host-owned destinations" below). There is none until
@@ -70,10 +69,10 @@ loop while it returns `None`, so it must be cheap and must not raise.
 
 `CONNECTION` does not apply. It names a single serial, TCP, or BLE endpoint; an RNS stack is a set of interfaces with no such endpoint. Its counterparts are disjoint rather than overlapping: `RETICULUM_CONFIG_DIR` selects the stack, `RETICULUM_INTERFACES` selects which of its interfaces to ingest from. A set `CONNECTION` is ignored and logged as ignored, because the shipped container image carries a serial default for every protocol (SPEC RN10).
 
-Transmit policy. The provider is receive-only and has no transmit site to gate, so `PROTOCOL=reticulum` works with `TX_ENABLED=0` (the default). The underlying RNS stack is not silent at the *interface* layer, though - `AutoInterface` multicasts peer discovery, and `enable_transport` relays other nodes' traffic. That is owned by the Reticulum config, which is why the two paragraphs above exist (SPEC RN5).
+Transmit policy. The provider is receive-only and has no transmit site to gate, so `PROTOCOL=reticulum` works with `TX_ENABLED=0` (the default). The underlying RNS stack is not silent at the *interface* layer, though - `AutoInterface` multicasts peer discovery, and `enable_transport` relays other nodes' traffic. That is owned by the Reticulum config the ingestor shares with `rnsd` (above). With no shared instance running, `connect` starts that stack in the ingestor's own process, and the process then transmits whatever the config enables (SPEC RN5, amended by RE3).
 
 Collision trade-off (accepted). Truncating to 4 bytes means two distinct
-16-byte destination hashes sharing a 4-byte prefix collapse onto one
+16-byte identity hashes sharing a 4-byte prefix collapse onto one
 `node_id` -- the same accepted trade-off MeshCore's pubkey-prefix mapping
 carries (odds negligible at mesh scale). Across protocols, a prefix
 collision is a hijack risk rather than a merge, so the web nodeinfo upsert
@@ -126,11 +125,11 @@ remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
 - `rssi` (int|nil) - per-advert reception RSSI (SPEC RF3). Sourced from MeshCore RX-log adverts; Meshtastic reports no per-node RSSI, so the field stays absent/NULL there. The web upsert keeps the last stored value when an update omits it (`COALESCE`), so contact-roster refreshes never wipe a per-advert reading.
 - `hopsAway` (int)
 - `isFavorite` (bool)
-- `identityHash` (hex string | absent) - the protocol-native identity a destination belongs to, for protocols whose identities front several destinations (today: Reticulum). Stored in `nodes.identity_hash`; it is what groups a peer's rows back together. Not served on the node read APIs, but returned by `GET /api/destinations`.
+- `identityHash` (hex string | absent) - the full protocol-native identity hash a node is keyed on, for protocols whose identities front several destinations (today: Reticulum, whose `nodeId` is its first 4 bytes). Stored in `nodes.identity_hash` and on each of the node's `destinations` rows. Not served on the node read APIs, but returned by `GET /api/destinations`.
 - `destination` (mapping | absent) - `{id, aspect, role}` for the destination this record's announce arrived on. Written to the `destinations` table and served by `GET /api/destinations`.
 - `interface` (string | absent) - the interface the announce was heard on, e.g. `RNodeInterface[RNode Reticulum Berlin]`.
 - `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `publicKey`, `isUnmessagable`)
-  - `role` (optional string) - omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`), MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`), and Reticulum role names (`PEER`, `NODE`, `PROPAGATION`; `TRANSPORT` is reserved and never emitted - see "Roles" above, which also covers how Reticulum derives and ranks it)
+  - `role` (optional string) - omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`), MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`), and Reticulum role names (`PEER`, `NODE`, `PROPAGATION`; `TRANSPORT` for the ingestor's own host only - see "Reticulum node id mapping" above, which also covers the headline ranking)
 - `deviceMetrics` (mapping; e.g. `batteryLevel`, `voltage`, `channelUtilization`, `airUtilTx`, `uptimeSeconds`)
 - `position` (mapping; `latitude`, `longitude`, `altitude`, `time`, `locationSource`, `precisionBits`, optional nested `raw`)
 - Optional radio metadata: `lora_freq`, `modem_preset`
@@ -422,7 +421,9 @@ from the operator's own stack.
 - The preset is a Meshtastic preset name when the BW/SF/CR triple matches
   one exactly, else `SF{sf}/BW{bw}/CR{cr}`. The name describes radio settings
   and is not an interoperability claim.
-- Every node record the provider emits carries `lora_freq` / `modem_preset`.
+- Every Reticulum node record carries the ingestor's configured `lora_freq` /
+  `modem_preset`, whatever interface it was heard on (known gap: an IP peer
+  gets the RNode's values too).
   The other protocols reach `nodes.lora_freq` through their position and
   telemetry payloads; an announce carries neither, so without this the values
   never leave the ingestor heartbeat. An unresolved value is omitted, never

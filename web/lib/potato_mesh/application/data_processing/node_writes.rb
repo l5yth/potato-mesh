@@ -246,19 +246,21 @@ module PotatoMesh
         true
       end
 
-      # Record the destination an announce arrived for (SPEC RE-A5).
+      # Record the destination an announce arrived for (SPEC RE2).
       #
-      # A Reticulum identity announces on several destinations -- one per aspect
-      # -- each with its own display name and implied role, so each is its own
-      # +nodes+ row *and* its own +destinations+ row. This table is what lets a
-      # reader group those rows back into one peer via +identity_hash+.
+      # A Reticulum identity is one +nodes+ row (SPEC RE7) that announces on
+      # several destinations -- one per aspect -- each with its own display name
+      # and implied role. Each destination is its own +destinations+ row, linked
+      # to the node by +node_id+ and to the identity by +identity_hash+;
+      # {#refresh_node_identity_from_destinations} derives the node's headline
+      # name and role from these rows (SPEC RE10).
       #
       # Supersedes the +nodes.dest_hash+ JSON column: that modelled the same
       # relationship from the node side and could not carry a per-destination
       # name, aspect or role.
       #
       # @param db [SQLite3::Database] open database handle.
-      # @param node_id [String] canonical id of the row this destination keys.
+      # @param node_id [String] canonical id of the node that owns this destination.
       # @param destination [Object] +destination+ block from the payload.
       # @param identity_hash [String, nil] identity the destination belongs to.
       # @param name [String, nil] display name announced on this destination;
