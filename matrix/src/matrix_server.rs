@@ -80,7 +80,7 @@ struct SynapseResponse {
 fn build_router(state: SynapseState) -> Router {
     Router::new()
         .route(
-            "/_matrix/appservice/v1/transactions/:txn_id",
+            "/_matrix/appservice/v1/transactions/{txn_id}",
             put(handle_transaction),
         )
         .with_state(state)
@@ -277,6 +277,13 @@ mod tests {
             tokio::spawn(async move { run_synapse_listener(addr, "HS_TOKEN".to_string()).await });
         sleep(Duration::from_millis(10)).await;
         handle.abort();
+        // Only a listener still serving at abort time ends as cancelled. A
+        // task that panicked while building the router, or returned early,
+        // ended on its own before the abort.
+        let err = handle
+            .await
+            .expect_err("listener returned before it was aborted");
+        assert!(err.is_cancelled(), "listener ended before abort: {err}");
     }
 
     #[tokio::test]

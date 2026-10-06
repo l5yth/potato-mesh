@@ -805,6 +805,16 @@ mod tests {
         let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
         tokio::time::sleep(Duration::from_millis(10)).await;
         handle.abort();
+        // Only a listener still serving at abort time ends as cancelled. A
+        // task that panicked while building the router, or returned early,
+        // ended on its own before the abort.
+        let err = handle
+            .await
+            .expect_err("listener task returned before it was aborted");
+        assert!(
+            err.is_cancelled(),
+            "listener task ended before abort: {err}"
+        );
     }
 
     #[tokio::test]
@@ -812,7 +822,11 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
-        let _ = handle.await;
+        // The bind error is logged and the task returns normally. A panic,
+        // for example from building the router, surfaces here as a JoinError.
+        handle
+            .await
+            .expect("listener task panicked instead of logging the bind error");
     }
 
     #[tokio::test]
