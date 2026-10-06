@@ -18,8 +18,10 @@ dependencies:
   shared_preferences: ^2.5.5
   flutter_local_notifications: ^22.3.1
   workmanager: ^0.10.10
-  shared_preferences_android: 2.4.28
-  shared_preferences_foundation: 2.5.7
+  # Direct only because lib/dart_plugin_registrant.dart imports them for the
+  # background isolate. Keep carets: Dependabot turns `any` into an exact pin.
+  shared_preferences_android: ^2.4.28
+  shared_preferences_foundation: ^2.5.7
 
 dev_dependencies:
   flutter_test:
