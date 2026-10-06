@@ -27,6 +27,7 @@
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
 * Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
+* Data: the Reticulum ingestor re-posts its host's own destinations every hour, so `rns.transport` and the host aspects stay fresh on a connection that never reconnects (SPEC RE8)
 * Data: `PROTOCOL=reticulum` needs `INGESTOR_NODE_ID` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the node id is derived once a local app announces (SPEC RE5/RE8)
 * Data: a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum` - the ingestor now logs that it is dropping the value (SPEC RN10)
 * Data: `RETICULUM_INTERFACES` now resolves interface names through the shared RNS instance, fixing an allowlist that matched nothing on a shared stack (SPEC RE3)
@@ -36,6 +37,8 @@
 * Data/Web: one Reticulum node row per announced destination, grouped by `nodes.identity_hash` (SPEC RE1)
 * Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations`, which honors the node opt-out marker (SPEC RE2)
 * Data: new `RETICULUM_INTERFACES` allowlist scopes announce ingestion by interface, applied from one hop out; the operator's own nodes are always ingested (SPEC RN4/RE4)
+* Data: `PROTOCOL=reticulum` ingests only RNode interfaces by default; set `RETICULUM_INTERFACES=*` to ingest every interface as before (SPEC RN4)
+* Config: `configure.sh` asks for `INGESTOR_NODE_ID` under `PROTOCOL=reticulum` (SPEC RE8)
 * Web: the `/charts` mesh-activity figure draws the Reticulum series (SPEC RN2)
 * Web: `instances.reticulum_nodes_count` gets its own migration (SPEC RN7)
 * Docs: every environment variable the ingestor or web app reads is documented (SPEC DOC2)
@@ -61,6 +64,7 @@
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
 * Data/Web: a Reticulum destination's placeholder name never replaces its real name or names its node; a node with no announced name reads its own placeholder; a nameless destination is named from its own hash (SPEC RA10, RE10)
+* Nix: the flake ingestor includes `rns`, so `PROTOCOL=reticulum` runs on NixOS; `flake.lock` moves nixpkgs to nixos-unstable of 2026-10-03, which brings Python 3.14 and Ruby 3.4.9 (SPEC DP8)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

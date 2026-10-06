@@ -33,7 +33,7 @@ The Reticulum provider (`PROTOCOL=reticulum`, `data/mesh_ingestor/protocols/reti
 - `identityHash` is the announcing identity's 16-byte hash.
 - `user.shortName` = the first 4 hex chars of the node id; `user.longName` = the display name decoded from announce `app_data`, falling back to `"Reticulum <SHORT>"` -- the protocol label plus the upper-cased last four hex of the canonical id, which is the exact form the web upsert recognises as a placeholder and therefore refuses to overwrite a real name with.
 
-Scope. `hops == 0` means the announce came from an app on this machine (`Transport.inbound` adds a hop to every inbound packet and takes it back for a local-client or shared-instance interface), so those are always ingested -- the operator's own nodes must never be hidden by a filter. From one hop out, `RETICULUM_INTERFACES` applies as a case-insensitive substring match on the interface name; empty ingests everything.
+Scope. `hops == 0` means the announce came from an app on this machine (`Transport.inbound` adds a hop to every inbound packet and takes it back for a local-client or shared-instance interface), so those are always ingested -- the operator's own nodes must never be hidden by a filter. From one hop out, `RETICULUM_INTERFACES` applies: unset admits an RNode interface only, `*` admits every interface, and a list is a case-insensitive substring match on the interface name (see "Interface scope" below).
 
 Known limitation. The accumulator is in-memory and per-process, and the web
 upsert writes `role=COALESCE(excluded.role, nodes.role)`, so an ingestor restart
@@ -50,7 +50,7 @@ exposes transport status, and the sender-side determinism rule above (SPEC
 RD4) rules out inferring it from the ingestor's own path table. A provider for
 another protocol must not emit `TRANSPORT` for anything but its own host.
 
-Interface scope. An RNS stack can carry LoRa and IP interfaces at once, and an announce listener hears every announce reachable over any of them - with RNS's default `AutoInterface` (IPv6 link-local multicast) that is the entire local Reticulum network. `RETICULUM_INTERFACES` is a comma-separated, case-insensitive substring allowlist of interface names (e.g. `rnode`) matched against the interface the announce's path arrived on; empty is the default and ingests everything. A filtered-out announce is not counted as this mesh's traffic. Reticulum exposes no protocol-level "this peer is on LoRa" marker, so the interface a path arrived on is the only available proxy (SPEC RN4).
+Interface scope. An RNS stack can carry LoRa and IP interfaces at once, and an announce listener hears every announce reachable over any of them - with RNS's default `AutoInterface` (IPv6 link-local multicast) that is the entire local Reticulum network. `RETICULUM_INTERFACES` scopes ingestion by the interface the announce's path arrived on. Unset, blank or quote-only (the default) admits an RNode only: an interface whose class in `get_interface_stats()`, read through the shared instance like the name, is `RNodeInterface`, `RNodeMultiInterface` or `RNodeSubInterface`. A sub-interface prints as `<parent>[<sub>]`, with no "rnode" in it, and is matched by that name against the stats entries; the map is cached and re-read on a miss at most every 30 s. When the stats cannot be read, or do not list the interface, the name must contain `rnode`. A stack listing no RNode keeps only 0-hop announces and the host's own destinations, and warns once per connect. `*` admits every interface. Any other value is a comma-separated, case-insensitive substring allowlist of interface names (e.g. `rnode`). A filtered-out announce is not counted as this mesh's traffic. Reticulum exposes no protocol-level "this peer is on LoRa" marker, so the interface a path arrived on is the only available proxy (SPEC RN4).
 
 Config isolation. `RETICULUM_CONFIG_DIR` defaults to an app-owned directory (`$XDG_CONFIG_HOME/potato-mesh/reticulum`, else `~/.config/potato-mesh/reticulum`) and never to RNS's user default `~/.reticulum`: installing a dashboard ingestor does not imply consent to run the operator's transport-node configuration (SPEC RN3).
 
@@ -433,10 +433,12 @@ from the operator's own stack.
 
 ### Host-owned destinations (SPEC RE8)
 
-The ingestor's own aspects never arrive as announces -- nothing relays our own
-announce back to us -- so they are discovered instead and emitted with the node
-snapshot, which the daemon sends once per connection. An aspect the host starts
-announcing later is posted on the next connection.
+The ingestor's own aspects are discovered from the running stack. A local app's
+announce reaches the ingestor at 0 hops while both are attached, but one made
+before the ingestor connected is not replayed, and `rns.transport` never
+announces. The discovered records are emitted with the node snapshot at connect
+and on every self-node report after it (1 h), so they stay fresh on a
+connection that never recycles.
 
 - Source: 0-hop entries of the running stack's path table, mapped to their
   owning identity via `RNS.Identity.recall`.
@@ -446,6 +448,17 @@ announcing later is posted on the next connection.
   the identity hash (a destination hash is one-way and cannot be read back).
 - Emitted as ordinary node records sharing one `nodeId`, each carrying its own
   `destination` mapping, so no separate ingest route is involved.
+- Refreshed through `self_node_items(iface)`, an optional provider hook that
+  returns a list of `(node_id, node)` pairs. The daemon prefers it on the self-node timer
+  and falls back to the single-record `self_node_item` (MeshCore). Records are
+  returned only while the primary identity's node id is the registered host id,
+  so a second local identity that comes to front more destinations does not
+  take `rns.transport` onto its own node row through the report (the connect
+  snapshot is not yet tied to the host id). Local reads only, nothing is
+  transmitted. The transport gate is re-evaluated at every report.
+- An aspect whose app disconnects, or whose path entry expires (RNS culls one
+  7 days after its timestamp unless traffic flows through it), leaves the 0-hop
+  table and is no longer refreshed.
 
 ### GET /api/nodes placeholder flag (SPEC MR4)
 

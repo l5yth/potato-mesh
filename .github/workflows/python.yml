@@ -28,6 +28,8 @@ on:
       - 'README.md'
       - 'docker-compose.yml'
       - 'flake.nix'
+      # tests/test_configure_script.py runs it.
+      - 'configure.sh'
       - 'web/lib/potato_mesh/config.rb'
       # tests/test_dockerfile_sync.py compares these two files.
       - 'Dockerfile'
@@ -67,7 +69,7 @@ jobs:
         pytest --cov=data --cov-report=term --cov-report=xml:reports/python-coverage.xml --junitxml=reports/python-junit.xml
     - name: Upload coverage to Codecov
       if: always()
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: reports/python-coverage.xml
