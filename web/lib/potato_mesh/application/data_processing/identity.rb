@@ -183,7 +183,10 @@ module PotatoMesh
       #
       # Must stay in lockstep with the ingestor's own placeholder: this method
       # is what recognises a placeholder so a real name is never overwritten by
-      # one, and a mismatch would silently break that guard.
+      # one, and a mismatch would silently break that guard. The ingestor
+      # builds a nameless Reticulum destination's placeholder from the head of
+      # the destination's own hash, and older ingestors built a peer's from the
+      # head of the node id, so {#reticulum_placeholder_name?} checks both forms.
       #
       # @param node_id [String, nil] canonical node identifier.
       # @param protocol [String, nil] protocol the placeholder belongs to.
@@ -196,6 +199,59 @@ module PotatoMesh
 
         hex = parts[0].to_s.delete_prefix("!")
         hex.length >= 4 ? hex[0, 4].upcase : parts[2]
+      end
+
+      # Whether +name+ is a generic Reticulum placeholder for a destination of
+      # a node (SPEC RA10).
+      #
+      # Two forms are generic: the head of the destination's own hash,
+      # canonicalised like a node id (+!+ plus its first eight hex digits),
+      # which the ingestor builds for every nameless destination, and the head
+      # of the node id, which older ingestors built for a peer's. Either one is
+      # a stand-in, not an announced name: a destination's placeholder never
+      # replaces its stored name and never names its node, which with no
+      # announced name and no stored real name reads its own placeholder
+      # ({#reticulum_headline_name}).
+      #
+      # @param name [String, nil] candidate name.
+      # @param node_id [String] canonical id of the node owning the destination.
+      # @param destination_id [String, nil] destination hash, hex; +nil+ (no
+      #   usable destination) checks the node id's form only.
+      # @return [Boolean] true when +name+ is either placeholder.
+      def reticulum_placeholder_name?(name, node_id, destination_id)
+        generic_fallback_name?(name, node_id, "reticulum") ||
+          generic_fallback_name?(name, "!#{destination_id.to_s[0, 8]}", "reticulum")
+      end
+
+      # The headline name of a Reticulum node (SPEC RE10 as amended).
+      #
+      # The first announced name among the node's destinations, best ranked
+      # first. A placeholder is not a name, so a nameless +NODE+ aspect cannot
+      # rename a peer whose +PEER+ aspect announced one. With no announced name
+      # a stored headline that is not a placeholder stands; otherwise the node
+      # takes its own placeholder (SPEC RA10(a)): +!27716218+ badges +2771+ and
+      # reads +Reticulum 2771+, never a destination's +Reticulum 9C59+.
+      #
+      # @param node_id [String] canonical node id.
+      # @param destinations [Array<Array(String, String)>] +[id, name]+ pairs of
+      #   the node's destinations, best ranked first.
+      # @param stored [String, nil] the node's current +long_name+.
+      # @return [String, nil] the headline, or nil to leave +long_name+ as it is.
+      def reticulum_headline_name(node_id, destinations, stored)
+        announced = destinations.find do |id, name|
+          string_or_nil(name) && !reticulum_placeholder_name?(name, node_id, id)
+        end
+        return announced.last if announced
+
+        stored = string_or_nil(stored)
+        # A placeholder of the node or of any of its destinations yields; a
+        # real name kept from a record with no usable destination stands.
+        generic = stored.nil? || generic_fallback_name?(stored, node_id, "reticulum") ||
+                  destinations.any? { |id, _name| reticulum_placeholder_name?(stored, node_id, id) }
+        return stored unless generic
+
+        short_id = placeholder_short_id(node_id, "reticulum")
+        short_id ? "#{protocol_display_label("reticulum")} #{short_id}" : stored
       end
 
       # Resolve a raw node reference to its canonical row in the +nodes+ table.
