@@ -41,7 +41,7 @@ jobs:
         ruby-version: ['3.4', '4.0']
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Set up Ruby
       uses: ruby/setup-ruby@v1
       with:
@@ -59,11 +59,14 @@ jobs:
           --format RspecJunitFormatter \
           --out tmp/test-results/rspec.xml
     - name: Upload test results to Codecov
-      uses: codecov/test-results-action@v1
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        report_type: test_results
         files: ./web/tmp/test-results/rspec.xml
         flags: sinatra-${{ matrix.ruby-version }}
+        fail_ci_if_error: false
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v7
       with:

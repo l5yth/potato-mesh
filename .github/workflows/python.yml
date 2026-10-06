@@ -50,7 +50,7 @@ jobs:
       matrix:
         python-version: ['3.13', '3.14']
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v7
       with:
@@ -79,11 +79,14 @@ jobs:
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     - name: Upload test results to Codecov
-      uses: codecov/test-results-action@v1
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        report_type: test_results
         files: reports/python-junit.xml
         flags: python-ingestor
+        fail_ci_if_error: false
     - name: Lint with black
       run: |
         black --check ./

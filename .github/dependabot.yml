@@ -26,6 +26,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Room for one open pull request per action in use, so no update waits
+    # behind the others (the default limit is 5).
+    open-pull-requests-limit: 20
   - package-ecosystem: "cargo"
     directory: "/matrix"
     schedule:

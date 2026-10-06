@@ -40,7 +40,7 @@ jobs:
     env:
       TAG_NAME: ${{ github.ref_name }}
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Configure Android local.properties
       run: |
         cat > android/local.properties <<'EOF'
@@ -80,7 +80,7 @@ jobs:
     env:
       TAG_NAME: ${{ github.ref_name }}
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
@@ -117,7 +117,7 @@ jobs:
       PUBLISH_RELEASE: "false"
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - name: Check tag format
       run: |
         set -euo pipefail

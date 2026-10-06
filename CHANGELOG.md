@@ -19,6 +19,7 @@
 * Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
 * Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
 * CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
+* CI: test results reach Codecov also when tests fail; workflows use codecov-action v7 and checkout v7; Dependabot opens up to 20 GitHub Actions update PRs at a time (SPEC DW1/DW2/DW4)
 * Docker: the root `Dockerfile` builds the same image as `web/Dockerfile`, including Chromium for Open Graph previews (skip it with `--build-arg WITH_OG_IMAGE=0`), the custom pages directory, and the `APP_VERSION` build arg (SPEC DF1)
 * Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
