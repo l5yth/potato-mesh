@@ -172,7 +172,7 @@ def _fake_rns(
 def _no_ingestor_node_id(monkeypatch, tmp_path):
     """Point the provider at *tmp_path* with no operator-supplied node id.
 
-    A config dir the test owns, an unscoped allowlist, and
+    A config dir the test owns, the default (RNode) interface scope, and
     ``INGESTOR_NODE_ID`` cleared so the derived id is what gets exercised.
     """
     monkeypatch.setattr(_mod.config, "RETICULUM_CONFIG_DIR", str(tmp_path))
@@ -707,12 +707,12 @@ def test_host_destinations_label_every_announced_aspect(monkeypatch):
 def test_host_destinations_carry_their_interface_and_announced_name(monkeypatch):
     """Field regression: discovered aspects lost both name and interface.
 
-    The host's own announces are never delivered back to this ingestor, so a
-    discovered destination has no ``app_data`` of its own -- but the stack kept
-    the last one it heard. Without recalling it every host destination stored
-    the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule,
-    named the node with it. The interface came straight from the path entry and
-    was simply dropped (SPEC RE8).
+    A discovered destination comes from the path table, not from an announce,
+    so it has no ``app_data`` of its own -- but the stack kept the last one it
+    heard. Without recalling it every host destination stored the
+    ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule, named
+    the node with it. The interface came straight from the path entry and was
+    simply dropped (SPEC RE8).
     """
     _local_stack(
         monkeypatch,
@@ -1143,7 +1143,10 @@ def test_received_announce_swallows_handler_errors(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     monkeypatch.setattr(_mod.handlers, "_mark_packet_seen", lambda: None)
 
-    def _boom(*_a, **_k):
+    calls: list = []
+
+    def _boom(*args, **_k):
+        calls.append(args)
         raise RuntimeError("queue down")
 
     monkeypatch.setattr(_mod.handlers, "upsert_node", _boom)
@@ -1154,6 +1157,9 @@ def test_received_announce_swallows_handler_errors(monkeypatch):
     handler.received_announce(
         destination_hash=_DEST_HASH, announced_identity=_FakeIdentity(), app_data=b"X"
     )
+    # Reached exactly once: an announce that is never admitted would pass the
+    # "must not raise" check above without testing the error path at all.
+    assert len(calls) == 1
 
 
 def test_received_announce_latest_announce_wins_in_snapshot(monkeypatch):
@@ -1493,11 +1499,17 @@ def test_interface_allowlist_filters_announces(monkeypatch):
     assert _mod._announce_admitted(1, "RNodeInterface[RNode LoRa]") is True
 
 
-def test_interface_allowlist_empty_ingests_all(monkeypatch):
-    """RT-A5: an empty allowlist (the default) ingests every interface."""
+def test_interface_allowlist_empty_is_the_rnode_scope(monkeypatch):
+    """RT-A5, amended (SPEC RN4): an empty allowlist admits RNode interfaces only.
+
+    No stack runs here, so the name decides: a single-radio RNode prints as
+    ``RNodeInterface[...]``.  The class rule itself is covered in
+    ``tests/test_reticulum_scope_unit.py``.
+    """
     monkeypatch.setattr(config, "RETICULUM_INTERFACES", (), raising=False)
-    assert _mod._announce_admitted(1, "AutoInterface[Default Interface]") is True
-    assert _mod._announce_admitted(1, None) is True
+    assert _mod._announce_admitted(1, "AutoInterface[Default Interface]") is False
+    assert _mod._announce_admitted(1, None) is False
+    assert _mod._announce_admitted(1, "RNodeInterface[RNode LoRa]") is True
 
 
 # ---------------------------------------------------------------------------
@@ -1529,7 +1541,11 @@ class TestReticulumDeploymentSurface:
         ), f"docker-compose.yml does not pass {name} through to the ingestor"
 
     def test_quote_only_allowlist_cannot_blackout_ingestion(self):
-        """Defence in depth for the above: a quoted empty value means no allowlist."""
+        """Defence in depth for the above: a quoted empty value is the default.
+
+        It parses like unset, to the RNode scope (SPEC RN4), never to a
+        one-entry allowlist matching nothing.
+        """
         assert config._parse_reticulum_interfaces('""') == ()
 
     def test_image_declares_the_reticulum_defaults(self):
@@ -1972,9 +1988,10 @@ def test_snapshot_does_not_duplicate_a_host_destination_already_heard(monkeypatc
 def test_snapshot_includes_host_destinations_not_heard_as_announces(monkeypatch):
     """The host's own aspects reach the snapshot even with nothing heard.
 
-    Nothing relays our own announce back to us, so without folding the
-    discovered records in, the ingestor's own node would never be reported
-    (SPEC RE8).
+    A local app's announce reaches the ingestor only while both are attached,
+    one made before connect is not replayed, and ``rns.transport`` never
+    announces, so without folding the discovered records in, the ingestor's
+    own node could go unreported (SPEC RE8).
     """
     _local_stack(
         monkeypatch,

@@ -45,7 +45,7 @@ jobs:
       run: npm test
     - name: Upload coverage to Codecov
       if: always()
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: web/reports/javascript-coverage.json
