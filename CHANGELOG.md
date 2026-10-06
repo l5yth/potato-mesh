@@ -68,6 +68,7 @@
 * Web, bridge, app: Reticulum is named as its own protocol in the bridge tag (`[RT]`), the footer join strip (`RETICULUM_PRESET` and `RETICULUM_FREQ`), the `/nodes` page description and the client fallback label; the site description names no protocol; the app README states the app is Meshtastic only (SPEC RL8)
 * Docs: Reticulum is marked experimental and announce-only; the README says what the RNS stack transmits and that the channel filters ignore it (SPEC RD7/RN5)
 * Nix: the flake ingestor includes `rns`, so `PROTOCOL=reticulum` runs on NixOS; `flake.lock` moves nixpkgs to nixos-unstable of 2026-10-03, which brings Python 3.14 and Ruby 3.4.9 (SPEC DP8)
+* Docs: `CONTRACTS.md` states the Reticulum placeholder and headline name rules as amended (SPEC RA10, RE10)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

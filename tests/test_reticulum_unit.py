@@ -455,10 +455,11 @@ def test_fallback_name_matches_the_web_placeholder_for_every_id_shape():
     """The placeholder must equal what the web upsert builds, byte for byte.
 
     Ruby composes it from ``protocol_display_label`` plus the **upper-cased**
-    canonical short id and compares with ``==``.  A digits-only id like
-    ``!beef0001`` matches either way, so a fixture built from one hides a case
-    mismatch that breaks ~85% of the id space — which is exactly how the first
-    attempt at this fix passed its own test while still clobbering names.
+    canonical short id and compares with ``==``.  An id with a digits-only
+    head, like ``!0001beef``, matches either way, so a fixture built from one
+    hides a case mismatch that breaks ~85% of the id space — which is exactly
+    how the first attempt at this fix passed its own test while still
+    clobbering names.
     """
     identity = _FakeIdentity(bytes.fromhex(_FIELD_PRIMARY))
     for dest_ref, expected in (
@@ -713,9 +714,9 @@ def test_host_destinations_carry_their_interface_and_announced_name(monkeypatch)
     A discovered destination comes from the path table, not from an announce,
     so it has no ``app_data`` of its own -- but the stack kept the last one it
     heard. Without recalling it every host destination stored the
-    ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule, named
-    the node with it. The interface came straight from the path entry and was
-    simply dropped (SPEC RE8).
+    ``Reticulum <SHORT>`` placeholder and, through the original RE10 headline
+    rule, named the node with it. The interface came straight from the path
+    entry and was simply dropped (SPEC RE8).
     """
     _local_stack(
         monkeypatch,

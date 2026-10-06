@@ -97,8 +97,9 @@ in ``app_data`` — either raw UTF-8 bytes (pre-0.5 LXMF) or a msgpack array
 whose first element is the display name (LXMF >= 0.5, which appends the stamp
 cost).  ``nomadnetwork.node`` announces carry the node name as raw UTF-8.
 Undecodable ``app_data`` falls back to ``"Reticulum <SHORT>"`` — the protocol
-label plus the upper-cased first four hex of the canonical node id.  It names the
-*node*, not whichever destination announced.
+label plus the upper-cased first four hex of the destination's own hash, or of
+the node id when that hash is unusable (SPEC RA10).  It names the
+*destination*, not the node: the web tier picks the node's headline (SPEC RE10).
 """
 
 from __future__ import annotations
@@ -1140,8 +1141,9 @@ def _recalled_display_name(dest_hex: str) -> str | None:
     reaches this ingestor only while both are attached, and one made before
     connect is not replayed.  The stack kept the last one it heard, which is
     what ``rnsd`` recorded when the local app announced.  Without this a
-    discovered destination would carry only the ``Reticulum <SHORT>``
-    placeholder and, through the RE10 headline rule, name the node with it
+    discovered destination would carry only its ``Reticulum <SHORT>``
+    placeholder, which the RE10 headline rule skips, so a name announced
+    before connect would reach neither the destination nor its node
     (SPEC RE8).
 
     Parameters:

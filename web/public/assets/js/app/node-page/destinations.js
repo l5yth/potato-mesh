@@ -83,8 +83,8 @@ export function identitySummary(destinations) {
  * contract every other node-page section follows, and what keeps this invisible
  * for Meshtastic and Meshcore nodes (Invariant IV).
  *
- * Rows are ordered by aspect precedence (SPEC RE10), so the aspect that named
- * the identity leads, matching the chip order the nodes table shows.
+ * Rows are ordered by aspect precedence (SPEC RE10), so the aspect carrying the
+ * node's own role leads, matching the chip order the nodes table shows.
  *
  * @param {Array<Object>} destinations Destination rows from
  *   `GET /api/destinations?node_id=`.
