@@ -29,6 +29,7 @@
 * Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
 * Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
+* Web: the map legend lists only protocols in view: a protocol toggled off, or with no node matching the filter, leaves it; Clear filters also clears the filter text (SPEC LP1)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
 * Data: the Reticulum ingestor re-posts its host's own destinations every hour, so `rns.transport` and the host aspects stay fresh on a connection that never reconnects (SPEC RE8)
 * Data: `PROTOCOL=reticulum` needs `INGESTOR_NODE_ID` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the node id is derived once a local app announces (SPEC RE5/RE8)
