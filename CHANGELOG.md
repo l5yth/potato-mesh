@@ -64,6 +64,7 @@
 * CI: the Python workflow tests Python 3.13 and 3.14; neither CI matrix fails fast (SPEC DP5)
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
+* Data/Web: a Reticulum destination's placeholder name never replaces its real name or names its node; a node with no announced name reads its own placeholder; a nameless destination is named from its own hash (SPEC RA10, RE10)
 * Web, bridge, app: Reticulum is named as its own protocol in the bridge tag (`[RT]`), the footer join strip (`RETICULUM_PRESET` and `RETICULUM_FREQ`), the `/nodes` page description and the client fallback label; the site description names no protocol; the app README states the app is Meshtastic only (SPEC RL8)
 * Docs: Reticulum is marked experimental and announce-only; the README says what the RNS stack transmits and that the channel filters ignore it (SPEC RD7/RN5)
 * Nix: the flake ingestor includes `rns`, so `PROTOCOL=reticulum` runs on NixOS; `flake.lock` moves nixpkgs to nixos-unstable of 2026-10-03, which brings Python 3.14 and Ruby 3.4.9 (SPEC DP8)

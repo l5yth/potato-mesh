@@ -600,9 +600,16 @@ def _announce_to_node_dict(
         return None
     hash_hex = _reticulum_hash_hex(dest_hash)
     display_name = _decode_display_name(app_data)
+    # The web stores this name on the destination row, so a placeholder is
+    # built from the destination's own hash, as host discovery builds one
+    # (SPEC RA10(b)). The node id stands in only for an unusable hash, which
+    # writes no destination row; the node's headline comes from RE10.
+    placeholder_id = _reticulum_node_id(dest_hash) or node_id
     user: dict = {
         "longName": (
-            display_name if display_name else _reticulum_placeholder_name(node_id)
+            display_name
+            if display_name
+            else _reticulum_placeholder_name(placeholder_id)
         ),
         "shortName": _reticulum_short_name(node_id),
         "publicKey": _identity_public_key_hex(identity),

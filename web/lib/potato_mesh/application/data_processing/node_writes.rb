@@ -264,8 +264,12 @@ module PotatoMesh
       # @param destination [Object] +destination+ block from the payload.
       # @param identity_hash [String, nil] identity the destination belongs to.
       # @param name [String, nil] display name announced on this destination;
-      #   a generic +Reticulum <SHORT>+ placeholder is stored as +nil+ so it
-      #   cannot displace a real one.
+      #   a generic +Reticulum <SHORT>+ placeholder, built from this
+      #   destination's own hash or, by an older ingestor, from the node id, is
+      #   stored on a first sighting but never replaces a stored name and never
+      #   names the node; with no announced name the node keeps a stored name
+      #   that is not a placeholder, else reads its own placeholder
+      #   ({#reticulum_placeholder_name?}, {#reticulum_headline_name}).
       # @param interface [String, nil] interface the announce was heard on.
       # @param heard [Integer] unix seconds of receipt.
       # @return [void]
@@ -277,13 +281,14 @@ module PotatoMesh
 
         # A generic "Reticulum <SHORT>" placeholder is still worth storing on a
         # first sighting -- it is what the reader sees until a real name turns
-        # up -- but it must never *replace* one a real announce supplied. The
-        # host's own destinations are discovered rather than announced, so they
-        # fall back to the placeholder whenever the stack remembers no app_data,
-        # and since RE10 derives the node headline from these rows, letting that
-        # land on top of a real name would rename the node too.
+        # up -- but it must never *replace* one a real announce supplied. Every
+        # nameless destination falls back to one, the host's own whenever the
+        # stack remembers no app_data, and letting that land on top of a real
+        # name would erase it; if RE10 had picked that name and another aspect
+        # announced one, the headline would move to that one. Both placeholder
+        # forms count (SPEC RA10).
         stored_name = string_or_nil(name)
-        update_name = generic_fallback_name?(stored_name, node_id, "reticulum") ? nil : stored_name
+        update_name = reticulum_placeholder_name?(stored_name, node_id, id) ? nil : stored_name
 
         params = [
           id,
@@ -350,8 +355,11 @@ module PotatoMesh
       #
       # +name+ and +role+ are resolved independently: an aspect can carry a role
       # while announcing no display name, and taking both from one row would let
-      # a nameless top-ranked aspect blank the headline. Ties break on the more
-      # recently heard destination.
+      # a nameless top-ranked aspect blank the headline. A placeholder is not a
+      # name either (SPEC RE10 as amended): the name is the best-ranked
+      # *announced* one, else a stored name that is not a placeholder, else the
+      # node's own placeholder ({#reticulum_headline_name}). Ties break on the
+      # more recently heard destination.
       #
       # @param db [SQLite3::Database] open database handle.
       # @param node_id [String] canonical id of the node to refresh.
@@ -359,13 +367,15 @@ module PotatoMesh
       def refresh_node_identity_from_destinations(db, node_id)
         rank = DESTINATION_ROLE_RANK_SQL
         with_busy_retry do
-          db.execute(<<~SQL, [node_id, node_id, node_id])
+          destinations = db.execute(<<~SQL, [node_id]).map { |row| row.is_a?(Hash) ? row.values_at("id", "name") : row }
+            SELECT id, name FROM destinations WHERE node_id = ?
+            ORDER BY #{rank}, COALESCE(last_heard, 0) DESC
+          SQL
+          stored = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+          headline = reticulum_headline_name(node_id, destinations, stored)
+          db.execute(<<~SQL, [headline, node_id, node_id])
             UPDATE nodes SET
-              long_name = COALESCE((
-                SELECT name FROM destinations
-                WHERE node_id = ? AND name IS NOT NULL AND TRIM(name) <> ''
-                ORDER BY #{rank}, COALESCE(last_heard, 0) DESC LIMIT 1
-              ), long_name),
+              long_name = COALESCE(?, long_name),
               role = COALESCE((
                 SELECT role FROM destinations
                 WHERE node_id = ? AND role IS NOT NULL
@@ -488,8 +498,17 @@ module PotatoMesh
         # If the incoming long name is a generic placeholder, prefer any real
         # name already on record so we never stomp known data with fallback
         # text.  For new nodes there is nothing to preserve, so the generic
-        # name is still written via the INSERT VALUES path.
-        long_name_conflict_sql = if generic_fallback_name?(long_name, node_id, protocol)
+        # name is still written via the INSERT VALUES path.  A Reticulum
+        # record's name lands on its destination, so its placeholder may be
+        # built from the destination's own hash rather than the node id
+        # (SPEC RA10); both forms yield.
+        destination = n["destination"]
+        generic_long_name = if protocol == "reticulum"
+            reticulum_placeholder_name?(long_name, node_id, destination.is_a?(Hash) ? destination["id"] : nil)
+          else
+            generic_fallback_name?(long_name, node_id, protocol)
+          end
+        long_name_conflict_sql = if generic_long_name
             # Generic placeholder: keep any real name already on record.
             # COALESCE returns nodes.long_name when non-null, otherwise falls
             # back to the incoming generic — so brand-new nodes still get it.
@@ -619,8 +638,9 @@ module PotatoMesh
                 heard: lh,
               )
               # The headline fields follow the ranked aspect, not the announce
-              # that happened to arrive last (SPEC RE10).
-              refresh_node_identity_from_destinations(db, node_id)
+              # that happened to arrive last (SPEC RE10). Only a Reticulum node
+              # has destinations, so no other protocol pays for the lookups.
+              refresh_node_identity_from_destinations(db, node_id) if protocol == "reticulum"
             end
 
             # Keyed-evidence stamp (SPEC MR1).  Deliberately a separate,

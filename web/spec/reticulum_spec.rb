@@ -278,8 +278,9 @@ RSpec.describe "Reticulum protocol support" do
     it "keeps a real destination name when a placeholder arrives later" do
       # Discovery re-emits the host's aspects on every snapshot, falling back to
       # "Reticulum <SHORT>" when the stack remembers no app_data. Arriving after
-      # a real announce, that must not overwrite the stored name -- which would
-      # rename the node too, since RE10 derives the headline from these rows.
+      # a real announce, that must not overwrite the stored name: the
+      # destination row would lose it, though the node keeps its stored
+      # headline (RE10).
       row = post_two_aspects(
         { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
           role: "NODE", name: "Department of Decentralization" },
@@ -322,6 +323,167 @@ RSpec.describe "Reticulum protocol support" do
       )
       expect(row["role"]).to eq("NODE")
       expect(row["long_name"]).to eq("Afri Nomad Orion")
+    end
+
+    it "does not let a placeholder on a higher aspect rename the node" do
+      # The example above sends name: nil, which no ingestor path sends: a
+      # nameless aspect arrives as a placeholder, built from its own hash
+      # (Reticulum 00FF) or, by an older ingestor, from the node id
+      # (Reticulum A1B2). Neither is a name (SPEC RE10 as amended).
+      observed = ["Reticulum 00FF", "Reticulum A1B2"].to_h do |placeholder|
+        clear_tables
+        row = post_two_aspects(
+          { aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH,
+            role: "PEER", name: "Afri Nomad Orion" },
+          { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH2,
+            role: "NODE", name: placeholder },
+        )
+        [placeholder, [row["long_name"], row["role"]]]
+      end
+      expect(observed).to eq(
+        "Reticulum 00FF" => ["Afri Nomad Orion", "NODE"],
+        "Reticulum A1B2" => ["Afri Nomad Orion", "NODE"],
+      )
+    end
+
+    it "names a node with no announced name from its own id, not a destination's" do
+      # SPEC RA10(a): the node badges a1b2, so its headline reads Reticulum A1B2
+      # while the destination row keeps its own Reticulum 00FF (RA10(b)). The
+      # aspect is posted twice, as a later snapshot would repeat it.
+      nameless = { aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH2,
+                   role: "NODE", name: "Reticulum 00FF" }
+      row = post_two_aspects(nameless, nameless)
+      with_db(readonly: true) do |db|
+        destination = db.get_first_value(
+          "SELECT name FROM destinations WHERE id = ?", [RETICULUM_DEST_HASH2]
+        )
+        expect([destination, row["long_name"]]).to eq(["Reticulum 00FF", "Reticulum A1B2"])
+      end
+    end
+  end
+
+  describe "headline name fallback (SPEC RE10, RA10)" do
+    it "keeps a real name the node carries when a nameless destination arrives" do
+      # A record with an unusable destination hash names the node but writes no
+      # destination row; a later nameless destination must not erase that name.
+      register_reticulum_ingestor
+      named = reticulum_node_fixture(last_heard: now - 30).except("destination")
+      nameless = reticulum_node_fixture(last_heard: now - 29, aspect: "nomadnetwork.node",
+                                        dest_id: RETICULUM_DEST_HASH2, role: "NODE")
+      nameless["user"]["longName"] = "Reticulum 00FF"
+      [named, nameless].each do |record|
+        payload = { RETICULUM_NODE_ID => record, "ingestor" => RETICULUM_INGESTOR_ID, "protocol" => "reticulum" }
+        post "/api/nodes", payload.to_json, auth_headers
+        expect(last_response.status).to eq(201)
+      end
+      with_db(readonly: true) do |db|
+        expect(
+          db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID]),
+        ).to eq("Argos Station")
+      end
+    end
+
+    it "gives a node with no name at all its own placeholder" do
+      expect(reticulum_headline_name(RETICULUM_NODE_ID, [], nil)).to eq("Reticulum A1B2")
+    end
+
+    it "leaves the name alone for an id it cannot read" do
+      expect(reticulum_headline_name("not-a-node-id", [], nil)).to be_nil
+    end
+
+    it "reads destination rows from a hash-results handle" do
+      register_reticulum_ingestor
+      post_reticulum_nodes
+      with_db do |db|
+        db.execute("UPDATE nodes SET long_name = 'Reticulum A1B2' WHERE node_id = ?", [RETICULUM_NODE_ID])
+        refresh_node_identity_from_destinations(db, RETICULUM_NODE_ID)
+        expect(
+          db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [RETICULUM_NODE_ID]),
+        ).to eq("Argos Station")
+      end
+    end
+  end
+
+  describe "host destination placeholders (SPEC RA10)" do
+    # The field host: node !27716218 (RETICULUM_IDENTITY_HASH) and two of the
+    # destinations RNS derives from that identity, so neither shares the node's
+    # head. The ingestor names a nameless destination from its own hash
+    # (RA10): "Reticulum 4CF9" and "Reticulum 9C59", not the node's
+    # "Reticulum 2771". tests/test_reticulum_unit.py pins the same string for
+    # the same pair. RETICULUM_DEST_HASH starts like RETICULUM_NODE_ID and
+    # cannot tell the two forms apart.
+    RETICULUM_HOST_NODE_ID = "!27716218".freeze
+    RETICULUM_HOST_LXMF = {
+      "id" => "4cf985bf933c21b1aa8dabd407d4ef69", "aspect" => "lxmf.delivery", "role" => "PEER",
+    }.freeze
+    RETICULUM_HOST_NOMADNET = {
+      "id" => "9c59da5e1516745d74cc908243e0ba2b", "aspect" => "nomadnetwork.node", "role" => "NODE",
+    }.freeze
+
+    # POST host-destination records one at a time, each shaped as
+    # _host_destination_nodes builds it (no publicKey, no hopsAway), and read
+    # back what they left behind.
+    #
+    # @param records [Array<Array(Hash, String)>] destination block and
+    #   user.longName pairs, oldest first.
+    # @return [Array(Hash{String => String}, String)] the stored destination
+    #   names keyed by destination id, and the node's long_name.
+    def post_host_destinations(*records)
+      register_reticulum_ingestor
+      records.each_with_index do |(destination, name), index|
+        payload = {
+          RETICULUM_HOST_NODE_ID => {
+            "nodeId" => RETICULUM_HOST_NODE_ID,
+            "lastHeard" => now - 30 + index,
+            "protocol" => "reticulum",
+            "identityHash" => RETICULUM_IDENTITY_HASH,
+            "destination" => destination,
+            "user" => { "shortName" => "2771", "longName" => name, "role" => destination["role"] },
+          },
+          "ingestor" => RETICULUM_INGESTOR_ID,
+          "protocol" => "reticulum",
+        }
+        post "/api/nodes", payload.to_json, auth_headers
+        expect(last_response.status).to eq(201)
+      end
+      with_db(readonly: true) do |db|
+        names = db.execute("SELECT id, name FROM destinations").to_h { |r| [r["id"], r["name"]] }
+        headline = db.get_first_value(
+          "SELECT long_name FROM nodes WHERE node_id = ?", [RETICULUM_HOST_NODE_ID]
+        )
+        [names, headline]
+      end
+    end
+
+    it "never lets a destination-derived placeholder replace a real name" do
+      # The second record is a later snapshot whose stack remembers no app_data
+      # for the destination.
+      names, headline = post_host_destinations(
+        [RETICULUM_HOST_LXMF, "Afri Nomad Orion"],
+        [RETICULUM_HOST_LXMF, "Reticulum 4CF9"],
+      )
+      expect([names[RETICULUM_HOST_LXMF["id"]], headline]).to eq(["Afri Nomad Orion", "Afri Nomad Orion"])
+    end
+
+    it "keeps the ranked headline when its aspect falls back to the placeholder" do
+      # NODE outranks PEER (RE10); without the guard a placeholder landing on
+      # the NODE row erases its real name and the headline moves to PEER's.
+      names, headline = post_host_destinations(
+        [RETICULUM_HOST_NOMADNET, "Department of Decentralization"],
+        [RETICULUM_HOST_LXMF, "Afri Nomad Orion"],
+        [RETICULUM_HOST_NOMADNET, "Reticulum 9C59"],
+      )
+      expect([names[RETICULUM_HOST_NOMADNET["id"]], headline]).to eq(
+        ["Department of Decentralization", "Department of Decentralization"],
+      )
+    end
+
+    it "stores a destination-derived placeholder on a first sighting" do
+      # The generic name is wanted where there is no real one to prefer, on the
+      # destination row only: the node keeps its own placeholder, which its
+      # badge 2771 matches (RA10(a), RE10).
+      names, headline = post_host_destinations([RETICULUM_HOST_LXMF, "Reticulum 4CF9"])
+      expect([names[RETICULUM_HOST_LXMF["id"]], headline]).to eq(["Reticulum 4CF9", "Reticulum 2771"])
     end
   end
 
