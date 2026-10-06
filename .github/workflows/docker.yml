@@ -128,7 +128,7 @@ jobs:
         echo "Baked APP_VERSION: $APP_VERSION"
 
     - name: Build and push ${{ matrix.service }} for ${{ matrix.architecture.name }}
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: ${{ matrix.service == 'web' && './web/Dockerfile' || matrix.service == 'ingestor' && './data/Dockerfile' || './matrix/Dockerfile' }}
