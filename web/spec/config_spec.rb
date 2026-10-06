@@ -146,7 +146,7 @@ RSpec.describe PotatoMesh::Config do
   describe ".federation_seed_domains" do
     it "lists the default seed domains" do
       expect(described_class.federation_seed_domains).to eq(
-        %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro mesh.dmz.pt],
+        %w[potatomesh.net mesh.qrp.ro mesh.dmz.pt],
       )
     end
   end
