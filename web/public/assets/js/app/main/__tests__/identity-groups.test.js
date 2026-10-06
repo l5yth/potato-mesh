@@ -59,8 +59,8 @@ const FIELD = {
 const ALL_FOUR = [FIELD.propagation, FIELD.transport, FIELD.lxmf, FIELD.nomadnet];
 
 test('sortDestinations orders by aspect precedence, then newest first', () => {
-  // SPEC RE10's order, so the chip that leads a collapsed parent is the aspect
-  // that named it — and opening the group never reshuffles what was just read.
+  // SPEC RE10's order, so the chip that leads a collapsed parent is the node's
+  // own role — and opening the group never reshuffles what was just read.
   const sorted = sortDestinations(ALL_FOUR);
   assert.deepEqual(sorted.map(d => d.role), ['NODE', 'PEER', 'PROPAGATION', 'TRANSPORT']);
 
@@ -104,7 +104,7 @@ test('newestLastHeard takes the newest announce across destinations', () => {
 
 test('role chips use the reticulum ramp and overflow past the budget', () => {
   const chips = roleChipsHtml(ALL_FOUR, 'reticulum');
-  // Leading chip is the aspect that named the identity (NODE).
+  // Leading chip is the node's own role (NODE).
   assert.ok(chips.indexOf('NODE') < chips.indexOf('PEER'));
   assert.match(chips, new RegExp(reticulumRoleColors.NODE));
   assert.match(chips, new RegExp(reticulumRoleColors.PEER));

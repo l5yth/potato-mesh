@@ -39,8 +39,8 @@ import {
  * Aspect precedence for anything that must pick one of an identity's several
  * roles (SPEC RE10).
  *
- * The same order the ingestor ranks by, so the chip that leads a parent row is
- * the aspect that named it.  Lower is stronger.
+ * The same order the web tier ranks by, so the chip that leads a parent row is
+ * the node's own role.  Lower is stronger.
  *
  * @type {Readonly<Record<string, number>>}
  */
@@ -170,8 +170,8 @@ function roleChipHtml(role, protocol) {
 /**
  * Render a parent row's role cell: one chip per aspect, then `+N`.
  *
- * Chips follow aspect precedence, so the role that named the identity leads and
- * the overflow hides the weakest aspects rather than an arbitrary tail.
+ * Chips follow aspect precedence, so the node's own role leads and the overflow
+ * hides the weakest aspects rather than an arbitrary tail.
  *
  * @param {Array<Object>} destinations Destination rows for the identity.
  * @param {?string} protocol Protocol whose role ramp applies.

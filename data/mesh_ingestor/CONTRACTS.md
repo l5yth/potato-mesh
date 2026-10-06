@@ -31,16 +31,18 @@ The Reticulum provider (`PROTOCOL=reticulum`, `data/mesh_ingestor/protocols/reti
 - `destination` is `{id, aspect, role}` for the destination this announce arrived on. Role is derived from the aspect: `lxmf.delivery` -> `PEER`, `nomadnetwork.node` -> `NODE`, `lxmf.propagation` -> `PROPAGATION`. `TRANSPORT` is reserved and never emitted for remote peers (see SPEC RE9 below).
 - `interface` is the interface the announce was heard on, when known. Retrieved through `RNS.Reticulum`'s shared-instance-aware accessors, which RPC to a running `rnsd` and return its view; `RNS.Transport.next_hop_interface` reads only the local process's path table and answers `LocalInterface[...]` for everything.
 - `identityHash` is the announcing identity's 16-byte hash.
-- `user.shortName` = the first 4 hex chars of the node id; `user.longName` = the display name decoded from announce `app_data`, falling back to `"Reticulum <SHORT>"` -- the protocol label plus the upper-cased first four hex of the canonical id.
+- `user.shortName` = the first 4 hex chars of the node id; `user.longName` = the display name decoded from announce `app_data`, falling back to `"Reticulum <SHORT>"`: the protocol label plus the upper-cased first four hex of `destination.id`, or of the node id when the record carries no `destination` (SPEC RA10).
 
 Scope. `hops == 0` means the announce came from an app on this machine (`Transport.inbound` adds a hop to every inbound packet and takes it back for a local-client or shared-instance interface), so those are always ingested -- the operator's own nodes must never be hidden by a filter. From one hop out, `RETICULUM_INTERFACES` applies: unset admits an RNode interface only, `*` admits every interface, and a list is a case-insensitive substring match on the interface name (see "Interface scope" below).
 
-Headline name and role. The node-level `long_name`/`role` come from the node's
-highest-ranked destination, `NODE` > `PEER` > `PROPAGATION` > `TRANSPORT`,
-re-derived in SQL from its `destinations` rows on every destination write
-(SPEC RE10). Name and role resolve independently, so a nameless top-ranked
-aspect cannot blank the name. The result survives a restart and agrees across
-ingestors.
+Headline name and role. The node-level `long_name`/`role` follow the node's
+destinations, ranked `NODE` > `PEER` > `PROPAGATION` > `TRANSPORT`; the web app
+re-derives both from the `destinations` rows on every destination write
+(SPEC RE10). `role` is the highest-ranked destination's. `long_name` is the
+highest-ranked announced name, else a stored name that is not a placeholder,
+else the node's own placeholder (`Reticulum` plus the upper-cased first four
+hex of the node id). A destination's placeholder never becomes `long_name`.
+The result survives a restart and agrees across ingestors.
 
 `TRANSPORT` is emitted for the ingestor's own host only (SPEC RE9), under
 the synthetic aspect `rns.transport` and only when the local stack reports
