@@ -22,6 +22,7 @@
 * CI: test results reach Codecov also when tests fail; workflows use codecov-action v7 and checkout v7; Dependabot opens up to 20 GitHub Actions update PRs at a time (SPEC DW1/DW2/DW4)
 * Docker: the root `Dockerfile` builds the same image as `web/Dockerfile`, including Chromium for Open Graph previews (skip it with `--build-arg WITH_OG_IMAGE=0`), the custom pages directory, and the `APP_VERSION` build arg (SPEC DF1)
 * Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
+* Web: `/metrics` no longer exports nodes that opted out or that private mode hides; series exported before an opt-out stop at once (SPEC PM1/PM2)
 * Data/Web: Reticulum reports a frequency and LoRa preset, read from the RNS config (SPEC RL1-RL3)
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
