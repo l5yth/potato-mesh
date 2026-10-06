@@ -1011,12 +1011,14 @@ def _local_identity_destinations() -> dict[str, dict[str, str | None]]:
 def _recalled_display_name(dest_hex: str) -> str | None:
     """Return the display name last announced on a destination, if any.
 
-    The host's own announces are never delivered back to this ingestor, so a
-    discovered destination has no ``app_data`` of its own to decode — but the
-    stack kept the last one it heard, which is what ``rnsd`` recorded when the
-    local app announced.  Without this a discovered destination would carry
-    only the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline
-    rule, name the node with it (SPEC RE8).
+    A discovered destination comes from the path table, not from an announce,
+    so it has no ``app_data`` of its own to decode: a local app's announce
+    reaches this ingestor only while both are attached, and one made before
+    connect is not replayed.  The stack kept the last one it heard, which is
+    what ``rnsd`` recorded when the local app announced.  Without this a
+    discovered destination would carry only the ``Reticulum <SHORT>``
+    placeholder and, through the RE10 headline rule, name the node with it
+    (SPEC RE8).
 
     Parameters:
         dest_hex: Destination hash as hex.
@@ -1328,10 +1330,11 @@ class ReticulumProvider:
     def host_destination_nodes(self) -> list[dict]:
         """Return node records for the host's own local destinations.
 
-        Called by :meth:`node_snapshot_items`, so the host's aspects are posted
-        with the node snapshot, which the daemon sends once per connection
-        (SPEC RE8).  An aspect the operator starts announcing later is posted
-        on the next connection; a periodic refresh is a follow-up.
+        Called by :meth:`node_snapshot_items` at connect and by
+        :meth:`self_node_items` on every self-node report after it (1 h), so
+        the host's aspects and ``rns.transport`` stay fresh while the
+        connection lasts (SPEC RE8).  An aspect whose app disconnects leaves
+        the 0-hop table and is no longer reported.
 
         Returns:
             Node dicts for the host's aspects, or empty when the host's
@@ -1413,9 +1416,11 @@ class ReticulumProvider:
         if not isinstance(iface, _ReticulumInterface):
             return []
         items = iface.nodes_snapshot()
-        # The host's own aspects are not learned from announces — nothing
-        # relays our own announce back to us — so they are folded in here.
-        # The daemon takes this snapshot once per connection (SPEC RE8).
+        # The host's own aspects are folded in from the path table: a local
+        # app's announce reaches us only while both are attached, one made
+        # before connect is not replayed, and rns.transport never announces.
+        # The daemon takes this snapshot once per connection and re-posts the
+        # host hourly through self_node_items (SPEC RE8).
         seen_destinations = {
             node.get("destination", {}).get("id")
             for _nid, node in items
@@ -1426,6 +1431,39 @@ class ReticulumProvider:
                 continue
             items.append((node["nodeId"], node))
         return items
+
+    def self_node_items(self, iface: object) -> list[tuple[str, dict]]:
+        """Return the host's own destinations for the periodic self-node report.
+
+        An optional, duck-typed hook, the list sibling of ``self_node_item``:
+        the daemon calls it right after the node snapshot and then once per
+        self-node report interval (1 h), so ``rns.transport`` and the host's
+        aspects stay fresh on a connection that never recycles (SPEC RE8). The
+        transport gate is re-evaluated on every call (SPEC RE9). Local reads
+        only, nothing is sent (SPEC RN5): at most two path-table reads and one
+        interface-stats read.
+
+        Tied to the registered host id: records are returned only while the
+        primary identity's node id is the one the daemon registered. A second
+        local identity that comes to front more destinations would otherwise
+        move ``rns.transport`` onto its own node row, because the web tier's
+        destination upsert takes the incoming node id.
+
+        Parameters:
+            iface: Unused; the records are read from the running stack.
+
+        Returns:
+            ``(node_id, node_dict)`` pairs, or an empty list while no host id
+            is registered or the primary identity does not map to it.
+        """
+        host_id = handlers.host_node_id()
+        if not host_id:
+            return []
+        return [
+            (node["nodeId"], node)
+            for node in self.host_destination_nodes()
+            if node["nodeId"] == host_id
+        ]
 
 
 __all__ = [

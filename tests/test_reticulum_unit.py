@@ -707,12 +707,12 @@ def test_host_destinations_label_every_announced_aspect(monkeypatch):
 def test_host_destinations_carry_their_interface_and_announced_name(monkeypatch):
     """Field regression: discovered aspects lost both name and interface.
 
-    The host's own announces are never delivered back to this ingestor, so a
-    discovered destination has no ``app_data`` of its own -- but the stack kept
-    the last one it heard. Without recalling it every host destination stored
-    the ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule,
-    named the node with it. The interface came straight from the path entry and
-    was simply dropped (SPEC RE8).
+    A discovered destination comes from the path table, not from an announce,
+    so it has no ``app_data`` of its own -- but the stack kept the last one it
+    heard. Without recalling it every host destination stored the
+    ``Reticulum <SHORT>`` placeholder and, through the RE10 headline rule, named
+    the node with it. The interface came straight from the path entry and was
+    simply dropped (SPEC RE8).
     """
     _local_stack(
         monkeypatch,
@@ -1973,9 +1973,10 @@ def test_snapshot_does_not_duplicate_a_host_destination_already_heard(monkeypatc
 def test_snapshot_includes_host_destinations_not_heard_as_announces(monkeypatch):
     """The host's own aspects reach the snapshot even with nothing heard.
 
-    Nothing relays our own announce back to us, so without folding the
-    discovered records in, the ingestor's own node would never be reported
-    (SPEC RE8).
+    A local app's announce reaches the ingestor only while both are attached,
+    one made before connect is not replayed, and ``rns.transport`` never
+    announces, so without folding the discovered records in, the ingestor's
+    own node could go unreported (SPEC RE8).
     """
     _local_stack(
         monkeypatch,

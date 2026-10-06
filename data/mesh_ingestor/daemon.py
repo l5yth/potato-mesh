@@ -569,6 +569,14 @@ def _try_send_self_node(state: _DaemonState) -> None:
     even when the ingestor heartbeat races ahead of the first SELF_INFO event
     (meshcore) or when the protocol never sends periodic NODEINFO for itself.
 
+    Two optional, duck-typed provider hooks feed it; neither is a
+    :class:`~data.mesh_ingestor.mesh_protocol.MeshProtocol` member.
+    ``self_node_items(iface)`` returns a list of ``(node_id, node)`` records
+    and is preferred (see :func:`_send_self_node_items`): a Reticulum host is
+    one node with several destinations, one record each (SPEC RE8).
+    ``self_node_item(iface)`` returns one record or ``None`` and is the
+    fallback (MeshCore); its timer is stamped only once a record is sent.
+
     Parameters:
         state: Current daemon loop state.
 
@@ -576,6 +584,10 @@ def _try_send_self_node(state: _DaemonState) -> None:
         ``None``.  Errors are logged and suppressed so a single failure does
         not break the main loop.
     """
+    items_fn = getattr(state.provider, "self_node_items", None)
+    if callable(items_fn):
+        _send_self_node_items(state, items_fn)
+        return
     self_node_fn = getattr(state.provider, "self_node_item", None)
     if not callable(self_node_fn):
         return
@@ -600,6 +612,46 @@ def _try_send_self_node(state: _DaemonState) -> None:
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )
+
+
+def _send_self_node_items(state: _DaemonState, items_fn) -> None:
+    """Upsert every record the ``self_node_items`` hook returns.
+
+    The report timer is stamped after every call, whatever the hook returned
+    or raised. Its records are read from the running stack, so a host the
+    provider cannot report yet (an empty list) is asked again one report
+    interval later rather than on every loop (SPEC RE8).
+
+    Parameters:
+        state: Current daemon loop state.
+        items_fn: The provider's ``self_node_items`` callable.
+
+    Returns:
+        ``None``.  Errors are logged and suppressed so a single failure does
+        not break the main loop.
+    """
+    try:
+        items = list(items_fn(state.iface))
+        for node_id, node in items:
+            handlers.upsert_node(node_id, node)
+        if items:
+            config._debug_log(
+                "Sent periodic self-node report",
+                context="daemon.self_node",
+                severity="info",
+                node_ids=sorted({node_id for node_id, _node in items}),
+                records=len(items),
+            )
+    except Exception as exc:
+        config._debug_log(
+            "Self-node re-report failed",
+            context="daemon.self_node",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+    finally:
+        state.last_self_node_report = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -668,7 +720,9 @@ def _loop_iteration(state: _DaemonState) -> bool:
     )
     # Periodically re-upsert the host self-node so that its protocol and radio
     # metadata are corrected after the ingestor heartbeat is registered, and
-    # kept fresh for protocols (e.g. meshcore) that only emit SELF_INFO once.
+    # kept fresh for protocols that never refresh it themselves: meshcore only
+    # emits SELF_INFO once, and a Reticulum host's rns.transport never
+    # announces at all (SPEC RE8).
     _now = time.monotonic()
     if state.initial_snapshot_sent and (
         state.last_self_node_report is None
@@ -804,6 +858,7 @@ __all__ = [
     "_node_items_snapshot",
     "_process_announcements",
     "_process_ingestor_heartbeat",
+    "_send_self_node_items",
     "_subscribe_receive_topics",
     "_try_connect",
     "_try_send_self_node",

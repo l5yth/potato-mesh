@@ -433,10 +433,12 @@ from the operator's own stack.
 
 ### Host-owned destinations (SPEC RE8)
 
-The ingestor's own aspects never arrive as announces -- nothing relays our own
-announce back to us -- so they are discovered instead and emitted with the node
-snapshot, which the daemon sends once per connection. An aspect the host starts
-announcing later is posted on the next connection.
+The ingestor's own aspects are discovered from the running stack. A local app's
+announce reaches the ingestor at 0 hops while both are attached, but one made
+before the ingestor connected is not replayed, and `rns.transport` never
+announces. The discovered records are emitted with the node snapshot at connect
+and on every self-node report after it (1 h), so they stay fresh on a
+connection that never recycles.
 
 - Source: 0-hop entries of the running stack's path table, mapped to their
   owning identity via `RNS.Identity.recall`.
@@ -446,6 +448,17 @@ announcing later is posted on the next connection.
   the identity hash (a destination hash is one-way and cannot be read back).
 - Emitted as ordinary node records sharing one `nodeId`, each carrying its own
   `destination` mapping, so no separate ingest route is involved.
+- Refreshed through `self_node_items(iface)`, an optional provider hook that
+  returns a list of `(node_id, node)` pairs. The daemon prefers it on the self-node timer
+  and falls back to the single-record `self_node_item` (MeshCore). Records are
+  returned only while the primary identity's node id is the registered host id,
+  so a second local identity that comes to front more destinations does not
+  take `rns.transport` onto its own node row through the report (the connect
+  snapshot is not yet tied to the host id). Local reads only, nothing is
+  transmitted. The transport gate is re-evaluated at every report.
+- An aspect whose app disconnects, or whose path entry expires (RNS culls one
+  7 days after its timestamp unless traffic flows through it), leaves the 0-hop
+  table and is no longer refreshed.
 
 ### GET /api/nodes placeholder flag (SPEC MR4)
 
