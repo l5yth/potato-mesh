@@ -50,8 +50,8 @@ RUNTIME_PINS = (
 # Files the guards in this module, in test_dependency_manifests.py and in
 # test_configure_script.py read. A pull request touching any of them must run
 # the Python workflow. Pushes to main run it unfiltered, which still covers what
-# these guards read beyond this list (the edit hook, .gitignore, a manifest in a
-# new directory).
+# these guards read beyond this list (.gitignore, a manifest in a new
+# directory).
 GUARDED_INPUTS = (
     ".github/dependabot.yml",
     ".github/workflows/python.yml",
