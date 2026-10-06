@@ -1597,7 +1597,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       allow(PotatoMesh::Config).to receive(:max_distance_km).and_return(120.5)
       allow(PotatoMesh::Config).to receive(:contact_link).and_return(" #spec-room:example.org ")
 
-      expected_description = "Live Meshtastic mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org via chat."
+      expected_description = "Live mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org via chat."
 
       get "/"
 

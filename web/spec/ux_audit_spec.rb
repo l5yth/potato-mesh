@@ -33,6 +33,26 @@ RSpec.describe "UX audit remediation markup" do
     last_response.body
   end
 
+  # Rendered protocol label of one footer join line. Matching it, rather than
+  # the bare protocol name the toggles and the legend also carry, is what lets
+  # an absence assertion fail when the line renders.
+  #
+  # @param label [String] protocol label as the footer spells it.
+  # @return [String] the line's protocol span.
+  def join_proto(label)
+    %(<span class="join-line__proto">#{label}</span>)
+  end
+
+  # Stub the Reticulum join pair the footer reads (SPEC UX12, RL8).
+  #
+  # @param preset [String, nil] value for +Config.reticulum_preset+.
+  # @param freq [String, nil] value for +Config.reticulum_freq+.
+  # @return [void]
+  def stub_reticulum_join(preset, freq)
+    allow(PotatoMesh::Config).to receive(:reticulum_preset).and_return(preset)
+    allow(PotatoMesh::Config).to receive(:reticulum_freq).and_return(freq)
+  end
+
   describe "degenerate-state voice (UX4)" do
     it "ships a noscript notice naming the raw API" do
       html = body_of("/")
@@ -144,7 +164,8 @@ RSpec.describe "UX audit remediation markup" do
       expect(html).to include("Meshtastic")
       expect(html).to include("#LongFast")
       expect(html).to include("915MHz")
-      expect(html).not_to include("MeshCore ·")
+      expect(html).not_to include(join_proto("Meshcore"))
+      expect(html).not_to include(join_proto("Reticulum"))
     end
 
     it "adds the MeshCore join line only when both preset config values are set" do
@@ -154,6 +175,15 @@ RSpec.describe "UX audit remediation markup" do
       expect(html).to include("Meshcore")
       expect(html).to include("EU/UK Narrow")
       expect(html).to include("869MHz")
+    end
+
+    it "adds the Reticulum join line only when both preset config values are set" do
+      [["SF8/BW125/CR5", nil], [nil, "868MHz"]].each do |preset, freq|
+        stub_reticulum_join(preset, freq)
+        expect(body_of("/")).not_to include(join_proto("Reticulum"))
+      end
+      stub_reticulum_join("SF8/BW125/CR5", "868MHz")
+      expect(body_of("/")).to include("#{join_proto("Reticulum")} · SF8/BW125/CR5 · 868MHz")
     end
   end
 
@@ -241,6 +271,17 @@ RSpec.describe "UX audit remediation markup" do
       end
       within_env("MESHCORE_PRESET" => "EU/UK Narrow", "MESHCORE_FREQ" => "869MHz") do
         expect(PotatoMesh::Config.meshcore_join_configured?).to be(true)
+      end
+    end
+
+    it "reads the Reticulum pair from the ingestor's own settings (preset config)" do
+      within_env("RETICULUM_PRESET" => nil, "RETICULUM_FREQ" => " ") do
+        expect(PotatoMesh::Config.reticulum_preset).to be_nil
+        expect(PotatoMesh::Config.reticulum_freq).to be_nil
+      end
+      within_env("RETICULUM_PRESET" => "SF8/BW125/CR5", "RETICULUM_FREQ" => "868MHz") do
+        expect(PotatoMesh::Config.reticulum_preset).to eq("SF8/BW125/CR5")
+        expect(PotatoMesh::Config.reticulum_freq).to eq("868MHz")
       end
     end
   end

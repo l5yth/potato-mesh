@@ -186,6 +186,22 @@ test('applyNodeNameFallback uses the Meshcore label when node.protocol is "meshc
   assert.equal(node.long_name, 'Meshcore !aabbccdd');
 });
 
+test('applyNodeNameFallback uses the Reticulum label when node.protocol is "reticulum"', () => {
+  const node = { node_id: '!27716218', protocol: 'reticulum' };
+  applyNodeNameFallback(node);
+  assert.equal(node.long_name, 'Reticulum !27716218');
+  // SPEC RA10: a Reticulum id is the head of a hash, so the short name takes
+  // the first four hex digits, the ones its badge shows, not the tail.
+  assert.equal(node.short_name, '2771');
+});
+
+test('applyNodeNameFallback keeps the tail for a Reticulum id too short to have a head', () => {
+  const node = { node_id: '!ab', protocol: 'reticulum' };
+  applyNodeNameFallback(node);
+  assert.equal(node.short_name, '!ab');
+  assert.equal(node.long_name, 'Reticulum !ab');
+});
+
 test('applyNodeNameFallback normalises mixed-case and whitespace in node.protocol', () => {
   const meshcore = { node_id: '!aabbccdd', protocol: '  Meshcore ' };
   applyNodeNameFallback(meshcore);
@@ -194,11 +210,18 @@ test('applyNodeNameFallback normalises mixed-case and whitespace in node.protoco
   const meshtastic = { node_id: '!aabbccdd', protocol: 'MESHTASTIC' };
   applyNodeNameFallback(meshtastic);
   assert.equal(meshtastic.long_name, 'Meshtastic !aabbccdd');
+
+  // The short name reads the same normalised protocol as the label.
+  const reticulum = { node_id: '!27716218', protocol: ' Reticulum ' };
+  applyNodeNameFallback(reticulum);
+  assert.equal(reticulum.long_name, 'Reticulum !27716218');
+  assert.equal(reticulum.short_name, '2771');
 });
 
 test('applyNodeNameFallback falls back to Unknown for unrecognised protocol strings', () => {
-  const node = { node_id: '!aabbccdd', protocol: 'reticulum' };
+  const node = { node_id: '!aabbccdd', protocol: 'lxmf' };
   applyNodeNameFallback(node);
+  assert.equal(node.short_name, 'ccdd');
   assert.equal(node.long_name, 'Unknown !aabbccdd');
 });
 

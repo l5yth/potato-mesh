@@ -153,6 +153,20 @@ module PotatoMesh
         PotatoMesh::Sanitizer.sanitized_meshcore_freq
       end
 
+      # Retrieve the configured Reticulum preset for the join strip.
+      #
+      # @return [String, nil] sanitised Reticulum preset or nil when unset (SPEC UX12).
+      def sanitized_reticulum_preset
+        PotatoMesh::Sanitizer.sanitized_reticulum_preset
+      end
+
+      # Retrieve the configured Reticulum frequency for the join strip.
+      #
+      # @return [String, nil] sanitised Reticulum frequency or nil when unset (SPEC UX12).
+      def sanitized_reticulum_freq
+        PotatoMesh::Sanitizer.sanitized_reticulum_freq
+      end
+
       # Retrieve the configured contact link or nil when unset.
       #
       # @return [String, nil] contact link identifier.

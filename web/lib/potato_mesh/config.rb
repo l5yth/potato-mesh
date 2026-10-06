@@ -780,6 +780,26 @@ module PotatoMesh
       !meshcore_preset.nil? && !meshcore_freq.nil?
     end
 
+    # Retrieve the Reticulum radio preset advertised as the join setting.
+    #
+    # Reads the ingestor's own +RETICULUM_PRESET+ (SPEC RL1, RL8), so one
+    # setting feeds both services. No default (SPEC UX12): the Reticulum join
+    # line is hidden until the operator configures both Reticulum values.
+    #
+    # @return [String, nil] Reticulum preset label, or +nil+ when unset.
+    def reticulum_preset
+      fetch_string("RETICULUM_PRESET", nil)
+    end
+
+    # Retrieve the Reticulum radio frequency advertised as the join setting.
+    #
+    # Reads the ingestor's own +RETICULUM_FREQ+ (SPEC RL1, RL8).
+    #
+    # @return [String, nil] Reticulum frequency identifier, or +nil+ when unset.
+    def reticulum_freq
+      fetch_string("RETICULUM_FREQ", nil)
+    end
+
     # Retrieve the Meshtastic PSK used for decrypting channel messages.
     #
     # @return [String] base64-encoded PSK or alias.

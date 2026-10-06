@@ -4,7 +4,7 @@
 # PotatoMesh Mobile
 
 PotatoMesh Mobile - read-only mesh chat client for Android and iOS.
-Supports Meshtastic and MeshCore networks.
+Supports Meshtastic networks only.
 
 ## Setup
 

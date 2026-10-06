@@ -134,4 +134,19 @@ RSpec.describe PotatoMesh::App::Helpers do
       expect(helper.display_version("  2.0.0  ")).to eq("v2.0.0")
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Reticulum join strip values
+  # ---------------------------------------------------------------------------
+  describe "Reticulum join strip values" do
+    it "delegates the preset and frequency to the sanitizer (SPEC UX12)" do
+      allow(PotatoMesh::Sanitizer).to receive_messages(
+        sanitized_reticulum_preset: "SF8/BW125/CR5",
+        sanitized_reticulum_freq: "868MHz",
+      )
+
+      expect(helper.sanitized_reticulum_preset).to eq("SF8/BW125/CR5")
+      expect(helper.sanitized_reticulum_freq).to eq("868MHz")
+    end
+  end
 end

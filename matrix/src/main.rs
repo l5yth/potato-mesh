@@ -386,13 +386,15 @@ async fn handle_message(
 /// Short tag prepended to the message prefix so readers can tell the source
 /// mesh protocol apart at a glance. `"[MT]"` identifies Meshtastic (also the
 /// default when the protocol field is missing, since the full stack treats a
-/// missing protocol as Meshtastic) and `"[MC]"` identifies MeshCore. Any other
-/// value renders as `"[??]"` so unknown protocols surface visibly instead of
-/// being silently relabeled as Meshtastic.
+/// missing protocol as Meshtastic), `"[MC]"` identifies MeshCore and `"[RT]"`
+/// identifies Reticulum, the three protocols the web knows (SPEC S6, RL8). Any
+/// other value renders as `"[??]"` so unknown protocols surface visibly instead
+/// of being silently relabeled as Meshtastic.
 fn protocol_tag(protocol: Option<&str>) -> &'static str {
     match protocol {
         Some("meshcore") => "[MC]",
         Some("meshtastic") | None => "[MT]",
+        Some("reticulum") => "[RT]",
         Some(_) => "[??]",
     }
 }
@@ -549,8 +551,15 @@ mod tests {
         // Missing protocol keeps the Meshtastic default for legacy payloads.
         assert_eq!(protocol_tag(None), "[MT]");
         // Unknown protocols surface as "[??]" rather than silently claiming Meshtastic.
-        assert_eq!(protocol_tag(Some("reticulum")), "[??]");
         assert_eq!(protocol_tag(Some("")), "[??]");
+    }
+
+    /// Reticulum is a known protocol (SPEC S6), so it gets its own tag; `[??]`
+    /// stays the placeholder for protocols the web does not know.
+    #[test]
+    fn protocol_tag_labels_reticulum() {
+        assert_eq!(protocol_tag(Some("reticulum")), "[RT]");
+        assert_eq!(protocol_tag(Some("lxmf")), "[??]");
     }
 
     #[test]
@@ -1717,7 +1726,12 @@ mod tests {
 
     #[tokio::test]
     async fn handle_message_tags_unknown_protocol_as_placeholder() {
-        assert_handle_message_emits_tag(Some("reticulum"), "[??]", "MediumFast", 868, "MF").await;
+        assert_handle_message_emits_tag(Some("lxmf"), "[??]", "MediumFast", 868, "MF").await;
+    }
+
+    #[tokio::test]
+    async fn handle_message_tags_reticulum_in_body() {
+        assert_handle_message_emits_tag(Some("reticulum"), "[RT]", "MediumFast", 868, "MF").await;
     }
 
     #[tokio::test]
