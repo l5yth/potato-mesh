@@ -40,7 +40,9 @@ module PotatoMesh
       frequency = Sanitizer.sanitized_frequency
       contact = Sanitizer.sanitized_contact_link
 
-      summary = "Live Meshtastic mesh map for #{site}"
+      # Names no protocol, like the /map copy (SPEC RL8, Invariant IV); the
+      # preset suffix below is still the Meshtastic join setting.
+      summary = "Live mesh map for #{site}"
       if channel.empty? && frequency.empty?
         summary += "."
       elsif channel.empty?
@@ -126,7 +128,8 @@ module PotatoMesh
       when :charts
         "Network activity charts for #{site}: nodes online, traffic, and signal quality."
       when :nodes
-        "All Meshtastic and MeshCore nodes seen on #{site}, with last-heard time and metadata."
+        # Names every protocol the web knows (SPEC S6, RL8).
+        "All Meshtastic, MeshCore and Reticulum nodes seen on #{site}, with last-heard time and metadata."
       when :federation
         "Federated PotatoMesh instances sharing node and message data with #{site}."
       end

@@ -249,6 +249,22 @@ module PotatoMesh
       value.empty? ? nil : value
     end
 
+    # Retrieve the configured Reticulum preset, normalising blanks to nil.
+    #
+    # @return [String, nil] Reticulum preset label or +nil+ when unset (SPEC UX12).
+    def sanitized_reticulum_preset
+      value = sanitized_string(Config.reticulum_preset)
+      value.empty? ? nil : value
+    end
+
+    # Retrieve the configured Reticulum frequency, normalising blanks to nil.
+    #
+    # @return [String, nil] Reticulum frequency identifier or +nil+ when unset (SPEC UX12).
+    def sanitized_reticulum_freq
+      value = sanitized_string(Config.reticulum_freq)
+      value.empty? ? nil : value
+    end
+
     # Retrieve the configured contact link and normalise blank values to nil.
     #
     # @return [String, nil] contact link identifier or +nil+ when blank.

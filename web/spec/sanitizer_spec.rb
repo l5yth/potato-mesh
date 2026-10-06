@@ -117,6 +117,18 @@ RSpec.describe PotatoMesh::Sanitizer do
 
       expect(described_class.sanitized_max_distance_km).to be_nil
     end
+
+    it "trims the Reticulum join values and returns nil when blank (SPEC UX12)" do
+      allow(PotatoMesh::Config).to receive_messages(reticulum_preset: " SF8/BW125/CR5 ", reticulum_freq: " 868MHz ")
+
+      expect(described_class.sanitized_reticulum_preset).to eq("SF8/BW125/CR5")
+      expect(described_class.sanitized_reticulum_freq).to eq("868MHz")
+
+      allow(PotatoMesh::Config).to receive_messages(reticulum_preset: nil, reticulum_freq: " \t ")
+
+      expect(described_class.sanitized_reticulum_preset).to be_nil
+      expect(described_class.sanitized_reticulum_freq).to be_nil
+    end
   end
 
   describe ".sanitized_string" do

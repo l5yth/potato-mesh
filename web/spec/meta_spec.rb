@@ -38,7 +38,6 @@ RSpec.describe PotatoMesh::Meta do
   describe ".description" do
     it "renders the standard description in public mode" do
       result = described_class.description(private_mode: false)
-      expect(result).to include("Live Meshtastic mesh map for Test Mesh on #TestCh (868MHz).")
       expect(result).to include("Track nodes, messages, and coverage in real time.")
       expect(result).to include("within roughly 10 km")
       expect(result).to include("Join the community in #chat:example.org via chat.")
@@ -54,7 +53,7 @@ RSpec.describe PotatoMesh::Meta do
       allow(PotatoMesh::Sanitizer).to receive(:sanitized_channel).and_return("")
       allow(PotatoMesh::Sanitizer).to receive(:sanitized_frequency).and_return("")
       result = described_class.description(private_mode: false)
-      expect(result).to start_with("Live Meshtastic mesh map for Test Mesh.")
+      expect(result).to start_with("Live mesh map for Test Mesh.")
     end
 
     it "tunes the description when only frequency is configured" do
@@ -79,6 +78,10 @@ RSpec.describe PotatoMesh::Meta do
       allow(PotatoMesh::Sanitizer).to receive(:sanitized_contact_link).and_return(nil)
       result = described_class.description(private_mode: false)
       expect(result).not_to include("Join the community")
+    end
+
+    it "privileges no protocol in the site description (Invariant IV)" do
+      expect(described_class.description(private_mode: false)).to start_with("Live mesh map for Test Mesh on #TestCh (868MHz).")
     end
   end
 
@@ -153,15 +156,18 @@ RSpec.describe PotatoMesh::Meta do
       expect(described_class.view_description(:chat, private_mode: false)).to include("on Test Mesh")
     end
 
-    it "returns descriptions for charts, nodes, and federation" do
+    it "returns descriptions for charts and federation" do
       expect(described_class.view_description(:charts, private_mode: false)).to include("Network activity charts for Test Mesh")
-      expect(described_class.view_description(:nodes, private_mode: false)).to include("All Meshtastic and MeshCore nodes seen on Test Mesh")
       expect(described_class.view_description(:federation, private_mode: false)).to include("Federated PotatoMesh instances")
     end
 
     it "returns nil for unknown views" do
       expect(described_class.view_description(:dashboard, private_mode: false)).to be_nil
       expect(described_class.view_description(nil, private_mode: false)).to be_nil
+    end
+
+    it "names all three protocols on the nodes view (Invariant IV)" do
+      expect(described_class.view_description(:nodes, private_mode: false)).to include("All Meshtastic, MeshCore and Reticulum nodes seen on Test Mesh")
     end
   end
 
@@ -170,7 +176,7 @@ RSpec.describe PotatoMesh::Meta do
       result = described_class.configuration(private_mode: false)
       expect(result[:title]).to eq("Test Mesh")
       expect(result[:name]).to eq("Test Mesh")
-      expect(result[:description]).to include("Live Meshtastic mesh map for Test Mesh")
+      expect(result[:description]).to include("Live mesh map for Test Mesh")
       expect(result[:image]).to be_nil
       expect(result[:noindex]).to be(false)
     end

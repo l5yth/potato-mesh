@@ -99,8 +99,8 @@ class TestBuildAnnouncementMessage:
     def test_message_unknown_protocol_uses_fallback_limit(self):
         """An unrecognised protocol falls back to the default char limit."""
         long_url = "https://" + ("z" * 300)
-        text = announce.build_announcement("reticulum", 1, 2, long_url)
-        assert text.startswith("Reticulum activity")
+        text = announce.build_announcement("lxmf", 1, 2, long_url)
+        assert text.startswith("Lxmf activity")
         assert len(text) == announce._DEFAULT_CHAR_LIMIT
 
 
@@ -114,7 +114,7 @@ class TestProtocolDisplayName:
 
     def test_unknown_protocol_is_capitalised(self):
         """An unknown key is capitalised as a best effort."""
-        assert announce.protocol_display_name("reticulum") == "Reticulum"
+        assert announce.protocol_display_name("lxmf") == "Lxmf"
 
     def test_empty_protocol_is_blank(self):
         """An empty/``None`` protocol yields an empty label."""
