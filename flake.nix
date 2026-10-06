@@ -11,18 +11,25 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        # nixpkgs marks rns unfree (the Reticulum License limits fields of use).
+        # The flake accepts that one license, for every user, so the ingestor
+        # and PROTOCOL=reticulum evaluate (SPEC DP8).
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfreePredicate = pkg: nixpkgs.lib.getName pkg == "rns";
+        };
 
         # Ruby 3.4, the version the web image ships and CI tests (SPEC DP5),
         # with a Bundler built against it rather than nixpkgs' default Ruby.
         ruby = pkgs.ruby_3_4;
         bundler = pkgs.bundler.override { inherit ruby; };
 
-        # Python environment for the ingestor
+        # Python environment for the ingestor; rns runs PROTOCOL=reticulum.
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           meshtastic
           protobuf
           requests
+          rns
         ]);
 
         # Web app wrapper script
@@ -401,7 +408,7 @@
               reticulumInterfaces = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Comma-separated case-insensitive substrings of RNS interface names to ingest from; null ingests from every interface";
+                description = "RNS interfaces to ingest from; null ingests RNode interfaces only, * ingests every interface, otherwise comma-separated case-insensitive substrings of interface names";
               };
 
               primaryChannelOnly = lib.mkOption {
