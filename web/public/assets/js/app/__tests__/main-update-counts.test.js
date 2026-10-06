@@ -605,6 +605,98 @@ test('applyProtocolVisibility handles missing per-protocol data gracefully', () 
 });
 
 // ---------------------------------------------------------------------------
+// applyProtocolVisibility x meta-row protocol toggles (map-legend regression)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stats with 7-day activity on all three protocols, so every meta-row toggle
+ * stays visible and the un-strand rule never fires.
+ */
+const ALL_ACTIVE_STATS = Object.freeze({
+  meshcore: { hour: 1, day: 2, week: 5, month: 10 },
+  meshtastic: { hour: 2, day: 3, week: 8, month: 15 },
+  reticulum: { hour: 1, day: 3, week: 3, month: 3 },
+});
+
+/**
+ * Inject three visible legend column stubs.
+ *
+ * @param {Object} testUtils App test utilities.
+ * @returns {{mcCol: Object, mtCol: Object, rtCol: Object}} Column stubs.
+ */
+function injectVisibleColumns(testUtils) {
+  const mcCol = { style: { display: '' } };
+  const mtCol = { style: { display: '' } };
+  const rtCol = { style: { display: '' } };
+  testUtils._setProtocolColElements(mcCol, mtCol, rtCol);
+  return { mcCol, mtCol, rtCol };
+}
+
+test('applyProtocolVisibility drops the legend column of a protocol hidden with its toggle', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const { mcCol, mtCol, rtCol } = injectVisibleColumns(testUtils);
+    // The user turned MeshCore off with its meta-row toggle. Every protocol
+    // keeps 7-day activity, so the toggle (the way back) stays on screen.
+    testUtils.hiddenProtocols.add('meshcore');
+
+    testUtils.applyProtocolVisibility(ALL_ACTIVE_STATS);
+
+    assert.equal(mcCol.style.display, 'none', 'a protocol hidden from view leaves the map legend');
+    assert.equal(mtCol.style.display, '', 'a protocol in view keeps its legend column');
+    assert.equal(rtCol.style.display, '', 'a protocol in view keeps its legend column');
+    assert.ok(testUtils.hiddenProtocols.has('meshcore'), 'the explicit hide is preserved');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility returns a legend column when its protocol is shown again', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const { mcCol, mtCol, rtCol } = injectVisibleColumns(testUtils);
+    testUtils.hiddenProtocols.add('meshcore');
+    testUtils.hiddenProtocols.add('reticulum');
+    testUtils.applyProtocolVisibility(ALL_ACTIVE_STATS);
+    assert.equal(mcCol.style.display, 'none', 'hidden MeshCore leaves the legend');
+    assert.equal(rtCol.style.display, 'none', 'hidden Reticulum leaves the legend');
+
+    testUtils.hiddenProtocols.delete('reticulum');
+    testUtils.applyProtocolVisibility(ALL_ACTIVE_STATS);
+
+    assert.equal(rtCol.style.display, '', 'Reticulum shown again: its column returns');
+    assert.equal(mcCol.style.display, 'none', 'MeshCore still hidden: its column stays out');
+    assert.equal(mtCol.style.display, '');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility gives an un-stranded protocol its column back in the same pass', async () => {
+  const { testUtils, cleanup } = setupApp();
+  // Let the un-strand's applyFilter() async fallout settle before cleanup.
+  const settle = () => new Promise(resolve => setTimeout(resolve, 20));
+  try {
+    const { mcCol } = injectVisibleColumns(testUtils);
+    testUtils.hiddenProtocols.add('meshcore');
+    // MeshCore is now the only active protocol: its toggle disappears, the
+    // un-strand rule drops it from hiddenProtocols, and its nodes return.
+    // Its column must return with them, not one stats round-trip later.
+    testUtils.applyProtocolVisibility({
+      meshcore: { hour: 1, day: 2, week: 5, month: 10 },
+      meshtastic: { hour: 0, day: 0, week: 0, month: 0 },
+      reticulum: { hour: 0, day: 0, week: 0, month: 0 },
+    });
+
+    assert.ok(!testUtils.hiddenProtocols.has('meshcore'), 'the chipless protocol is un-stranded');
+    assert.equal(mcCol.style.display, '', 'the un-stranded protocol is back in view, so is its column');
+    await settle();
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // restartAutoRefresh
 // ---------------------------------------------------------------------------
 

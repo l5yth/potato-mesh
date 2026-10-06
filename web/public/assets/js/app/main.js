@@ -61,6 +61,7 @@ import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { resolveLegendVisibility, legendToggleLabel } from './map-legend-visibility.js';
+import { legendProtocolsInView } from './map-legend-protocols.js';
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
 import { createMapCenterResetHandler } from './map-center-reset.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
@@ -1495,9 +1496,8 @@ export function initializeApp(config) {
   const activeRoleFilters = new Set();
   /** @type {Map<string, HTMLElement>} Compound key → legend button element. */
   const legendRoleButtons = new Map();
-  /** @type {Set<string>} Protocols hidden by the user via legend toggles. */
+  /** @type {Set<string>} Protocols hidden by the user with the meta-row protocol toggles. */
   const hiddenProtocols = new Set();
-  const legendProtocolButtons = new Map();
 
   /**
    * Wrap a legend button click handler so it always calls
@@ -2218,6 +2218,10 @@ export function initializeApp(config) {
       resetButton.addEventListener('click', legendClickHandler(() => {
         activeRoleFilters.clear();
         hiddenProtocols.clear();
+        // The search text is a filter too (SPEC LP1): applyFilter then hides
+        // the box's own clear button and refilters the table, map and chat,
+        // as clearing the box does.
+        if (filterInput) filterInput.value = '';
         updateLegendRoleFiltersUI();
         applyFilter();
       }));
@@ -5849,10 +5853,14 @@ export function initializeApp(config) {
   }
 
   /**
-   * Hide/show UI elements based on per-protocol activity in the past 7 days.
+   * Hide/show UI elements based on per-protocol activity in the past 7 days
+   * and on which protocols are in view (SPEC LP1).
    *
-   * Hides the Charts nav link when meshtastic has no active nodes, and hides
-   * legend columns for protocols with zero weekly activity.
+   * Hides the Charts nav link when meshtastic has no active nodes, shows a
+   * protocol's meta-row toggle only while two or more protocols are active,
+   * and lists in the map legend only the protocols in view (SPEC LP1, decided
+   * by {@link legendProtocolsInView}). Runs from {@link applyFilter}'s stats
+   * callback, so the legend follows the toggles and the filter text.
    *
    * @param {{meshcore?: {week: number}, meshtastic?: {week: number}, reticulum?: {week: number}}} stats Stats from /api/stats.
    * @returns {void}
@@ -5861,11 +5869,6 @@ export function initializeApp(config) {
     const meshcoreWeek = stats?.meshcore?.week ?? 0;
     const meshtasticWeek = stats?.meshtastic?.week ?? 0;
     const reticulumWeek = stats?.reticulum?.week ?? 0;
-
-    // Hide legend columns for protocols with no activity in the past 7 days.
-    if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
-    if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
-    if (reticulumColEl) reticulumColEl.style.display = reticulumWeek === 0 ? 'none' : '';
 
     // Show a protocol's toggle button only when that protocol has weekly
     // activity and at least one other protocol does too — filtering is
@@ -5894,6 +5897,25 @@ export function initializeApp(config) {
         hiddenProtocols.delete(protocol);
         unstranded = true;
       }
+    }
+    // List in the legend only the protocols in view (SPEC LP1): 7-day
+    // activity, not toggled off, and, while a text filter is set, a node
+    // passing the text and protocol filters. After the un-strand pass, so a
+    // protocol it brought back regains its column in the same pass.
+    const legendProtocols = legendProtocolsInView({
+      stats,
+      hiddenProtocols,
+      nodes: allNodes,
+      query: normaliseChatFilterQuery(filterInput ? filterInput.value : ''),
+      matchesText: matchesTextFilter,
+      matchesProtocol: matchesProtocolFilter,
+    });
+    for (const [col, protocol] of [
+      [meshcoreColEl, 'meshcore'],
+      [meshtasticColEl, 'meshtastic'],
+      [reticulumColEl, 'reticulum'],
+    ]) {
+      if (col) col.style.display = legendProtocols.has(protocol) ? '' : 'none';
     }
     if (unstranded) {
       // Re-run the same sync path a chip click uses so the nodes reappear.
@@ -5977,7 +5999,6 @@ export function initializeApp(config) {
       activeRoleFilters,
       hiddenProtocols,
       legendRoleButtons,
-      legendProtocolButtons,
       updateTitleCount,
       updateLegendProtocolCounts,
       updateProtocolToggleCounts,
