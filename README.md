@@ -295,7 +295,7 @@ Configure with the environment variables below.
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
 | `RETICULUM_FREQ` | _from RNS config_ | Frequency shown for Reticulum nodes. Overrides the value read from your `RNodeInterface` section. |
 | `RETICULUM_PRESET` | _from RNS config_ | Radio preset shown for Reticulum nodes. Overrides the value derived from your bandwidth/spreading-factor/coding-rate. |
-| `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from, e.g. `RNode`. Comma-separated, case-insensitive substring match against the names in `rnstatus`. Your own nodes are always ingested; empty ingests everything. See [Reticulum](#reticulum). |
+| `RETICULUM_INTERFACES` | _unset_ | Which RNS interfaces to ingest from. Unset: RNode interfaces only. `*`: every interface. Otherwise comma-separated, case-insensitive substrings of the names in `rnstatus`, e.g. `RNode`. Your own nodes are always ingested. See [Reticulum](#reticulum). |
 | `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Requires `TX_ENABLED=1` (polling other nodes is a transmission). Seconds between Meshcore contact telemetry polls (one on-air request per interval, round-robin over the roster; each contact is additionally polled at most once per 24 h: when every contact is fresh the tick sends nothing). Set `0` to disable on-air polling. |
 | `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` | _unset_ | Comma-separated node ids exempt from the once-per-24 h cap; listed nodes are polled every round-robin rotation (still one request per interval). |
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
@@ -363,13 +363,17 @@ listens for announces and files each one as a node. It never transmits, so
 
 `CONNECTION` does not apply; if set, the ingestor ignores it and logs that it did.
 
-It reads your existing `~/.reticulum`, so if `rnsd` already works, so does this:
+It reads your existing `~/.reticulum` and ingests what your RNode interfaces
+hear:
 
 ```bash
 API_TOKEN=... INSTANCE_DOMAIN=https://your.instance PROTOCOL=reticulum ./data/mesh.sh
 ```
 
-To ingest only from your radio, set `RETICULUM_INTERFACES` to part of the
+To also ingest TCP, Backbone and `AutoInterface` peers, set
+`RETICULUM_INTERFACES=*`.
+
+To pick interfaces by name, set `RETICULUM_INTERFACES` to part of each
 interface name from `rnstatus` - matching is case-insensitive substring:
 
 ```bash
@@ -377,7 +381,8 @@ RETICULUM_INTERFACES="RNode Reticulum Berlin"
 ```
 
 Your own nodes are always ingested regardless of this setting. Everything
-further away is filtered by it.
+further away is filtered by it. With no RNode on the stack and the variable
+unset, only your own nodes are ingested and the ingestor logs a warning.
 
 To use a different RNS config, set `RETICULUM_CONFIG_DIR`, pointing at the
 same directory your `rnsd` uses - interface filtering fails across mismatched
@@ -385,10 +390,9 @@ directories.
 
 In Docker, the config dir is the `potatomesh_reticulum` volume
 (`/app/.config/potato-mesh/reticulum`). RNS seeds a stock config there with
-only a link-local `AutoInterface`, which reaches no radio on the default
-bridge network:
+only a link-local `AutoInterface` and no RNode, so nothing is ingested from it:
 
-- Add your interfaces to the volume's `config` file, then restart:
+- Add your RNode interface to the volume's `config` file, then restart:
   `docker compose exec ingestor sh -c 'cat >> /app/.config/potato-mesh/reticulum/config'`
 - Or point `RETICULUM_CONFIG_DIR` at a bind mount of the host's `~/.reticulum`
   and run with host networking.

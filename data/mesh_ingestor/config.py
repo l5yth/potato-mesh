@@ -225,8 +225,9 @@ def _clean_env_fragment(value: str) -> str:
     not as shell, so an unset variable arrives as the two-character string
     ``""``.  Read as content that is one entry, and for a filter it is an entry
     nothing can match — which silently dropped every message on a stock
-    containerised deployment.  Resolving it to empty means the filter is simply
-    off, which is the documented default.
+    containerised deployment.  Resolving it to empty selects the documented
+    default: no filter for the channel lists, the RNode scope for
+    :data:`RETICULUM_INTERFACES`.
 
     Quotes are deliberately **not** stripped from a fragment that has other
     content.  These fragments are matched against values the ingestor did not
@@ -247,36 +248,51 @@ def _clean_env_fragment(value: str) -> str:
     return "" if not trimmed.strip("\"'").strip() else trimmed
 
 
+RETICULUM_ALL_INTERFACES = "*"
+"""The :envvar:`RETICULUM_INTERFACES` entry that admits every interface (SPEC RN4)."""
+
+
 def _parse_reticulum_interfaces(raw: str) -> tuple[str, ...]:
-    """Parse the :envvar:`RETICULUM_INTERFACES` allowlist.
+    """Parse the :envvar:`RETICULUM_INTERFACES` interface scope.
 
     Parameters:
         raw: Comma-separated interface-name fragments, e.g.
-            ``"RNodeInterface,rnode lora"``.
+            ``"RNodeInterface,rnode lora"``, or ``*``.
 
     Returns:
-        Tuple of lowercased, de-duplicated, non-empty fragments in a stable
-        order.  Empty when the variable is unset, blank, or quote-only (see
-        :func:`_clean_env_fragment`).
+        ``()`` when the variable is unset, blank, or quote-only (see
+        :func:`_clean_env_fragment`), which selects the RNode default.
+        ``("*",)`` when any entry is :data:`RETICULUM_ALL_INTERFACES`.
+        Otherwise the lowercased, de-duplicated, non-empty fragments in a
+        stable order.
     """
     fragments = {_clean_env_fragment(part).lower() for part in raw.split(",")}
-    return tuple(sorted(fragments - {""}))
+    fragments.discard("")
+    if RETICULUM_ALL_INTERFACES in fragments:
+        # Every interface already covers the rest of the list.
+        return (RETICULUM_ALL_INTERFACES,)
+    return tuple(sorted(fragments))
 
 
 RETICULUM_INTERFACES = _parse_reticulum_interfaces(
     os.environ.get("RETICULUM_INTERFACES", "")
 )
-"""Case-insensitive substring allowlist of RNS interfaces to ingest from.
+"""Which RNS interfaces ``PROTOCOL=reticulum`` ingests announces from (SPEC RN4).
 
 A Reticulum stack can carry LoRa and IP interfaces at once, and an announce
 listener hears every announce reachable over *any* of them.  On a LAN with an
 ``AutoInterface`` that means the whole local Reticulum network lands in the
-dashboard.  Setting :envvar:`RETICULUM_INTERFACES` restricts ingestion to
-announces whose path was received on a matching interface (matched as a
-lowercased substring of the interface's string form, e.g. ``rnode``).
+dashboard.
 
-**Empty (the default) ingests every interface**, preserving the behaviour the
-provider shipped with (#888)."""
+``()``, the default, admits an announce only when its path arrived on an
+RNode, recognised by interface class (SPEC RN4, amended 2026-10-05).  Unset,
+blank and quote-only all parse to it, which is what Compose's
+``${RETICULUM_INTERFACES:-}``, both ``data/Dockerfile`` stages and a ``null``
+NixOS option deliver.  ``("*",)`` admits every interface, the behaviour the
+provider shipped with (#888).  Any other value is a case-insensitive substring
+allowlist matched against the interface's string form, e.g. ``rnode``.  A
+0-hop announce, which comes from this machine, is admitted whatever the scope
+(SPEC RE4)."""
 
 RETICULUM_FREQ: str | None = (
     _clean_env_fragment(os.environ.get("RETICULUM_FREQ", "")) or None
@@ -774,6 +790,7 @@ __all__ = [
     "MESH_UDP_GROUPS",
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
+    "RETICULUM_ALL_INTERFACES",
     "RETICULUM_CONFIG_DIR",
     "RETICULUM_FREQ",
     "RETICULUM_INTERFACES",
