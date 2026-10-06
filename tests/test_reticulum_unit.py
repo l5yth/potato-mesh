@@ -32,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 from RNS.vendor import umsgpack  # noqa: E402 - path setup
 
 import data.mesh_ingestor.config as config  # noqa: E402 - path setup
+import data.mesh_ingestor.node_identity as node_identity  # noqa: E402 - path setup
 import data.mesh_ingestor.protocols.reticulum as _mod  # noqa: E402 - path setup
 from data.mesh_ingestor.protocols.reticulum import (  # noqa: E402 - path setup
     ReticulumProvider,
@@ -494,11 +495,11 @@ def test_host_node_id_uses_the_reticulum_mapping_not_the_meshtastic_one():
     registering ``!86c39940`` while its own peer row was ``!27716218``.
     """
     identity_hash = "27716218762cfd2864141ef286c39940"
-    assert ReticulumProvider().extract_host_node_id(None) is None or True
-    with_env = ReticulumProvider()
+    # The shared helper keeps the low 32 bits: the id the field run registered.
+    assert node_identity.canonical_node_id(identity_hash) == "!86c39940"
     assert _mod._reticulum_node_id(bytes.fromhex(identity_hash)) == "!27716218"
     # The provider must canonicalise a raw identity hash the same way.
-    assert with_env._canonical_host_node_id(identity_hash) == "!27716218"
+    assert ReticulumProvider()._canonical_host_node_id(identity_hash) == "!27716218"
 
 
 def test_derived_host_node_id_is_none_when_no_identity_exists(monkeypatch):
@@ -1336,12 +1337,11 @@ def test_connect_passes_active_candidate_through(monkeypatch, tmp_path):
 
 
 def test_connect_is_silent_when_ingestor_node_id_is_unset(monkeypatch, tmp_path):
-    """An unset ``INGESTOR_NODE_ID`` is no longer a warning (SPEC RE5).
+    """An unset ``INGESTOR_NODE_ID`` is not a warning (SPEC RE5/RE8).
 
     It used to leave the heartbeat unregistered, so connect warned about it.
-    The id is now derived from the config dir's transport identity, which makes
-    the variable an override — warning about an override nobody has to set
-    would train operators to ignore the log.
+    The id is now derived from the host's primary identity once a local app
+    announces, and connect logs ``node_id='pending'`` at info until then.
     """
     fake, _state = _fake_rns()
     monkeypatch.setattr(_mod, "RNS", fake)

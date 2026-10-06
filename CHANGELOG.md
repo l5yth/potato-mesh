@@ -5,7 +5,7 @@
 
 ### Features
 * Web/Data: Reticulum gets its own visual identity - trifoil marker on violet `#7b61ff`, MeshCore's tile moves to `#1f2937`, a four-step role color ramp, hexagon shape, and a third legend column (SPEC RD1-RD8)
-* Data: Reticulum node roles are derived from the announce aspect, so a multi-aspect peer no longer flips roles (SPEC RD4/RE1)
+* Data: Reticulum node roles are derived from the announce aspect, so a multi-aspect peer no longer flips roles (SPEC RD4/RE10)
 * Web: the federation table renders a Reticulum zero count as a dash instead of a tile (SPEC RD8)
 
 ### Fixes
@@ -34,7 +34,7 @@
 * Data: a Reticulum announce with no display name no longer overwrites a stored name
 * Docs: document the Reticulum config directory, its Docker volume, and how to add interfaces to it
 * Data: `ALLOWED_CHANNELS`, `HIDDEN_CHANNELS`, and `MAP_ZOOM` no longer break on the packaged Compose default's quoted-empty value (ACCEPTANCE CH-A1-CH-A3)
-* Data/Web: one Reticulum node row per announced destination, grouped by `nodes.identity_hash` (SPEC RE1)
+* Data/Web: `nodes.identity_hash` keeps each Reticulum node's full identity hash, as do its `destinations` rows (SPEC RE2/RE7)
 * Data/Web: `user.publicKey` carries the identity's real public key; destinations get their own table, served by `GET /api/destinations`, which honors the node opt-out marker (SPEC RE2)
 * Data: new `RETICULUM_INTERFACES` allowlist scopes announce ingestion by interface, applied from one hop out; the operator's own nodes are always ingested (SPEC RN4/RE4)
 * Data: `PROTOCOL=reticulum` ingests only RNode interfaces by default; set `RETICULUM_INTERFACES=*` to ingest every interface as before (SPEC RN4)
@@ -64,6 +64,7 @@
 * Web: a MeshCore channel message heard by two ingestors that resolved its sender to different node ids is stored once (#880)
 * Web: the first boot after upgrading deletes duplicate MeshCore messages once; on instances with several MeshCore ingestors this can remove about a fifth of the stored MeshCore messages (#880)
 * Data/Web: a Reticulum destination's placeholder name never replaces its real name or names its node; a node with no announced name reads its own placeholder; a nameless destination is named from its own hash (SPEC RA10, RE10)
+* Docs: Reticulum is marked experimental and announce-only; the README says what the RNS stack transmits and that the channel filters ignore it (SPEC RD7/RN5)
 * Nix: the flake ingestor includes `rns`, so `PROTOCOL=reticulum` runs on NixOS; `flake.lock` moves nixpkgs to nixos-unstable of 2026-10-03, which brings Python 3.14 and Ruby 3.4.9 (SPEC DP8)
 
 ### Features

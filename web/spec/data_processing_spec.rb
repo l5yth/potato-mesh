@@ -530,9 +530,10 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       }
     end
 
-    it "gives each announced aspect its own node row and destination row" do
-      # The field test showed why: the aspects carry different names, so merging
-      # them produced a row named from one aspect and roled from another.
+    it "gives each announced aspect its own destination row, under the node id the record names" do
+      # Each aspect carries its own display name and role (the field test's
+      # "Afri Nomad Orion" and "Department of Decentralization"), so each keeps
+      # its own destination row (SPEC RE2).
       db = open_db
       dp.upsert_node(db, "!aa11bb22", reticulum_record(
         "aa11bb22" + "00" * 12, aspect: "lxmf.delivery", role: "PEER",
@@ -548,7 +549,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.close
 
       expect(nodes.map { |r| r["long_name"] }).to eq(["Afri Nomad Orion", "Department of Decentralization"])
-      # Distinct rows, one identity — that is what groups them back into a peer.
+      # Two node ids, one identity: the web tier files each record under the id
+      # it names and does not merge on identity_hash. Keying every aspect on
+      # the identity is the ingestor's job (SPEC RE7).
       expect(nodes.map { |r| r["identity_hash"] }.uniq.length).to eq(1)
       expect(dests.map { |r| r["aspect"] }).to eq(["lxmf.delivery", "nomadnetwork.node"])
       expect(dests.map { |r| r["role"] }).to eq(["PEER", "NODE"])
