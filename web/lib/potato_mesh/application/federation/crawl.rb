@@ -132,6 +132,11 @@ module PotatoMesh
           reticulum_nodes_count: coerce_integer(payload["reticulum_nodes_count"]),
         }
 
+        # A signed field over its cap is never cut (SPEC SL6): the record is
+        # skipped, and the crawl logs the reason.
+        oversized = DataProcessing::FieldLimits.instance_field_violation(attributes, signature, pubkey: attributes[:pubkey])
+        return [nil, nil, oversized] if oversized
+
         [attributes, signature, nil]
       rescue StandardError => e
         [nil, nil, e.message]

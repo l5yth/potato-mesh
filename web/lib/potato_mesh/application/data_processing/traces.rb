@@ -20,17 +20,16 @@ module PotatoMesh
       # Normalise a traceroute hop entry to a numeric node identifier.
       #
       # @param hop [Object] raw hop entry from the payload.
-      # @return [Integer, nil] coerced node ID or nil when the value is unusable.
+      # @return [Integer, nil] coerced node ID or nil when the value is unusable
+      #   or outside the range an SQLite +INTEGER+ holds (SPEC SL10).
       def coerce_trace_node_id(hop)
         case hop
-        when Integer
-          return hop
         when Numeric
-          return hop.to_i
+          return coerce_integer(hop)
         when String
           trimmed = hop.strip
           return nil if trimmed.empty?
-          return Integer(trimmed, 10) if trimmed.match?(/\A-?\d+\z/)
+          return coerce_integer(trimmed) if trimmed.match?(/\A-?\d+\z/)
 
           parts = canonical_node_parts(trimmed)
           return parts[1] if parts
@@ -60,6 +59,7 @@ module PotatoMesh
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @return [void]
       def insert_trace(db, payload, protocol_cache: nil)
+        payload = bound_trace_payload(payload) # SPEC SL3/SL5: nil skips the trace
         return unless payload.is_a?(Hash)
 
         trace_identifier = coerce_integer(payload["id"] || payload["packet_id"] || payload["packetId"])

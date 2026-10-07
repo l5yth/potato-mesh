@@ -3330,7 +3330,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "updates timestamps when the payload omits lastHeard" do
-      node_id = "!spectime01"
+      node_id = "!5bec7101"
       payload = {
         node_id => {
           "user" => { "shortName" => "Spec Time" },
@@ -3354,7 +3354,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "preserves the original first_heard when updating nodes" do
-      node_id = "!spectime02"
+      node_id = "!5bec7102"
       initial_first = reference_time.to_i - 600
       initial_last = reference_time.to_i - 300
 
@@ -3457,11 +3457,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "treats SQL-looking node identifiers as plain data" do
-      malicious_id = "spec-node'); DROP TABLE nodes;--"
+    it "treats SQL-looking node identifiers and names as plain data" do
+      malicious = "spec-node'); DROP TABLE nodes;--"
       payload = {
-        malicious_id => {
+        # Not a canonical node id, so the key is skipped (SPEC SL5).
+        malicious => {
           "user" => { "shortName" => "Spec Attack" },
+          "lastHeard" => reference_time.to_i,
+        },
+        "!5bec7103" => {
+          "user" => { "shortName" => "Spec Attack", "longName" => malicious },
           "lastHeard" => reference_time.to_i,
         },
       }
@@ -3473,13 +3478,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
-        row = db.get_first_row(
-          "SELECT node_id, short_name FROM nodes WHERE node_id = ?",
-          [malicious_id],
-        )
+        rows = db.execute("SELECT node_id, short_name, long_name FROM nodes WHERE node_id IN (?, ?)", [malicious, "!5bec7103"])
 
-        expect(row["node_id"]).to eq(malicious_id)
-        expect(row["short_name"]).to eq("Spec Attack")
+        expect(rows.map { |row| row.values_at("node_id", "short_name", "long_name") }).to eq(
+          [["!5bec7103", "Spec Attack", malicious]],
+        )
 
         tables = db.get_first_value(
           "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'",
@@ -3796,7 +3799,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       parent_payload = {
         "id" => 42,
         "rx_time" => reference_time.to_i - 10,
-        "from_id" => "!parent",
+        "from_id" => "!9a7e0001",
         "channel" => 0,
         "portnum" => "TEXT_MESSAGE_APP",
         "text" => "source message",
@@ -3805,7 +3808,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       reaction_payload = {
         "id" => 108,
         "rx_time" => reference_time.to_i,
-        "from_id" => "!reactor",
+        "from_id" => "!9a7e0002",
         "channel" => 0,
         "portnum" => "REACTION_APP",
         "reply_id" => parent_payload["id"],
@@ -3837,7 +3840,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       first_payload = {
         "id" => 77_001,
         "rx_time" => reference_time.to_i - 10,
-        "from_id" => "!ingmsg01",
+        "from_id" => "!1a9e5001",
         "channel" => 0,
         "portnum" => "TEXT_MESSAGE_APP",
         "text" => "first reporter",
@@ -3987,7 +3990,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     describe "POST /api/positions" do
       it "stores position packets and updates node metadata" do
-        node_id = "!specpos01"
+        node_id = "!12345678"
         node_num = 0x1234_5678
         initial_last_heard = reference_time.to_i - 600
         node_payload = {
@@ -4081,7 +4084,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "creates node records when none exist" do
-        node_id = "!specnew01"
+        node_id = "!feedcafe"
         node_num = 0xfeed_cafe
         rx_time = reference_time.to_i - 60
         position_time = rx_time - 10
@@ -4151,7 +4154,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "stores position ingestor and preserves the first reporter" do
         first_payload = {
           "id" => 19_001,
-          "node_id" => "!ingpos01",
+          "node_id" => "!1a9e9001",
           "rx_time" => reference_time.to_i - 80,
           "latitude" => 52.1,
           "longitude" => 13.2,
@@ -4173,7 +4176,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "fills first_heard when updating an existing node without one" do
-        node_id = "!specposfh"
+        node_id = "!5bec9003"
         rx_time = reference_time.to_i - 90
 
         with_db do |db|
@@ -4876,7 +4879,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "stores telemetry ingestor and preserves the first reporter" do
         payload = {
           "id" => 23_001,
-          "node_id" => "!ingtel01",
+          "node_id" => "!1a9e7e01",
           "rx_time" => reference_time.to_i - 70,
           "telemetry" => { "deviceMetrics" => { "batteryLevel" => 90 } },
           "battery_level" => 90,
@@ -4898,7 +4901,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_001,
-            "node_id" => "!teltype01",
+            "node_id" => "!7e17e001",
             "rx_time" => reference_time.to_i - 10,
             "device_metrics" => { "battery_level" => 85, "voltage" => 4.1 },
           },
@@ -4914,7 +4917,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_002,
-            "node_id" => "!teltype02",
+            "node_id" => "!7e17e002",
             "rx_time" => reference_time.to_i - 20,
             "environment_metrics" => { "temperature" => 22.5, "relativeHumidity" => 50 },
           },
@@ -4930,7 +4933,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_003,
-            "node_id" => "!teltype03",
+            "node_id" => "!7e17e003",
             "rx_time" => reference_time.to_i - 30,
             "telemetry_type" => "power",
             "voltage" => 5.0,
@@ -4948,7 +4951,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_004,
-            "node_id" => "!teltype04",
+            "node_id" => "!7e17e004",
             "rx_time" => reference_time.to_i - 5,
             "device_metrics" => { "battery_level" => 70, "channelUtilization" => 30 },
           },
@@ -4958,7 +4961,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(last_response.status).to eq(201)
 
-        get "/api/telemetry/!teltype04", {}, auth_headers
+        get "/api/telemetry/!7e17e004", {}, auth_headers
 
         expect(last_response).to be_ok
         entries = JSON.parse(last_response.body)
@@ -4971,7 +4974,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_005,
-            "node_id" => "!teltype05",
+            "node_id" => "!7e17e005",
             "rx_time" => reference_time.to_i - 40,
             "air_quality_metrics" => { "iaq" => 72, "pm25" => 8 },
           },
@@ -4987,7 +4990,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         payload = [
           {
             "id" => 24_006,
-            "node_id" => "!teltype06",
+            "node_id" => "!7e17e006",
             "rx_time" => reference_time.to_i - 50,
             "telemetry_type" => "bogus_value",
             "device_metrics" => { "battery_level" => 55, "channel_utilization" => 20 },
@@ -5172,7 +5175,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "accepts array payloads, normalizes node references, and skips messages without an id" do
-      node_id = "!spec-normalized"
+      # The number matches the id: a record's number is its own node's
+      # (SPEC NI1), so for a Meshtastic node the two cannot differ.  The
+      # message from "123" shows a numeric reference normalized to the
+      # node's id, not a lookup by a number apart from the id.
+      node_id = "!0000007b"
       node_payload = {
         node_id => {
           "num" => 123,
@@ -6431,7 +6438,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "updates node last_heard for plaintext messages" do
-      node_id = "!plainmsg01"
+      node_id = "!91a10001"
       initial_first = reference_time.to_i - 600
       initial_last = reference_time.to_i - 300
 
@@ -6471,7 +6478,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "stores messages containing SQL control characters without executing them" do
       payload = {
         "packet_id" => 404,
-        "from_id" => "attacker",
+        "from_id" => "!a77ac4e1",
         "text" => "'); DROP TABLE nodes;--",
       }
 
@@ -6556,7 +6563,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       post "/api/messages", base_payload.merge(
         "rx_time" => final_time,
         "rx_iso" => final_iso,
-        "from" => "!spec-sender",
+        "from" => "!5bec5e4d",
       ).to_json, auth_headers
 
       expect(last_response.status).to eq(201)
@@ -6566,7 +6573,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         row = db.get_first_row("SELECT id, from_id, rx_time, rx_iso, text FROM messages WHERE id = ?", [message_id])
 
-        expect(row["from_id"]).to eq("!spec-sender")
+        expect(row["from_id"]).to eq("!5bec5e4d")
         expect(row["rx_time"]).to eq(initial_time)
         expect(row["rx_iso"]).to eq(initial_iso)
         expect(row["text"]).to eq("initial payload")
@@ -7812,7 +7819,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       clear_database
       marker = PotatoMesh::Config.node_opt_out_marker
       payload = {
-        "!silenced" => {
+        "!dead0001" => {
           "num" => 0xdead0001,
           "lastHeard" => reference_time.to_i,
           "user" => {
@@ -7827,7 +7834,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       # The row exists in the database — opt-out is a display-time filter,
       # not an ingestion-time refusal.
       with_db(readonly: true) do |db|
-        row = db.execute("SELECT node_id, long_name FROM nodes WHERE node_id = ?", ["!silenced"]).first
+        row = db.execute("SELECT node_id, long_name FROM nodes WHERE node_id = ?", ["!dead0001"]).first
         expect(row).not_to be_nil
         expect(row[1]).to include(marker)
       end
@@ -7835,9 +7842,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       # Bulk and per-id endpoints both omit the opted-out node.
       get "/api/nodes"
       ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
-      expect(ids).not_to include("!silenced")
+      expect(ids).not_to include("!dead0001")
 
-      get "/api/nodes/!silenced"
+      get "/api/nodes/!dead0001"
       expect(last_response.status).to eq(404)
     end
 
@@ -8001,7 +8008,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "returns stored positions ordered by receive time" do
-      node_id = "!specfetch"
+      node_id = "!5bec9004"
       rx_times = [reference_time.to_i - 50, reference_time.to_i - 10]
       rx_times.each_with_index do |rx_time, idx|
         payload = {

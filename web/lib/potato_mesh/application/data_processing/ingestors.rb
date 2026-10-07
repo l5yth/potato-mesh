@@ -23,6 +23,7 @@ module PotatoMesh
       # @param payload [Hash] ingestor payload from the collector.
       # @return [Boolean] true when persistence succeeded.
       def upsert_ingestor(db, payload)
+        payload = bound_ingestor_payload(payload) # SPEC SL3/SL5/SL7: nil answers 400
         return false unless payload.is_a?(Hash)
 
         parts = canonical_node_parts(payload["node_id"] || payload["id"])

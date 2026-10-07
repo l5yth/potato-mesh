@@ -22,12 +22,23 @@ module PotatoMesh
       # The +payload["num"]+ field may arrive as an Integer, a decimal string, or
       # a hexadecimal string (with or without an +0x+ prefix).  When the field is
       # absent or ambiguous the method falls back to decoding the hex portion of
-      # +node_id+.
+      # +node_id+.  A number outside the range an SQLite +INTEGER+ holds is no
+      # node number (SPEC SL10).
       #
       # @param node_id [String, nil] canonical node identifier in +!xxxxxxxx+ form.
       # @param payload [Hash] inbound message payload that may carry a +num+ field.
       # @return [Integer, nil] resolved 32-bit node number or +nil+ when undecidable.
       def resolve_node_num(node_id, payload)
+        sql_integer(parse_node_num(node_id, payload))
+      end
+
+      # Parse the node number {#resolve_node_num} resolves, before its range
+      # check.
+      #
+      # @param node_id [String, nil] canonical node identifier in +!xxxxxxxx+ form.
+      # @param payload [Hash] inbound message payload that may carry a +num+ field.
+      # @return [Integer, nil] the parsed number, or +nil+ when undecidable.
+      def parse_node_num(node_id, payload)
         raw = payload["num"]
 
         case raw

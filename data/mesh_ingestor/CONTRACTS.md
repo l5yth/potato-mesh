@@ -14,6 +14,7 @@ This document records the contracts that future protocols must preserve. New pro
 
 - Canonical node id: `nodes.node_id` is a `TEXT` primary key and is treated as canonical across the system.
 - Format: `!%08x` (lowercase hex, 8 chars), for example `!abcdef01`.
+- Ingest id forms (SPEC SL5): a node reference (`from_id`, `node_id`, `neighbor_id`, a heartbeat's `node_id`) is the canonical id, a node number (a JSON integer from 0 to 4294967295, or its decimal string), or absent; a destination (`to_id`) may also be the broadcast id `^all`. The `ingestor` field and the keys of `POST /api/nodes` take the canonical id only. The web app skips a record carrying any other id, and a neighbour entry carrying one, and still answers 201; a heartbeat with one answers 400.
 - Normalization:
   - Python currently normalizes via `data/mesh_ingestor/serialization.py:_canonical_node_id`.
   - Ruby normalizes via `web/lib/potato_mesh/application/data_processing.rb:canonical_node_parts`.
@@ -112,6 +113,8 @@ Receive time (SPEC RK1-RK3). `rx_time` is the ingestor's receive time, in Unix s
 Payload is a mapping keyed by canonical node id, with optional top-level `”ingestor”` and `”protocol”` keys:
 
 - `{ “!abcdef01”: { ... node fields ... }, “ingestor”: “!ingestornodeid”, “protocol”: “meshcore” }`
+
+A key that is not a canonical node id, or whose entry is not a mapping, is skipped, and the request still answers 201 (SPEC SL5). A nested `user`, `deviceMetrics`, `device_metrics`, `position`, `position.raw` or `destination` that is not a mapping is ignored, as if absent (SPEC SL10).
 
 Protocol resolution per-row honours, in order: (1) an explicit per-node `”protocol”` field inside the node entry; (2) the wrapper-level top-level `”protocol”` key; (3) the registered ingestor's protocol (see `POST /api/ingestors`); (4) `”meshtastic”` as the final default. Valid values are `”meshtastic”`, `”meshcore”`, and `”reticulum”` - values outside this set fall through to the next source. The wrapper stamp is what the Python ingestor emits unconditionally so the web app classifies records correctly even before the ingestor heartbeat is processed (closes the startup race that misclassified MeshCore placeholders as Meshtastic).
 
@@ -334,11 +337,11 @@ the opt-out marker are excluded from every read surface.
 
 Heartbeat payload:
 
-- `node_id` (canonical string)
+- `node_id` (canonical string; a value that is not a node reference answers `400`)
 - `start_time` (int), `last_seen_time` (int)
 - `version` (string)
 - Optional: `lora_freq`, `modem_preset`
-- Optional: `protocol` (string; e.g. `"meshtastic"`, `"meshcore"`, `"reticulum"`) - declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent
+- Optional: `protocol` (string; `"meshtastic"`, `"meshcore"` or `"reticulum"`, case and surrounding spaces ignored) - declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent or any other value (SPEC SL7)
 - Optional: `packets` (int ≥ 0) - mesh-activity delta (SPEC MA1/MA2). The merged count of *every* frame this ingestor handled since its previous heartbeat: all received frames (including ignored / errored / unimplemented) plus its own transmissions (announcement + MeshCore telemetry polls), counted at the earliest receive/transmit seam so nothing is under-reported. It is a per-interval delta (reset on each send), not a since-boot cumulative. Additive and backward-compatible: an absent or negative value records no activity, so pre-feature ingestors are unaffected.
 
 Mesh-activity time-series (SPEC MA3). Each heartbeat carrying a non-negative `packets` value appends one append-only row to the `ingestor_activity` table (`ingestor_id`, `at`, `packets`, `protocol`; `data/ingestor_activity.sql`); the `ingestors` snapshot row is upserted as before. Each ingestor's contribution is stored separately (never pre-summed) so a packets/hour moving average is computable across time × protocol × multiple ingestors. The row is best-effort - a failed activity insert never sinks the liveness heartbeat (still `201`). Rows are pruned by the retention worker on `at`. The read-side aggregate is served by `GET /api/stats` (`<scope>.packets.hour`, below).
@@ -346,6 +349,36 @@ Mesh-activity time-series (SPEC MA3). Each heartbeat carrying a non-negative `pa
 Protocol propagation: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field inherit its `protocol` value at write time when no explicit per-record `protocol` stamp is present. Per-record stamps take precedence - the ingestor heartbeat default only kicks in when the per-record field is absent or malformed.
 
 POST response & validation (0.7.0). Every `POST /api/*` ingest route returns `201 Created` with `{"status":"ok"}` on success (`POST /api/instances` returns `{"status":"registered"}`). A batch route (`messages` / `positions` / `telemetry` / `neighbors` / `traces`) accepts either a single record object or an array of them; any other top-level JSON type is rejected with `400 {"error":"invalid payload"}`, matching the `/api/nodes` and `/api/ingestors` object check. Clients should treat any `2xx` as success.
+
+Field limits (SPEC SL1-SL10). Every ingest write bounds the strings it stores, in UTF-8 bytes, and still answers 201. Free text (T) is cut to its longest prefix of whole grapheme clusters within the cap (whole code points when one cluster alone is longer). A token (N: an id, key, enum label or encoded payload) over its cap is stored as `NULL`. A value within its cap is stored as posted. A numeric field is stored as a number or `NULL`, never as text: a numeric string such as `"5.5"` is converted, and text that is no number, a mapping or a list is stored as `NULL` (node `hopsAway`, `snr`, `rssi`, `isFavorite`, `user.isUnmessagable`, `deviceMetrics.*` and `position.altitude`; message `channel`, `snr`, `rssi` and `hop_limit`; every other numeric field was already converted). In every numeric field, an integer outside the signed 64-bit range and a number that is not finite are stored as `NULL`. Rows stored before the caps existed are left as they are and age out under retention.
+
+| Field | Cap (bytes) | Policy |
+| --- | --- | --- |
+| node `user.longName`, a destination's name | 512 | T |
+| node `user.shortName` | 16 | T |
+| node `user.hwModel` / `hwModel` | 64 | N |
+| node `user.role`, `destination.role` | 32 | N |
+| node `user.macaddr` | 32 | N |
+| node `user.publicKey` | 512 | N; a key stored as `NULL` is no keyed evidence (SPEC SL4) |
+| node `identityHash`, `destination.id` | 64 | N; a destination without an id is not stored |
+| `destination.aspect` | 64 | N |
+| node `interface` | 256 | T |
+| `location_source`, `modem_preset`, `portnum`, `telemetry_type` | 32 | N |
+| message `text` | 1024 | T |
+| message `encrypted`, every `payload_b64` | 512 | N |
+| message `channel_name` | 64 | T |
+| message `emoji` | 64 | N |
+| message `path` | 512 | N |
+| every `rx_iso` | 32 | N; the web app derives a missing one from `rx_time` |
+| telemetry `user_string` | 256 | T, wherever the record nests it |
+| telemetry `one_wire_temperature` | 8 entries | the first 8 are kept |
+| waypoint `name` | 128 | T |
+| waypoint `description` | 512 | T |
+| heartbeat `version` | 64 | T |
+
+Each cap sits well above the longest value the radio protocols produce. The ingestor trims a string longer than its cap plus 64 bytes, on a code-point boundary, before it posts it (`data/mesh_ingestor/field_limits.py`, SPEC SL8); the web app makes the final cut (`web/lib/potato_mesh/application/data_processing/field_limits.rb`). A field added to a payload gets a cap in both tables.
+
+A signed instance field is never cut, since a cut value no longer matches its signature (SPEC SL6). `POST /api/instances` answers `400 {"error":"name exceeds 256 bytes"}` (likewise `version`, `channel`, `frequency` and `contact_link`), `400 {"error":"public_key exceeds 2048 bytes"}` and `400 {"error":"signature exceeds 1024 bytes"}` before it checks the signature; a crawl skips such a record from a peer's `/api/instances` and logs `warn` "Discarded remote instance entry" with that reason.
 
 ### GET endpoint filtering
 

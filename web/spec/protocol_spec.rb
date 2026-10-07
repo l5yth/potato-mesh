@@ -540,7 +540,7 @@ RSpec.describe "Multi-protocol support" do
         rx_iso: Time.at(now - 10).utc.iso8601,
         from_id: "!aabbcc01",
         text: "explicit meshcore stamp",
-        ingestor: "!unregistered000",
+        ingestor: "!0badf00d",
         protocol: "meshcore",
       }
       post "/api/messages", [msg].to_json, auth_headers
@@ -624,7 +624,7 @@ RSpec.describe "Multi-protocol support" do
         rx_time: now - 10,
         rx_iso: Time.at(now - 10).utc.iso8601,
         text: "no stamp, no ingestor",
-        ingestor: "!unregistered000",
+        ingestor: "!0badf00d",
       }
       post "/api/messages", [msg].to_json, auth_headers
       expect(last_response.status).to eq(201)
@@ -641,7 +641,7 @@ RSpec.describe "Multi-protocol support" do
         rx_time: now - 10,
         rx_iso: Time.at(now - 10).utc.iso8601,
         text: "case normalisation",
-        ingestor: "!unregistered000",
+        ingestor: "!0badf00d",
         protocol: "  MeshCore  ",
       }
       post "/api/messages", [msg].to_json, auth_headers

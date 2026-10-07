@@ -103,7 +103,9 @@ module PotatoMesh
                      coerce_integer(message["from_num"]) ||
                      resolve_node_num(from_id, message)
           node_id ||= format("!%08x", node_num & 0xFFFFFFFF) if node_num
-          return false unless node_id
+          # The decrypted NodeInfo names its own id; only a canonical one
+          # names a node (SPEC SL5).
+          return false unless FieldLimits.node_id?(node_id)
 
           payload = node_payload.merge(
             "num" => node_num,

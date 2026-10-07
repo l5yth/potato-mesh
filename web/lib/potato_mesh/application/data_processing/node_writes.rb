@@ -274,6 +274,7 @@ module PotatoMesh
       # @param heard [Integer] unix seconds of receipt.
       # @return [void]
       def upsert_destination(db, node_id, destination, identity_hash:, name:, interface:, heard:)
+        destination, identity_hash, name, interface = bound_destination_fields(destination, identity_hash, name, interface) # SPEC SL3
         return unless destination.is_a?(Hash)
 
         id = string_or_nil(destination["id"])&.downcase
@@ -407,6 +408,7 @@ module PotatoMesh
       # @param protocol [String] protocol identifier (default +meshtastic+).
       # @return [void]
       def upsert_node(db, node_id, n, protocol: "meshtastic")
+        n = bound_node_payload(n) # SPEC SL3/SL10: bounded, Prometheus labels and gauges included
         user = n["user"] || {}
         met = pick_alias(n, "deviceMetrics", "device_metrics") || {}
         pos = n["position"] || {}

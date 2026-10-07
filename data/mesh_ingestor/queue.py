@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping, Tuple
 
-from . import config
+from . import config, field_limits
 
 
 def _stringify_payload_value(value: object) -> str:
@@ -481,6 +481,11 @@ def _queue_post_json(
     ``send`` override via :func:`_fresh_state`) and for any standalone use
     without calling :func:`_start_queue_drainer`.
 
+    Every payload passes here on its way to the web app, so this is where
+    oversized strings are trimmed, loosely, before they are queued
+    (:func:`~data.mesh_ingestor.field_limits.bound_post_payload`, SPEC SL8).
+    The caller's payload is never modified.
+
     .. note::
         The background drainer is used **only** when no custom ``send``
         override is provided (i.e. the production ``_post_json`` path).
@@ -498,6 +503,8 @@ def _queue_post_json(
 
     if send is None:
         send = _post_json
+
+    payload = field_limits.bound_post_payload(path, payload)
 
     if config.DEBUG:
         formatted_payload = (

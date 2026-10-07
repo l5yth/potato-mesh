@@ -150,6 +150,7 @@ module PotatoMesh
       # @param heard_time [Integer, nil] message rx_time used as last/first heard.
       # @return [void]
       def ensure_meshcore_chat_node(db, node_id, long_name, heard_time)
+        long_name = PotatoMesh::Sanitizer.bounded_text(long_name, FieldLimits::LONG_NAME_BYTES) # SPEC SL3: the rename below skips upsert_node
         node_id = string_or_nil(node_id)
         long_name = string_or_nil(long_name)
         return unless node_id && long_name

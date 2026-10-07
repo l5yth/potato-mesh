@@ -33,6 +33,7 @@
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: the Reticulum destination count matches the table, and `/api/destinations` serves only destinations of nodes inside the node window (SPEC RA3/RA8)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
+* Web/Data: ingested strings are capped in bytes by column (node name 512, message 1024, instance fields 256, instance key 2048), a numeric field that is not a number, an integer beyond 64 bits or a non-finite number is stored as NULL (before: text, an approximate REAL or infinity), a `POST /api/nodes` key or record id that is not a node id is skipped, as is a node entry or nested map of one that is not a mapping, an unknown ingestor protocol registers as `meshtastic`, and an instance announcement with a field over its cap is refused; rows stored before the upgrade keep their values until retention removes them (SPEC SL1-SL10)
 * Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
 * Web: a federation peer whose newest node is up to 7 days old is accepted and refreshed again, not only within 24 hours (ACCEPTANCE FS-A5)
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)

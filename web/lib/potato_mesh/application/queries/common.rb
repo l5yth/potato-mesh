@@ -113,7 +113,8 @@ module PotatoMesh
       #   exceeding the ceiling collapse to +nil+ so future-dated timestamps do
       #   not leak through.
       # @return [Integer, nil] coerced positive integer, or +nil+ when the input
-      #   is nil, non-integer-coercible, non-positive, or beyond the ceiling.
+      #   is nil, non-integer-coercible, non-positive, beyond the ceiling, or
+      #   outside the range an SQLite +INTEGER+ holds (SPEC SL10).
       def coerce_positive_or_nil(value, ceiling: nil)
         coerced = begin
             if value.is_a?(Integer)
@@ -125,7 +126,7 @@ module PotatoMesh
             nil
           end
 
-        return nil if coerced.nil? || coerced <= 0
+        return nil if coerced.nil? || coerced <= 0 || coerced > Helpers::SQL_INTEGER_RANGE.end
         return nil if ceiling && coerced > ceiling
 
         coerced
