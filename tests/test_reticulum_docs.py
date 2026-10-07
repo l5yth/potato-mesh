@@ -70,10 +70,48 @@ def test_feature_bullets_mark_reticulum_experimental():
 
 
 def test_section_states_experimental_and_announce_only():
-    """The Reticulum section opens with its scope and what it does not ingest."""
+    """The Reticulum section opens with its scope and what it does not ingest.
+
+    The host's own position is the one exception (SPEC RP8), so the sentence
+    names other nodes' positions rather than positions in general.
+    """
     section = _section("Reticulum")
     assert "experimental and announce-only" in section
-    assert re.search(r"Messages,\s+positions and telemetry are not ingested", section)
+    assert re.search(
+        r"Messages,\s+telemetry and other nodes'\s+positions are not ingested", section
+    )
+
+
+def test_section_states_the_host_position_and_how_to_stop_it():
+    """The section says the RNS keys are published and how to stop it (RP8).
+
+    Peers still stay off the map, so the closing line keeps saying so for them
+    and no longer claims it for every Reticulum node.
+    """
+    section = _section("Reticulum")
+    assert re.search(
+        r"publishes the `latitude`, `longitude` and `height` \(metres\) keys\s+"
+        r"of the first `RNodeInterface` in your RNS config",
+        section,
+    )
+    assert re.search(
+        r"Remove the keys and restart the ingestor to stop the updates", section
+    )
+    assert re.search(
+        r"If that block already\s+sets them, for example for RNS interface discovery,"
+        r"\s+they are published after\s+the upgrade",
+        section,
+    )
+    assert "DELETE FROM positions" in section
+    # A `!` inside double quotes is history expansion in bash and zsh, so the
+    # pasted command spells the id's `!` as char(33) and carries none.
+    command = next(line for line in section.splitlines() if line.startswith("sqlite3 "))
+    assert "WHERE node_id = char(33) || '27716218'" in command
+    assert "!" not in command
+    assert re.search(r"Other than this\s+host, they also show dashes", section)
+    assert not re.search(
+        r"Reticulum nodes show dashes for battery and position", section
+    )
 
 
 def test_docs_name_what_the_rns_stack_transmits():

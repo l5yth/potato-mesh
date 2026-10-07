@@ -71,9 +71,8 @@ test('reticulum resolves to hexagon, case-insensitively (RD6)', () => {
 });
 
 test('the reticulum chip is equal-area and shape-modified (RD6)', () => {
-  // A reserved slot: RNS announces carry no position, so nothing reaches this
-  // on the map today. Built correctly now so the shape channel is complete the
-  // moment positions exist.
+  // Reached for an ingestor's own host, positioned from its RNS config (SPEC
+  // RP7); __tests__/reticulum-host-position.test.js drives it through renderMap.
   const { L, calls } = leafletStub();
   createNodeMarker(L, [52.5, 13.4], {
     protocol: 'reticulum',

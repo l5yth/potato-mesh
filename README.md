@@ -361,7 +361,8 @@ when not already set.
 
 Reticulum support is experimental and announce-only. Set `PROTOCOL=reticulum`
 to file each announce on a Reticulum (RNS) network as a node. Messages,
-positions and telemetry are not ingested.
+telemetry and other nodes' positions are not ingested. The ingestor publishes
+only its own host's position, from your RNS config (below).
 
 The ingestor sends no announces, messages or polls, so `TX_ENABLED=0` (the
 default) is fine. `TX_ENABLED` does not gate the RNS stack, which transmits
@@ -434,13 +435,36 @@ Meshtastic mesh; otherwise it shows `SF8/BW125/CR5`. Values are read once at
 startup - change them in the RNS config and restart the ingestor, or the
 dashboard keeps showing the old ones.
 
+The ingestor publishes the `latitude`, `longitude` and `height` (metres) keys
+of the first `RNodeInterface` in your RNS config as this host's position, at
+startup and every hour, and the host appears on the map. If that block already
+sets them, for example for RNS interface discovery, they are published after
+the upgrade. Add them to that block and restart the ingestor:
+
+```
+    latitude = 52.5029
+    longitude = 13.4042
+    height = 34
+```
+
+Remove the keys and restart the ingestor to stop the updates. The dashboard
+keeps the last published position until you clear it; replace `27716218`
+with the node id from the startup line, without its `!`:
+
+```bash
+sqlite3 ~/.local/share/potato-mesh/mesh.db "UPDATE nodes SET latitude = NULL, longitude = NULL, altitude = NULL, position_time = NULL, location_source = NULL WHERE node_id = char(33) || '27716218'; DELETE FROM positions WHERE node_id = char(33) || '27716218';"
+```
+
+In Docker, prefix it with `docker compose exec web` and use the database at
+`/app/.local/share/potato-mesh/mesh.db`.
+
 A node is one row per identity - a peer running both LXMF and a nomadnet node
 is still one entry. Its destinations (addresses) are listed via
 `GET /api/destinations` and shown as sub-rows grouped under the identity in
 the dashboard table.
 
-Reticulum nodes show dashes for battery and position, stay off the map, and
-have no messages.
+Reticulum nodes show dashes for battery and have no messages. Other than this
+host, they also show dashes for position and stay off the map.
 
 ### Passive UDP transport
 

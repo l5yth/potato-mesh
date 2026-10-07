@@ -22,7 +22,8 @@ admitted announce is converted into a ``POST /api/nodes`` upsert with
 ``protocol="reticulum"``.  The host's own destinations are also read from the
 stack's 0-hop path table, and its ``rns.transport`` destination, when the stack
 has transport enabled, from the transport identity (SPEC RE8/RE9).  No LXMF
-message, position or telemetry is ingested.
+message, position or telemetry is ingested; the host's own position comes from
+the RNS config (:mod:`.reticulum_position`, SPEC RP1).
 
 Like :class:`~data.mesh_ingestor.protocols.meshtastic_udp.MeshtasticUdpProvider`
 this provider is receive-only: the provider itself never transmits and has no
@@ -104,7 +105,6 @@ label plus the upper-cased first four hex of the canonical node id.  It names th
 from __future__ import annotations
 
 import math
-import os
 import threading
 import time
 
@@ -112,7 +112,7 @@ import RNS
 from RNS.vendor import umsgpack
 
 from .. import config, handlers
-from . import reticulum_interfaces
+from . import reticulum_interfaces, reticulum_position
 
 _ASPECT_ROLES: dict[str, str] = {
     "lxmf.propagation": "PROPAGATION",
@@ -762,6 +762,8 @@ class _ReticulumInterface:
     def __init__(self, *, target: str | None) -> None:
         """Initialise an unconnected interface bound to *target*."""
         self._target = target
+        # Read from the RNS config at connect (SPEC RP1); None publishes none.
+        self.host_position: reticulum_position.HostPosition | None = None
         self._rns: object | None = None
         self._announce_handlers: list[_ReticulumAnnounceHandler] = []
         self._nodes_lock = threading.Lock()
@@ -872,11 +874,11 @@ def _reticulum_preset_label(
 def _parse_rnode_radio_config(text: str) -> dict | None:
     """Extract radio parameters from the first ``RNodeInterface`` in *text*.
 
-    Parses the RNS config's indented ``[[name]]`` interface blocks looking for
-    ``type = RNodeInterface`` and its ``frequency`` / ``bandwidth`` /
-    ``spreadingfactor`` / ``codingrate`` keys.  **Only those four keys are
-    read** — the file also holds the shared-instance RPC key, which must never
-    be logged or carried anywhere (SPEC RL1).
+    The block is found by :func:`.reticulum_position.rnode_block_entries`, the
+    reader the host position uses too (SPEC RP1), asked for the ``frequency`` /
+    ``bandwidth`` / ``spreadingfactor`` / ``codingrate`` keys.  **Only those
+    four keys are read** — the file also holds the shared-instance RPC key,
+    which must never be logged or carried anywhere (SPEC RL1).
 
     RNS stores both frequencies in **Hz** (its own annotated example reads
     ``frequency = 867200000`` for 867.2 MHz and ``bandwidth = 125000`` for
@@ -889,33 +891,17 @@ def _parse_rnode_radio_config(text: str) -> dict | None:
         ``{"frequency_mhz", "bandwidth_khz", "sf", "cr"}`` for the first
         RNodeInterface found, or ``None`` when there is none.
     """
-    current: dict = {}
-    best: dict | None = None
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        if line.startswith("["):
-            # A new section ends the one being collected.
-            if current.get("_is_rnode") and best is None:
-                best = current
-            current = {}
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip().lower(), value.strip()
-        if key == "type":
-            current["_is_rnode"] = value == "RNodeInterface"
-        elif key in ("frequency", "bandwidth", "spreadingfactor", "codingrate"):
-            try:
-                current[key] = int(value)
-            except ValueError:
-                continue
-    if current.get("_is_rnode") and best is None:
-        best = current
-    if not best:
+    entries = reticulum_position.rnode_block_entries(
+        text, frozenset({"frequency", "bandwidth", "spreadingfactor", "codingrate"})
+    )
+    if entries is None:
         return None
+    best: dict = {}
+    for key, value in entries:
+        try:
+            best[key] = int(value)
+        except ValueError:
+            continue
     frequency = best.get("frequency")
     bandwidth = best.get("bandwidth")
     return {
@@ -983,17 +969,10 @@ def _read_reticulum_radio_metadata() -> tuple[object, str | None]:
     preset: str | None = config.RETICULUM_PRESET
     if frequency is not None and preset is not None:
         return frequency, preset
-    parsed = None
-    config_dir = config.RETICULUM_CONFIG_DIR
-    if isinstance(config_dir, str) and config_dir.strip():
-        try:
-            path = os.path.join(os.path.expanduser(config_dir), "config")
-            with open(path, "r", encoding="utf-8", errors="replace") as handle:
-                parsed = _parse_rnode_radio_config(handle.read())
-        except OSError:
-            # Absent or unreadable config: every downstream field keeps its
-            # dash rather than inventing a number.
-            parsed = None
+    # Absent or unreadable config: every downstream field keeps its dash
+    # rather than inventing a number.
+    text = reticulum_position.rns_config_text(config.RETICULUM_CONFIG_DIR)
+    parsed = None if text is None else _parse_rnode_radio_config(text)
     if parsed:
         if frequency is None:
             frequency = parsed["frequency_mhz"]
@@ -1281,6 +1260,26 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
     return records
 
 
+def _bare_host_record(node_id: str, report_time: int) -> dict:
+    """Return the host's record when no destination carries its position.
+
+    Nothing announces on Docker's default volume (SPEC RP6), so the record has
+    no ``destination``, the node's own placeholder name (RA10(a)) and the
+    Reticulum base role (RA9); without a role the node API would serve
+    Meshtastic's ``CLIENT``.
+
+    Parameters:
+        node_id: The registered host node id.
+        report_time: Unix seconds of the report.
+
+    Returns:
+        Node dict for ``POST /api/nodes``.
+    """
+    short, name = _reticulum_short_name(node_id), _reticulum_placeholder_name(node_id)
+    record = {"nodeId": node_id, "lastHeard": report_time, "protocol": "reticulum"}
+    return {**record, "user": {"shortName": short, "longName": name, "role": "PEER"}}
+
+
 def _transport_enabled() -> bool:
     """Report whether the running stack relays other nodes' traffic.
 
@@ -1403,6 +1402,9 @@ class ReticulumProvider:
             config.LORA_FREQ = radio_freq
         if radio_preset is not None and getattr(config, "MODEM_PRESET", None) is None:
             config.MODEM_PRESET = radio_preset
+        # The host position (SPEC RP1/RP2): read once per connect, from the
+        # same RNodeInterface block as the radio metadata.
+        iface.host_position = reticulum_position.read_host_position(configdir)
         # Resolve the host id for the log rather than reading
         # +iface.host_node_id+, which is a constant None: the startup line
         # printed node_id=None on every run regardless of what discovery would
@@ -1557,7 +1559,8 @@ class ReticulumProvider:
             if node["destination"]["id"] in seen_destinations:
                 continue
             items.append((node["nodeId"], node))
-        return items
+        # The host's position (SPEC RP4/RP6); the report at connect posts its row.
+        return reticulum_position.with_host_position(items, iface, _bare_host_record)
 
     def self_node_items(self, iface: object) -> list[tuple[str, dict]]:
         """Return the host's own destinations for the periodic self-node report.
@@ -1576,21 +1579,25 @@ class ReticulumProvider:
         move ``rns.transport`` onto its own node row, because the web tier's
         destination upsert takes the incoming node id.
 
+        Each report also positions the host and posts its row (SPEC RP4-RP6).
+
         Parameters:
-            iface: Unused; the records are read from the running stack.
+            iface: The active :class:`_ReticulumInterface`, for the position
+                read at connect; the records are read from the running stack.
 
         Returns:
             ``(node_id, node_dict)`` pairs, or an empty list while no host id
-            is registered or the primary identity does not map to it.
+            is registered or, with no position, none maps to it.
         """
         host_id = handlers.host_node_id()
         if not host_id:
             return []
-        return [
+        items = [
             (node["nodeId"], node)
             for node in self.host_destination_nodes()
             if node["nodeId"] == host_id
         ]
+        return reticulum_position.report_host_position(items, iface, _bare_host_record)
 
 
 __all__ = [

@@ -3131,9 +3131,9 @@ button.legend-item[aria-pressed="true"] {
   transform: rotate(45deg);
 }
 
-/* Reticulum map chip (SPEC RD6) — a reserved slot: RNS announces carry no
-   position, so nothing reaches this rule yet. It overrides the diamond rather
-   than restructuring it, so MeshCore's chip is untouched (FU-A3). */
+/* Reticulum map chip (SPEC RD6) — drawn for an ingestor's own host, the one
+   RNS node with a position (SPEC RP7). It overrides the diamond rather than
+   restructuring it, so MeshCore's chip is untouched (FU-A3). */
 .node-marker-chip__fill--hexagon {
   border: none;
   border-radius: 0;
