@@ -29,6 +29,8 @@ import {
   emitMarkerWave,
   emitNodeWaves,
 } from '../flash.js';
+import { cssEscape } from '../format-utils.js';
+import { createLiveDocument } from '../../__tests__/live-dom-model.js';
 
 /** A minimal element exposing a tracked classList. */
 function fakeElement() {
@@ -181,7 +183,8 @@ test('flashNodeTargets flashes each node row and marker', () => {
       markerFlashed = true;
     },
   };
-  const documentRef = { querySelectorAll: (sel) => (sel.includes('"!a"') ? [rowA] : []) };
+  const queried = [];
+  const documentRef = { querySelectorAll: (sel) => { queried.push(sel); return [rowA]; } };
   const markerByNodeId = new Map([['!a', markerA]]);
 
   const count = flashNodeTargets(['!a'], {
@@ -190,6 +193,8 @@ test('flashNodeTargets flashes each node row and marker', () => {
     flashOptions: { schedule: () => {} },
   });
 
+  // The row selector carries the id CSS-escaped inside its quoted value.
+  assert.deepEqual(queried, [`[data-node-row="${cssEscape('!a')}"]`]);
   assert.equal(rowA.classList.contains(FLASH_CLASS), true, 'row flashed');
   assert.equal(markerFlashed, true, 'marker flashed');
   assert.equal(count, 2); // one row + one marker
@@ -200,6 +205,42 @@ test('flashNodeTargets skips a missing document and unmapped markers', () => {
   assert.equal(flashNodeTargets(['!x'], { markerByNodeId: new Map() }), 0);
   // documentRef present but no matching row; no markerByNodeId at all.
   assert.equal(flashNodeTargets(['!x'], { documentRef: { querySelectorAll: () => [] } }), 0);
+});
+
+test('an id containing a double quote flashes its row, message and tab without throwing', () => {
+  // A node id is whatever key an ingestor posted. Interpolated raw, its `"`
+  // closed the quoted selector value early, querySelectorAll threw a
+  // SyntaxError, and the refresh skipped every flash after it. The live DOM
+  // model parses selectors as a browser does and rejects the raw form too.
+  const { body, model } = createLiveDocument();
+  const element = (tag, attribute, value) => {
+    const el = model.createElement(tag);
+    el.setAttribute(attribute, value);
+    body.appendChild(el);
+    return el;
+  };
+  const row = element('tr', 'data-node-row', '!a"b');
+  const prefixRow = element('tr', 'data-node-row', '!a');
+  const message = element('div', 'data-message-id', '7"8');
+  const tab = element('button', 'data-tab-id', 'tab"x');
+  const flashOptions = { schedule: () => 0 };
+
+  assert.equal(flashNodeTargets(['!a"b'], { documentRef: body, flashOptions }), 1);
+  const messageTabId = new Map([['7"8', 'tab"x']]);
+  assert.equal(flashMessageTargets(['7"8'], { documentRef: body, messageTabId, flashOptions }), 2);
+  assert.equal(row.classList.contains(FLASH_CLASS), true, 'the node row flashed');
+  assert.equal(message.classList.contains(FLASH_CLASS), true, 'the message row flashed');
+  assert.equal(tab.classList.contains(FLASH_CLASS), true, 'the tab header flashed');
+  assert.equal(prefixRow.classList.contains(FLASH_CLASS), false, 'only the exact id flashes');
+});
+
+test('a numeric message id still flashes its row (stringified before escaping)', () => {
+  const { body, model } = createLiveDocument();
+  const row = model.createElement('div');
+  row.setAttribute('data-message-id', '42');
+  body.appendChild(row);
+  assert.equal(flashMessageTargets([42], { documentRef: body, flashOptions: { schedule: () => 0 } }), 1);
+  assert.equal(row.classList.contains(FLASH_CLASS), true);
 });
 
 test('flashNodeTargets returns 0 for nullish or non-iterable ids', () => {

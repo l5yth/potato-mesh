@@ -106,6 +106,7 @@ The web app can be configured with environment variables (defaults shown):
 | `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm. |
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 | `OG_IMAGE_URL` | _unset_ | Absolute `http(s)://` URL for the social preview image; other schemes are ignored. Replaces the generated `/og-image.png`. Use HTTPS - most platforms won't render an HTTP preview. |
+| `OG_IMAGE_NO_SANDBOX` | `0` | Set to `1` to run the Chromium that renders `/og-image.png` without its sandbox. The Docker images set `1`. With `0` where Chromium cannot start its sandbox, no preview is captured and `/og-image.png` serves its fallback image. |
 | `PAGES_DIR` | `./pages` | The directory for static, custom-content pages. |
 | `PROM_REPORT_IDS` | _unset_ | Comma-separated node ids to expose as per-node Prometheus gauges. Empty exports none. Opted-out nodes, and hidden clients under `PRIVATE=1`, are never exported. |
 

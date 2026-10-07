@@ -28,6 +28,8 @@
  * @module main/flash
  */
 
+import { cssEscape } from './format-utils.js';
+
 /** CSS class that drives the one-shot highlight animation. */
 export const FLASH_CLASS = 'live-flash';
 
@@ -211,6 +213,10 @@ export function emitNodeWaves(nodeIds, options = {}) {
  * document or Leaflet. Each is optional — a caller on a page without the node
  * table (or without a map) simply passes one of them.
  *
+ * The id is CSS-escaped inside the selector's quoted value: node ids come from
+ * ingest, a raw `"` makes `querySelectorAll` throw, and a raw `\` changes
+ * what the selector matches.
+ *
  * @param {?Iterable<string>} nodeIds Canonical node ids to flash.
  * @param {Object} [options] Lookups + flash overrides.
  * @param {?{querySelectorAll: Function}} [options.documentRef] Document to query rows in.
@@ -224,7 +230,8 @@ export function flashNodeTargets(nodeIds, options = {}) {
   let count = 0;
   for (const id of nodeIds) {
     if (documentRef && typeof documentRef.querySelectorAll === 'function') {
-      count += flashElements(documentRef.querySelectorAll(`[data-node-row="${id}"]`), flashOptions);
+      // String() first: cssEscape returns '' for anything but a string.
+      count += flashElements(documentRef.querySelectorAll(`[data-node-row="${cssEscape(String(id))}"]`), flashOptions);
     }
     const marker = markerByNodeId && typeof markerByNodeId.get === 'function'
       ? markerByNodeId.get(id)
@@ -238,7 +245,8 @@ export function flashNodeTargets(nodeIds, options = {}) {
  * Flash every UI target for a set of changed messages: each message's chat
  * row(s) (`[data-message-id="<id>"]`, present in the Log tab and the channel
  * tab) and the header of each affected channel tab (`[data-tab-id="<id>"]`)
- * once (SPEC VF3).
+ * once (SPEC VF3). Both ids are CSS-escaped inside the selectors' quoted
+ * values, as in {@link flashNodeTargets}.
  *
  * @param {?Iterable<string>} messageIds Message ids that changed.
  * @param {Object} [options] Lookups + flash overrides.
@@ -255,7 +263,7 @@ export function flashMessageTargets(messageIds, options = {}) {
   const tabIds = new Set();
   for (const id of messageIds) {
     if (canQuery) {
-      count += flashElements(documentRef.querySelectorAll(`[data-message-id="${id}"]`), flashOptions);
+      count += flashElements(documentRef.querySelectorAll(`[data-message-id="${cssEscape(String(id))}"]`), flashOptions);
     }
     const tabId = messageTabId && typeof messageTabId.get === 'function' ? messageTabId.get(id) : null;
     if (tabId) tabIds.add(tabId);
@@ -263,7 +271,7 @@ export function flashMessageTargets(messageIds, options = {}) {
   // Flash each affected channel tab header exactly once.
   if (canQuery) {
     for (const tabId of tabIds) {
-      count += flashElements(documentRef.querySelectorAll(`[data-tab-id="${tabId}"]`), flashOptions);
+      count += flashElements(documentRef.querySelectorAll(`[data-tab-id="${cssEscape(String(tabId))}"]`), flashOptions);
     }
   }
   return count;

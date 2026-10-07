@@ -39,6 +39,7 @@ x-web-base: &web-base
     ANNOUNCEMENT: ${ANNOUNCEMENT:-}
     EVENTS: ${EVENTS:-1}
     OG_IMAGE_URL: ${OG_IMAGE_URL:-}
+    OG_IMAGE_NO_SANDBOX: ${OG_IMAGE_NO_SANDBOX:-1}
     PAGES_DIR: ${PAGES_DIR:-/app/pages}
     PROM_REPORT_IDS: ${PROM_REPORT_IDS:-}
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]

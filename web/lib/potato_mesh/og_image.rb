@@ -187,22 +187,25 @@ module PotatoMesh
       Ferrum::Browser.new(browser_options)
     end
 
+    # Ferrum's default Chrome flags that switch off Chromium's same-origin
+    # policy (+disable-web-security+) and site isolation
+    # (+disable-site-isolation-trials+). {.chromium_flags} drops both.
+    SECURITY_OFF_FLAGS = %w[disable-web-security disable-site-isolation-trials].freeze
+
+    # Site-isolation features on Ferrum's default +--disable-features+ list.
+    # {.chromium_flags} keeps them enabled.
+    SITE_ISOLATION_FEATURES = %w[site-per-process IsolateOrigins].freeze
+
     # Build the option hash passed to +Ferrum::Browser.new+. Extracted as
     # a separate method so tests can verify the dimensions without
     # launching the browser.
     #
-    # The +--no-sandbox+ flag is required to launch Chromium as a non-root
-    # user inside an Alpine container without the kernel SETUID helper.
-    # This is only safe because the capture target is always the
-    # operator's own dashboard ({.serve} fetches +base_url+ from the
-    # +/og-image.png+ route, which derives it from the running app's
-    # public URL). DO NOT extend this code path to capture untrusted URLs
-    # — the disabled sandbox would turn a renderer-process exploit into a
-    # container escape.
-    #
-    # +--disable-dev-shm-usage+ avoids /dev/shm OOMs in small containers
-    # and +--disable-gpu+ prevents WebGL probing on machines without a
-    # GPU. Both are routine for headless Chromium captures.
+    # Ferrum's own default flags are switched off
+    # (+ignore_default_browser_options+): Ferrum 0.18 can add a flag to its
+    # defaults but not remove one, so {.chromium_flags} passes the defaults
+    # itself, minus the ones that disable Chromium's security model. Ferrum's
+    # +FERRUM_CHROME_DOCKERIZE+ therefore no longer applies; the sandbox
+    # follows +OG_IMAGE_NO_SANDBOX+ alone.
     #
     # @return [Hash] keyword options for Ferrum::Browser.
     def browser_options
@@ -214,15 +217,46 @@ module PotatoMesh
         ],
         timeout: PotatoMesh::Config.og_image_navigation_timeout,
         process_timeout: PotatoMesh::Config.og_image_navigation_timeout,
-        browser_options: {
-          "no-sandbox": nil,
-          "disable-dev-shm-usage": nil,
-          "disable-gpu": nil,
-        },
+        ignore_default_browser_options: true,
+        browser_options: chromium_flags,
       }
       browser_path = ENV["FERRUM_BROWSER_PATH"]
       options[:browser_path] = browser_path if browser_path && !browser_path.empty?
       options
+    end
+
+    # Command-line flags for the capture's Chromium: Ferrum's default Chrome
+    # flags without {SECURITY_OFF_FLAGS} and without the
+    # {SITE_ISOLATION_FEATURES} entries of +--disable-features+.
+    #
+    # The capture renders the dashboard, which loads third-party map tiles
+    # and shows mesh-supplied text, so Chromium keeps its sandbox, its
+    # same-origin policy and its site isolation. The capture needs none of
+    # them off: it loads one page and takes a screenshot.
+    #
+    # +--no-sandbox+ is added only when +OG_IMAGE_NO_SANDBOX=1+
+    # ({PotatoMesh::Config.og_image_no_sandbox?}), for hosts where Chromium
+    # cannot start its sandbox; the Docker images set it. Without the
+    # sandbox a renderer exploit runs with the web app's own privileges, so
+    # DO NOT extend this code path to capture untrusted URLs: {.serve}
+    # receives +base_url+ from the +/og-image.png+ route, which derives it
+    # from the running app's public URL.
+    #
+    # +--disable-dev-shm-usage+ avoids /dev/shm OOMs in small containers
+    # and +--disable-gpu+ prevents WebGL probing on machines without a
+    # GPU. Both are routine for headless Chromium captures.
+    #
+    # @return [Hash{String=>String, nil}] flag names without the leading
+    #   +--+, each mapped to its value or to +nil+ for a bare switch.
+    def chromium_flags
+      require "ferrum"
+      flags = Ferrum::Browser::Options::Chrome.options.except(*SECURITY_OFF_FLAGS)
+      features = flags.fetch("disable-features", "").split(",") - SITE_ISOLATION_FEATURES
+      flags["disable-features"] = features.join(",")
+      flags["disable-dev-shm-usage"] = nil
+      flags["disable-gpu"] = nil
+      flags["no-sandbox"] = nil if PotatoMesh::Config.og_image_no_sandbox?
+      flags
     end
 
     # Wait for the dashboard to reach a stable state before capturing.

@@ -299,6 +299,12 @@
               description = "Absolute http(s) URL for the social preview image, replacing the generated /og-image.png";
             };
 
+            ogImageNoSandbox = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Run the Chromium that renders /og-image.png without its sandbox";
+            };
+
             pagesDir = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
@@ -525,6 +531,8 @@
                 ANNOUNCEMENT = cfg.announcement;
               } // lib.optionalAttrs (cfg.ogImageUrl != null) {
                 OG_IMAGE_URL = cfg.ogImageUrl;
+              } // lib.optionalAttrs cfg.ogImageNoSandbox {
+                OG_IMAGE_NO_SANDBOX = "1";
               } // lib.optionalAttrs (cfg.pagesDir != null) {
                 PAGES_DIR = cfg.pagesDir;
               } // lib.optionalAttrs (cfg.promReportIds != null) {
