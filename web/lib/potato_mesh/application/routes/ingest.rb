@@ -240,6 +240,18 @@ module PotatoMesh
               halt 400, { error: "invalid signature" }.to_json
             end
 
+            # Rows are upserted by id: an id that is not the SHA-256 of the
+            # announced key could move another instance's row (SPEC FS9).
+            unless instance_id_matches_key?(attributes[:id], attributes[:pubkey])
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "id does not match key",
+              )
+              halt 400, { error: "id does not match key" }.to_json
+            end
+
             if attributes[:is_private]
               warn_log(
                 "Instance registration rejected",
@@ -278,29 +290,27 @@ module PotatoMesh
               # registration flow attempts to contact the remote instance.
             end
 
-            well_known, well_known_meta = fetch_instance_json(attributes[:domain], "/.well-known/potato-mesh")
-            unless well_known
-              details_list = Array(well_known_meta).map(&:to_s)
-              details = details_list.empty? ? "no response" : details_list.join("; ")
+            well_known_valid, well_known_failure, well_known_detail =
+              verify_well_known_identity(attributes[:domain], attributes[:pubkey])
+            if well_known_failure == :fetch_failed
               warn_log(
                 "Instance registration rejected",
                 context: "ingest.register",
                 domain: attributes[:domain],
                 reason: "failed to fetch well-known document",
-                details: details,
+                details: well_known_detail,
               )
               halt 400, { error: "failed to verify well-known document" }.to_json
             end
 
-            valid, reason = validate_well_known_document(well_known, attributes[:domain], attributes[:pubkey])
-            unless valid
+            unless well_known_valid
               warn_log(
                 "Instance registration rejected",
                 context: "ingest.register",
                 domain: attributes[:domain],
-                reason: reason || "invalid well-known document",
+                reason: well_known_detail,
               )
-              halt 400, { error: reason || "invalid well-known document" }.to_json
+              halt 400, { error: well_known_detail }.to_json
             end
 
             remote_nodes, node_source = fetch_instance_json(attributes[:domain], "/api/nodes")

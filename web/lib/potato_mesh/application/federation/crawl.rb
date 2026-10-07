@@ -331,6 +331,23 @@ module PotatoMesh
             next
           end
 
+          # The signature proves only that the record was signed by the key it
+          # carries. Its id must be the one that key derives, and unless the
+          # record refreshes its domain's row under the stored key, the
+          # domain's own well-known document must name that key (SPEC FS8,
+          # FS9).
+          key_confirmed, key_reason = confirm_relayed_instance_key(db, attributes)
+          unless key_confirmed
+            warn_log(
+              "Discarded remote instance entry",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: key_reason,
+              relayed_by: sanitized,
+            )
+            next
+          end
+
           attributes[:is_private] = false if attributes[:is_private].nil?
 
           stats_payload, stats_metadata = fetch_instance_json(attributes[:domain], "/api/stats")

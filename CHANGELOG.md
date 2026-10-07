@@ -39,6 +39,7 @@
 * Web: the map legend lists only protocols in view: a protocol toggled off, or with no node matching the filter, leaves it; Clear filters also clears the filter text (SPEC LP1)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
 * Data: the Reticulum ingestor re-posts its host's own destinations every hour, so `rns.transport` and the host aspects stay fresh on a connection that never reconnects (SPEC RE8)
+* Web: a federation record relayed by another instance is stored only when its domain's well-known document names its key, except a refresh under the key already stored; relayed records and `POST /api/instances` announcements need an id equal to the SHA-256 of their public key (SPEC FS8/FS9)
 * Data: `PROTOCOL=reticulum` needs `INGESTOR_NODE_ID` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the node id is derived once a local app announces (SPEC RE5/RE8)
 * Data: a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum` - the ingestor now logs that it is dropping the value (SPEC RN10)
 * Data: `RETICULUM_INTERFACES` now resolves interface names through the shared RNS instance, fixing an allowlist that matched nothing on a shared stack (SPEC RE3)
