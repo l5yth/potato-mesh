@@ -66,6 +66,12 @@ test('captureOpenMarkerOverlays ignores markers without getElement and bad args'
   assert.deepEqual(captureOpenMarkerOverlays(stack, new Map([['!x', {}]])), []);
 });
 
+test('captureOpenMarkerOverlays skips a marker whose only open thing is a tooltip (DR2)', () => {
+  const stack = fakeStack();
+  const withTooltip = { getElement: () => ({ id: 'T' }), isTooltipOpen: () => true };
+  assert.deepEqual(captureOpenMarkerOverlays(stack, new Map([['!t', withTooltip]])), []);
+});
+
 test('restoreMarkerOverlays re-anchors captured overlays onto rebuilt markers', () => {
   const stack = fakeStack();
   const oldEl = { id: 'old' };
