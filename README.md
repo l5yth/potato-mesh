@@ -298,6 +298,7 @@ Configure with the environment variables below.
 | `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`); find it with `meshtastic --info` if blank on the radio. Required by UDP `PRIMARY_CHANNEL_ONLY=1`. |
 | `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
+| `MESH_UDP_ALLOWED_SOURCES` | _unset_ | Comma-separated IPv4 addresses or CIDRs (e.g. `192.168.1.20,10.0.0.0/24`) allowed to send in UDP transport; packets from any other address are dropped. Unset accepts every host. An invalid entry stops the ingestor at startup. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Required for `PROTOCOL=reticulum` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the id is derived from your primary identity and this overrides it. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
 | `RETICULUM_FREQ` | _from RNS config_ | Frequency shown for Reticulum nodes. Overrides the value read from your `RNodeInterface` section. Also shown in the footer join strip when both are set. |
@@ -487,6 +488,7 @@ the phone app or CLI.
 Enable "Mesh via UDP" on the node first: `meshtastic --set network.enabled_protocols 1`.
 
 - Listens on `239.0.0.69` (firmware 2.8 and later) and `224.0.0.69` (earlier firmware). Set `MESH_UDP_GROUP` to one of them to listen on that group only.
+- Accepts packets from every host that can reach the multicast group. Set `MESH_UDP_ALLOWED_SOURCES` to your node's IP address (or a CIDR) to accept packets from those addresses only.
 - Decrypts the primary channel with `PRIMARY_CHANNEL_KEY` (default `AQ==`). Channels with other keys are dropped undecrypted.
 - Set `PRIMARY_CHANNEL_ONLY=1` and `PRIMARY_CHANNEL_NAME` to ingest only channel 0. Without `PRIMARY_CHANNEL_NAME` set, `PRIMARY_CHANNEL_ONLY=1` drops every packet (fail closed).
 - The node list rebuilds from observed packets - the node's own database is not read. Decoded payloads (position, telemetry, traceroute, …) match the API/serial transport shape.

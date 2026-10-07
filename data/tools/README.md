@@ -51,6 +51,7 @@ PRIMARY_CHANNEL_NAME=MediumFast   # REQUIRED: name of channel 0 (or the preset
 INGESTOR_NODE_ID=!xxxxxxxx        # host node id for the ingestor heartbeat
 MESH_UDP_GROUP=239.0.0.69,224.0.0.69  # both groups; set one address to restrict
 MESH_UDP_PORT=4403
+# MESH_UDP_ALLOWED_SOURCES=192.168.1.20  # optional: accept packets from these IPv4 addresses/CIDRs only
 # plus the standard API_TOKEN / INSTANCE_DOMAIN
 ```
 

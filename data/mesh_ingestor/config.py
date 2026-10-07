@@ -434,6 +434,63 @@ The value is stripped and falls back to ``4403`` when blank, matching the other
 UDP env vars, so a whitespace/empty ``MESH_UDP_PORT`` in a ``.env`` file does not
 raise ``ValueError`` at import and prevent the service from starting."""
 
+
+def _parse_mesh_udp_allowed_sources(raw: str) -> tuple[ipaddress.IPv4Network, ...]:
+    """Parse :envvar:`MESH_UDP_ALLOWED_SOURCES` into the networks that may send.
+
+    The value is a comma-separated list of IPv4 addresses and CIDR blocks.
+    Each fragment is trimmed (a quote-only fragment counts as blank, see
+    :func:`_clean_env_fragment`) and blank fragments are skipped.  An address
+    reads as its ``/32``; a CIDR is read with ``strict=False``, so host bits
+    below the prefix are dropped (``192.168.1.7/24`` is ``192.168.1.0/24``).
+    A repeated network collapses onto its first position.
+
+    Validated at import time, as :envvar:`MESH_UDP_GROUP` is, because no
+    fallback is safe: skipping a bad entry would leave a list without the
+    sender the operator meant or, when it was the only entry, no list at all,
+    which accepts every host (SPEC UT2).
+
+    Parameters:
+        raw: Raw :envvar:`MESH_UDP_ALLOWED_SOURCES` value.
+
+    Returns:
+        The networks in configured order; ``()`` when no fragment carries an
+        entry, which accepts every source.
+
+    Raises:
+        ValueError: When a fragment is not an IPv4 address or CIDR.  The
+            message names the variable and the entry.
+    """
+    networks: list[ipaddress.IPv4Network] = []
+    for part in raw.split(","):
+        entry = _clean_env_fragment(part)
+        if not entry:
+            continue
+        try:
+            network = ipaddress.IPv4Network(entry, strict=False)
+        except ValueError as exc:  # AddressValueError or NetmaskValueError
+            raise ValueError(
+                f"MESH_UDP_ALLOWED_SOURCES entry {entry!r} is not an IPv4 address "
+                "or CIDR. Set a comma-separated list, "
+                'e.g. "192.168.1.20,192.168.1.0/24".'
+            ) from exc
+        if network not in networks:
+            networks.append(network)
+    return tuple(networks)
+
+
+MESH_UDP_ALLOWED_SOURCES = _parse_mesh_udp_allowed_sources(
+    os.environ.get("MESH_UDP_ALLOWED_SOURCES", "")
+)
+"""IPv4 networks the UDP transport accepts datagrams from (SPEC UT2).
+
+Parsed from the comma-separated :envvar:`MESH_UDP_ALLOWED_SOURCES` by
+:func:`_parse_mesh_udp_allowed_sources`.  ``()``, the default, accepts every
+source.  Otherwise the receive loop drops a datagram whose source address lies
+in none of these networks, before it is parsed or decrypted.  A source address
+is not authenticated, and a host on the same segment can spoof one, so this is
+defence in depth only (SPEC UT3)."""
+
 INGESTOR_NODE_ID = os.environ.get("INGESTOR_NODE_ID", "").strip() or None
 """Optional ``!xxxxxxxx`` host node id used for the ingestor heartbeat in UDP mode."""
 
@@ -790,6 +847,7 @@ __all__ = [
     "MESH_UDP_GROUP",
     "MESH_UDP_GROUPS",
     "MESH_UDP_PORT",
+    "MESH_UDP_ALLOWED_SOURCES",
     "INGESTOR_NODE_ID",
     "RETICULUM_ALL_INTERFACES",
     "RETICULUM_CONFIG_DIR",
