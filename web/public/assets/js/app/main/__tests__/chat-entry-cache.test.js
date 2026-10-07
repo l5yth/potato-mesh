@@ -152,3 +152,20 @@ test('size of an unknown namespace is zero', () => {
   const cache = createChatEntryCache({ documentRef: makeDoc() });
   assert.equal(cache.size('nope'), 0);
 });
+
+test('replacementOf names the node a rebuilt entry replaced (DR1, #881)', () => {
+  const cache = createChatEntryCache({ documentRef: makeDoc() });
+  const first = cache.materialize('log', 'k1', 'c', 'old');
+  assert.equal(cache.replacementOf(first), null, 'a current node has no replacement');
+
+  const second = cache.materialize('log', 'k1', 'c', 'new');
+  assert.strictEqual(cache.replacementOf(first), second);
+  assert.equal(cache.replacementOf(second), null);
+
+  // Reusing an unchanged entry replaces nothing; unknown values are ignored.
+  cache.materialize('log', 'k1', 'c', 'new');
+  assert.equal(cache.replacementOf(second), null);
+  assert.equal(cache.replacementOf({}), null);
+  assert.equal(cache.replacementOf(null), null);
+  assert.equal(cache.replacementOf('text'), null);
+});

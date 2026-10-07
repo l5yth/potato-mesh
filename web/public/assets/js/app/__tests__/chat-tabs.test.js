@@ -547,8 +547,27 @@ test('renderChatTabs arrow buttons reflect scroll position via scroll event', ()
   assert.equal(nextBtn.hidden, false);
 });
 
+/**
+ * Count writes to ``element.scrollLeft`` from now on, keeping its value.
+ *
+ * @param {MockElement} element Element whose offset is watched.
+ * @returns {function(): number} Reads the number of writes so far.
+ */
+function countScrollLeftWrites(element) {
+  let value = element.scrollLeft;
+  let writes = 0;
+  Object.defineProperty(element, 'scrollLeft', {
+    configurable: true,
+    get: () => value,
+    set: next => {
+      writes += 1;
+      value = next;
+    }
+  });
+  return () => writes;
+}
 
-test('renderChatTabs preserves the tablist horizontal scroll across a re-render', () => {
+test('renderChatTabs preserves the tablist horizontal scroll across a re-render (LD-A2, DR3, #881)', () => {
   const document = createMockDocument();
   const container = new MockElement('div');
   const tabs = [
@@ -560,12 +579,17 @@ test('renderChatTabs preserves the tablist horizontal scroll across a re-render'
   renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
   const tabList1 = container.children[0].children[1];
   tabList1.scrollLeft = 120;
+  const writes = countScrollLeftWrites(tabList1);
 
   renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
   const tabList2 = container.children[0].children[1];
 
-  assert.notEqual(tabList2, tabList1);
+  // The strip is kept (DR1), so it still holds the offset and nothing writes
+  // it: a write on a smooth-scrolling strip is what animated it (DR3).
+  assert.ok(tabList2 === tabList1, 'the tab strip is kept');
+  assert.equal(tabList1.detachCount, 0);
   assert.equal(tabList2.scrollLeft, 120);
+  assert.equal(writes(), 0, 'a passive re-render writes no scrollLeft');
 });
 
 test('renderChatTabs does not scroll the active tab into view on a passive re-render', () => {
@@ -611,7 +635,7 @@ test('renderChatTabs preserves the active panel vertical scroll across a passive
   renderChatTabs({ document, container, tabs: tabs(), defaultActiveTabId: 'c0' });
   const panel2 = activePanel(container);
 
-  assert.notEqual(panel2, panel1); // a fresh panel element (full subtree rebuild)
+  assert.ok(panel2 === panel1, 'the panel is kept (DR1, #881)');
   assert.equal(
     panel2.scrollTop,
     120,
@@ -882,7 +906,7 @@ test('renderChatTabs builds a working channel select again after the tab set emp
   assert.equal(activePanel(container).id, 'chat-panel-c1');
 });
 
-test('renderChatTabs observes each fresh tab list, so a replaced one goes quiet (#882)', () => {
+test('renderChatTabs observes the tab list once, and a re-render keeps that list (#882, DR1, #881)', () => {
   const observed = [];
   const originalResizeObserver = globalThis.ResizeObserver;
   globalThis.ResizeObserver = class {
@@ -895,9 +919,9 @@ test('renderChatTabs observes each fresh tab list, so a replaced one goes quiet 
     const container = new MockElement('div');
     renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
     renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
-    assert.equal(observed.length, 2);
-    assert.ok(observed[1] === container.children[0].children[1], 'the live tab list is observed');
-    assert.equal(observed[0].detachCount, 1, 'the previous tab list left the tree');
+    assert.equal(observed.length, 1, 'one observer for the life of the strip');
+    assert.ok(observed[0] === container.children[0].children[1], 'the live tab list is observed');
+    assert.equal(observed[0].detachCount, 0, 'the tab list never left the tree');
   } finally {
     if (originalResizeObserver === undefined) {
       delete globalThis.ResizeObserver;
@@ -952,8 +976,10 @@ test('findPersistentTabBar reuses only a tab bar a previous render built (#882)'
   assert.ok(bar.wrapper === container.children[0]);
   assert.ok(bar.select === channelSelect(container));
   assert.ok(bar.panelWrapper === container.children[1]);
-  // The same bar in a container that cannot swap children in place.
-  assert.equal(findPersistentTabBar({ children: container.children }), null);
+  // The keyed bar is updated in place, so the container needs no replaceChild
+  // (#881); a panel wrapper that is not the bar's own is foreign markup.
+  assert.ok(findPersistentTabBar({ children: container.children }) === bar);
+  assert.equal(findPersistentTabBar({ children: [container.children[0], new MockElement('div')] }), null);
 });
 
 test('syncTabSelectOptions rebuilds the options, not the select, when the channel order changes (#882)', () => {

@@ -29,6 +29,10 @@
  * than one tab (the mixed Log feed and its channel tab) and a DOM node can live
  * in only one parent at a time, so each tab keeps its own node for a given key.
  *
+ * When an entry is rebuilt, the cache remembers which node the new one
+ * replaces, so a refresh can move keyboard focus from a control inside the old
+ * entry to the same control in the new one (#881, SPEC DR1).
+ *
  * @module main/chat-entry-cache
  */
 
@@ -41,6 +45,7 @@
  *   materialize: (namespace: string, key: string, className: string, html: string) => Object,
  *   prune: (namespace: string) => void,
  *   retainNamespaces: (activeNamespaces: Iterable<string>) => void,
+ *   replacementOf: (node: Object) => ?Object,
  *   stats: () => { materialized: number },
  *   resetStats: () => void,
  *   size: (namespace?: string) => number
@@ -56,6 +61,8 @@ export function createChatEntryCache({ documentRef } = {}) {
   const namespaces = new Map();
   /** @type {Map<string, Set<string>>} keys touched in the current build cycle. */
   const seen = new Map();
+  /** @type {WeakMap<Object, Object>} rebuilt node -> the node that replaced it. */
+  const replacements = new WeakMap();
   let materialized = 0;
 
   /**
@@ -110,8 +117,22 @@ export function createChatEntryCache({ documentRef } = {}) {
     node.className = className;
     node.innerHTML = html;
     cache.set(key, { html, node });
+    if (existing) {
+      replacements.set(existing.node, node);
+    }
     materialized += 1;
     return node;
+  }
+
+  /**
+   * The node that replaced ``node`` when its entry was last rebuilt.
+   *
+   * @param {Object} node A node this cache handed out earlier.
+   * @returns {?Object} Its replacement, or ``null`` when ``node`` was never
+   *   rebuilt (still current, pruned, or unknown).
+   */
+  function replacementOf(node) {
+    return (node && typeof node === 'object' && replacements.get(node)) || null;
   }
 
   /**
@@ -197,5 +218,5 @@ export function createChatEntryCache({ documentRef } = {}) {
     return map ? map.size : 0;
   }
 
-  return { materialize, prune, retainNamespaces, stats, resetStats, size };
+  return { materialize, prune, retainNamespaces, replacementOf, stats, resetStats, size };
 }

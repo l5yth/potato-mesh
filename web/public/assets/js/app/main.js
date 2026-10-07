@@ -96,8 +96,9 @@ import { initializeInstanceSelector } from './instance-selector.js';
 import { initializeMobileMenu } from './mobile-menu.js';
 import { MESSAGE_LIMIT, normaliseMessageLimit } from './message-limit.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
-import { renderChatTabs } from './chat-tabs.js';
+import { capturePreviousActivePanelScroll, renderChatTabs } from './chat-tabs.js';
 import { createChatEntryCache } from './main/chat-entry-cache.js';
+import { createChatPanelChrome } from './main/chat-panel-chrome.js';
 import { chatMessageEntryKey, chatLogEntryKey } from './main/chat-entry-keys.js';
 import { createDataCache, CACHE_SCHEMA_VERSION } from './main/data-cache.js';
 import { createIndexedDbBackend } from './main/data-cache-idb.js';
@@ -142,11 +143,9 @@ import {
 import {
   fmtCoords,
   fmtHw,
-  formatDate,
   formatShortInfoUptime,
   formatSnrDisplay,
   formatTime,
-  pad,
   parseNodeNumericRef,
   pickFirstProperty,
   pickNumericProperty,
@@ -734,6 +733,9 @@ export function initializeApp(config) {
   // tests and the manual verification hook can confirm idle ticks materialise
   // no entries.
   const chatEntryCache = createChatEntryCache({ documentRef: document });
+  // Day dividers and empty-state notes of the chat panels, kept across refreshes
+  // like the entries above, so an unchanged panel needs no DOM change (#881).
+  const chatPanelChrome = createChatPanelChrome({ documentRef: document });
   const REFRESH_MS = config.refreshMs;
   // Live-update (SSE) configuration. When live updates are active the SSE stream
   // drives refreshes and the only timer is the slow safety poll; otherwise the
@@ -2952,31 +2954,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Create a chat log date divider when the day changes.
-   *
-   * @param {number} ts Unix timestamp in seconds.
-   * @returns {HTMLElement} Divider element.
-   */
-  function createDateDividerFactory() {
-    let lastChatDate = null;
-    return ts => {
-      if (!ts) return null;
-      const d = new Date(ts * 1000);
-      const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      if (lastChatDate !== key) {
-        lastChatDate = key;
-        const midnight = new Date(d);
-        midnight.setHours(0, 0, 0, 0);
-        const div = document.createElement('div');
-        div.className = 'chat-entry-date';
-        div.textContent = `-- ${formatDate(midnight)} --`;
-        return div;
-      }
-      return null;
-    };
-  }
-
-  /**
    * Build the parts (class name + HTML) for a node-join chat entry.
    *
    * @param {Object} node Node payload.
@@ -3765,7 +3742,11 @@ export function initializeApp(config) {
     filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
-    // Reset the message→tab map for this render; buildChatFragment repopulates it
+    // Read the reader's place before any entry node is touched: once a cached
+    // entry has left the live panel, the panel reads as empty and pinned
+    // (CL-A3, #881).
+    const previousPanelScroll = capturePreviousActivePanelScroll(chatEl);
+    // Reset the message→tab map for this render; buildChatPanelContent repopulates it
     // as it materialises each channel tab's entries (SPEC VF3 tab flash).
     messageTabId = new Map();
     const combinedMessages = Array.isArray(messages) ? [...messages] : [];
@@ -3811,7 +3792,7 @@ export function initializeApp(config) {
       filterQuery
     );
 
-    const logContent = buildChatFragment({
+    const logContent = buildChatPanelContent({
       namespace: 'log',
       entries: filteredLogEntries,
       renderParts: buildChatLogEntryParts,
@@ -3832,7 +3813,7 @@ export function initializeApp(config) {
         // Channel tabs are the chat proper: render the entire window (issue #796)
         // rather than only the newest CHAT_LIMIT.  The entry set is already bounded
         // by the seven-day window, so there is no count cap to apply here.
-        content: buildChatFragment({
+        content: buildChatPanelContent({
           namespace: tabId,
           entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
           renderParts: entry => buildMessageChatEntryParts(entry.item),
@@ -3851,7 +3832,9 @@ export function initializeApp(config) {
     ];
     // Release entry-node caches for tabs no longer present (e.g. a channel that
     // dropped out of the window) so cached DOM nodes are not retained forever.
-    chatEntryCache.retainNamespaces(new Set(tabs.map(tab => tab.id)));
+    const tabIds = new Set(tabs.map(tab => tab.id));
+    chatEntryCache.retainNamespaces(tabIds);
+    chatPanelChrome.retainNamespaces(tabIds);
 
     const previousActive = chatEl.dataset?.activeTab || null;
     const defaultActive =
@@ -3864,12 +3847,16 @@ export function initializeApp(config) {
       container: chatEl,
       tabs,
       previousActiveTabId: previousActive,
-      defaultActiveTabId: defaultActive
+      defaultActiveTabId: defaultActive,
+      previousPanelScroll,
+      // Focus inside an entry the cache rebuilt moves to the rebuilt entry (DR1).
+      replacementOf: node => chatEntryCache.replacementOf(node)
     });
-    // renderChatTabs now owns chat-panel scroll: it pins to the bottom on the
-    // initial render and tail-follows a bottom-pinned reader, but preserves the
-    // vertical position on a passive live refresh (bugfix B). No extra
-    // force-scroll here — that was what reset the reader to the bottom every tick.
+    // renderChatTabs owns chat-panel scroll and keeps every unchanged element
+    // (SPEC DR1/DR3, #881): it pins to the bottom on the initial render,
+    // tail-follows a bottom-pinned reader and leaves a scrolled-up reader where
+    // they are. No extra force-scroll here — that was what reset the reader to
+    // the bottom every tick.
   }
 
   /**
@@ -3889,12 +3876,16 @@ export function initializeApp(config) {
   }
 
   /**
-   * Construct a document fragment for chat entries, inserting date dividers and
-   * an optional empty-state label. Entry nodes are sourced from
-   * {@link chatEntryCache}, so an entry whose rendered HTML is unchanged since
-   * the previous refresh is reused rather than re-parsed (issue: chat-log
-   * render). Entries that aged out of this tab's window are pruned from the
-   * cache afterwards.
+   * List the nodes of one chat panel in display order: entries, a date
+   * divider before the first entry of each day, or an empty-state label. Entry
+   * nodes come from {@link chatEntryCache}, so an entry whose rendered HTML is
+   * unchanged since the previous refresh is reused rather than re-parsed
+   * (issue: chat-log render), and dividers and the label from
+   * {@link chatPanelChrome}, so an unchanged panel is listed with the very
+   * nodes it already holds. Nothing is appended anywhere: ``renderChatTabs``
+   * places the nodes without moving the ones that stay (SPEC DR1, #881).
+   * Entries that aged out of this tab's window are pruned from the cache
+   * afterwards.
    *
    * @param {{
    *   namespace: string,
@@ -3903,15 +3894,15 @@ export function initializeApp(config) {
    *   keyOf: Function,
    *   emptyLabel?: string,
    *   limit?: number
-   * }} params Fragment construction parameters.  ``namespace`` scopes the entry
+   * }} params Panel content parameters.  ``namespace`` scopes the entry
    *   cache to a single tab; ``limit`` caps how many of the newest entries are
    *   rendered (pass ``Infinity`` to render them all — the Log firehose defaults
    *   to {@link CHAT_LIMIT}, chat channel tabs opt out).
-   * @returns {DocumentFragment} Populated fragment.
+   * @returns {Array<HTMLElement>} The panel's nodes, in order.
    */
-  function buildChatFragment({ namespace, entries = [], renderParts, keyOf, emptyLabel, limit = CHAT_LIMIT }) {
-    const fragment = document.createDocumentFragment();
-    const getDivider = createDateDividerFactory();
+  function buildChatPanelContent({ namespace, entries = [], renderParts, keyOf, emptyLabel, limit = CHAT_LIMIT }) {
+    const nodes = [];
+    const chrome = chatPanelChrome.begin(namespace);
     const limitedEntries = Number.isFinite(limit)
       ? entries.slice(Math.max(entries.length - limit, 0))
       : entries;
@@ -3944,20 +3935,18 @@ export function initializeApp(config) {
           node.style.setProperty('--flash-role-color', getRoleFlashColor(senderNode.role, senderNode.protocol));
         }
       }
-      const divider = getDivider(entry.ts);
-      if (divider) fragment.appendChild(divider);
-      fragment.appendChild(node);
+      const divider = chrome.divider(entry.ts);
+      if (divider) nodes.push(divider);
+      nodes.push(node);
       renderedEntries += 1;
     }
     // Drop cached nodes for entries no longer present in this tab's window.
     chatEntryCache.prune(namespace);
+    chrome.finish();
     if (renderedEntries === 0 && emptyLabel) {
-      const empty = document.createElement('p');
-      empty.className = 'chat-empty';
-      empty.textContent = emptyLabel;
-      fragment.appendChild(empty);
+      nodes.push(chrome.empty(emptyLabel));
     }
-    return fragment;
+    return nodes;
   }
 
   /**
