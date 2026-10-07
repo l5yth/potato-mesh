@@ -192,6 +192,14 @@ import {
   BOOT_CACHE_FLAG,
 } from './main/constants.js';
 import { capNodesForRender, buildShowAllRow, SHOW_ALL_BUTTON_CLASS } from './main/nodes-table-cap.js';
+import { createKeyedRowReconciler, SIGNATURE_CLOCK_SECONDS } from './main/keyed-rows.js';
+import { captureReaderPlace, restoreReaderPlace } from './main/reader-place.js';
+import {
+  NODE_EXTRA_TOGGLE_CLASS,
+  applyNodeExtraRowState,
+  applyNodeExtraToggleState,
+  toggleNodeExtra,
+} from './main/node-extra-disclosure.js';
 import {
   fetchNeighbors,
   fetchNodes,
@@ -491,6 +499,12 @@ export function initializeApp(config) {
   // simply renders without groups until pages arrive (RA8).
   let destinationIndex = new Map();
   const expandedIdentities = new Set();
+  // Node ids whose `+` disclosure row is open (SPEC UX9, DR1). Remembered here
+  // like the carets above, so a refresh that rebuilds a row reopens it.
+  const openNodeExtras = new Set();
+  // Keyed rows of `#nodes tbody` (SPEC DR1): a refresh keeps every row whose
+  // rendered content did not change.
+  const nodeTableRows = createKeyedRowReconciler();
   /** Number of node rows the last {@link renderTable} actually rendered (test hook). */
   let lastRenderedNodeCount = 0;
 
@@ -887,7 +901,9 @@ export function initializeApp(config) {
       const target = event && event.target ? event.target : null;
       // Identity disclosure (SPEC RA1): toggling re-renders through the normal
       // path so sub-rows are built by the same plan that ordered the parents,
-      // rather than being spliced into the DOM out of band.
+      // rather than being spliced into the DOM out of band. The caret's state
+      // is part of its row, so that row is rebuilt; renderTable moves focus to
+      // the new caret (SPEC DR1).
       const identityToggle = target && typeof target.closest === 'function'
         ? target.closest('.identity-disclosure')
         : null;
@@ -904,16 +920,11 @@ export function initializeApp(config) {
         return;
       }
       const toggle = target && typeof target.closest === 'function'
-        ? target.closest('.node-extra-toggle')
+        ? target.closest(`.${NODE_EXTRA_TOGGLE_CLASS}`)
         : null;
       if (toggle) {
-        const row = toggle.closest('tr');
-        const extra = row ? row.nextElementSibling : null;
-        if (extra && extra.classList && extra.classList.contains('node-extra')) {
-          extra.hidden = !extra.hidden;
-          toggle.setAttribute('aria-expanded', String(!extra.hidden));
-          toggle.textContent = extra.hidden ? '+' : '−';
-        }
+        // Remembered by node id (SPEC DR1), so the next render keeps it open.
+        toggleNodeExtra(openNodeExtras, toggle);
         return;
       }
       const row = target && typeof target.closest === 'function' ? target.closest('tr') : null;
@@ -4382,6 +4393,12 @@ export function initializeApp(config) {
   /**
    * Render the nodes table with sorted and filtered data.
    *
+   * Rows are keyed by node id (SPEC DR1): a refresh keeps the element of every
+   * row whose rendered content did not change, rebuilds the rows that changed
+   * and moves rows into sort order ({@link module:main/keyed-rows}). Focus,
+   * an overlay opened from a badge and the row under a page-scrolled reader
+   * are carried over to rebuilt rows ({@link module:main/reader-place}).
+   *
    * @param {Array<Object>} nodes Node payloads.
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
@@ -4392,7 +4409,6 @@ export function initializeApp(config) {
       overlayStack.cleanupOrphans();
       return;
     }
-    const frag = document.createDocumentFragment();
     // Render only the top N nodes by the active sort; a busy instance's full set
     // (each node also emits a hidden UX9 disclosure row) balloons the DOM, so the
     // remaining rows are reachable via the appended "show all" control (perf).
@@ -4402,6 +4418,7 @@ export function initializeApp(config) {
     if (nodes.length <= NODE_TABLE_RENDER_CAP) nodeTableExpanded = false;
     const { renderNodes, capped } = capNodesForRender(nodes, NODE_TABLE_RENDER_CAP, nodeTableExpanded);
     lastRenderedNodeCount = renderNodes.length;
+    const specs = [];
     let rowIndex = 0;
     // Identity groups (SPEC RA1/RA2): parents keep the active sort order and
     // each group's destinations follow the identity they belong to, so no sort
@@ -4415,32 +4432,28 @@ export function initializeApp(config) {
       const n = groupLastHeard == null
         ? planned.node
         : { ...planned.node, last_heard: groupLastHeard };
-      const tr = document.createElement('tr');
       // Zebra striping is stamped per node row because the hidden disclosure
-      // rows (SPEC UX9) would otherwise consume every even nth-child slot.
-      if (rowIndex % 2 === 1 && tr.classList && typeof tr.classList.add === 'function') {
-        tr.classList.add('row-alt');
-      }
+      // rows (SPEC UX9) would otherwise consume every even nth-child slot. It
+      // follows the row's position, so it is written on every render (sync).
+      const striped = rowIndex % 2 === 1;
       rowIndex += 1;
-      // Row-level node id hook for live-update flashes (SPEC VF3); kept distinct
-      // from the inner link's data-node-id so it never affects click handling.
-      if (typeof n.node_id === 'string' && n.node_id) {
-        tr.dataset.nodeRow = n.node_id;
-      }
-      // Stamp the role colour so the live-update fade lands on it (LV3); the CSS
-      // keyframe reads --flash-role-color, so the flash helper needs no colour.
-      if (tr.style && typeof tr.style.setProperty === 'function') {
-        tr.style.setProperty('--flash-role-color', getRoleFlashColor(n.role, n.protocol));
-      }
+      // Rows are keyed by node id (SPEC DR1); a row without one is keyed by
+      // its position, and its `+` state is left to the DOM, since there is no
+      // id to remember it under.
+      const nodeId = typeof n.node_id === 'string' && n.node_id ? n.node_id : '';
+      const rowKey = nodeId || `#${rowIndex}`;
+      // The role colour the live-update fade lands on (LV3); the CSS keyframe
+      // reads --flash-role-color, so the flash helper needs no colour.
+      const flashColor = getRoleFlashColor(n.role, n.protocol);
       // Freshness bucket (SPEC UX5): rows carry data-age/data-age-ts so CSS
       // can dim stale nodes and the shared tick keeps the bucket honest.
-      const rowAgeTs = toFiniteNumber(n.last_heard);
-      if (rowAgeTs != null && rowAgeTs > 0 && typeof tr.setAttribute === 'function') {
-        tr.setAttribute('data-age', nodeAgeBucket(rowAgeTs, nowSec));
-        tr.setAttribute('data-age-ts', String(rowAgeTs));
-      }
+      const lastHeardTs = toFiniteNumber(n.last_heard);
+      const rowAgeTs = lastHeardTs != null && lastHeardTs > 0 ? lastHeardTs : null;
       // Timestamp cells opt into the shared live tick via data-ts-ago (RT1/RT2).
+      // The signature's copy is stamped at a fixed clock, so time passing alone
+      // never rebuilds a row; the ticker keeps the visible text current.
       const timestampCells = buildNodeRowTimestampCellsHtml(n, nowSec);
+      const signatureCells = buildNodeRowTimestampCellsHtml(n, SIGNATURE_CLOCK_SECONDS);
       const latitudeDisplay = fmtCoords(n.latitude);
       const longitudeDisplay = fmtCoords(n.longitude);
       const nodeDisplayName = getNodeDisplayNameForOverlay(n);
@@ -4464,15 +4477,18 @@ export function initializeApp(config) {
         : escapeHtml(n.role || defaultRoleFor(n.protocol));
       // Measurement cells render the muted dash for absent values (SPEC UX4)
       // and honest numbers (SPEC UX10); `num` columns right-align in the mono
-      // face via CSS.
-      tr.innerHTML = `
+      // face via CSS. The cells are split around the two timestamp cells, so
+      // the row and its clock-free signature share every other cell. The `+`
+      // always renders closed here; its remembered state is applied in sync.
+      const cellsHead = `
         <td class="nodes-col nodes-col--protocol">${protocolIconCell}</td>
         <td class="mono nodes-col nodes-col--node-id">${escapeHtml(n.node_id || "")}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
         <td class="nodes-col nodes-col--frequency num">${formatTableCell(loraFrequencyDisplay)}</td>
         <td class="nodes-col nodes-col--modem-preset">${formatTableCell(modemPresetDisplay)}</td>
-        ${timestampCells.lastSeen}
+        `;
+      const cellsMiddle = `
         <td class="nodes-col nodes-col--role">${roleCellHtml}</td>
         <td class="nodes-col nodes-col--hw-model">${formatTableCell(escapeHtml(fmtHw(n.hw_model)))}</td>
         <td class="nodes-col nodes-col--battery num">${formatTableCell(fmtBattery(n.battery_level))}</td>
@@ -4486,53 +4502,103 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--latitude num">${formatTableCell(latitudeDisplay)}</td>
         <td class="nodes-col nodes-col--longitude num">${formatTableCell(longitudeDisplay)}</td>
         <td class="nodes-col nodes-col--altitude num">${formatTableCell(fmtAlt(n.altitude, "m"))}</td>
-        ${timestampCells.lastPosition}
+        `;
+      const cellsTail = `
         <td class="nodes-col nodes-col--more">${disclosureHtml}<button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
+      /**
+       * Join the row's cells around one pair of timestamp cells.
+       *
+       * @param {{lastSeen: string, lastPosition: string}} cells Timestamp cells.
+       * @returns {string} The row's inner markup.
+       */
+      const rowCells = cells => cellsHead + cells.lastSeen + cellsMiddle + cells.lastPosition + cellsTail;
 
-      enhanceCoordinateCell({
-        cell: tr.querySelector('.nodes-col--latitude'),
-        document,
-        displayText: latitudeDisplay,
-        formattedLatitude: latitudeDisplay,
-        formattedLongitude: longitudeDisplay,
-        lat: n.latitude,
-        lon: n.longitude,
-        nodeName: nodeDisplayName,
-        onActivate: focusMapOnCoordinates
+      specs.push({
+        key: `node:${rowKey}`,
+        // Everything create() renders: the stamped attributes, the inputs of
+        // the coordinate links, and the cells with a clock-free age text.
+        signature: [nodeId, flashColor, rowAgeTs, n.latitude, n.longitude, nodeDisplayName, rowCells(signatureCells)].join('\u0000'),
+        create: () => {
+          const tr = document.createElement('tr');
+          // Row-level node id hook for live-update flashes (SPEC VF3); kept distinct
+          // from the inner link's data-node-id so it never affects click handling.
+          if (nodeId) {
+            tr.dataset.nodeRow = nodeId;
+          }
+          if (tr.style && typeof tr.style.setProperty === 'function') {
+            tr.style.setProperty('--flash-role-color', flashColor);
+          }
+          if (rowAgeTs != null && typeof tr.setAttribute === 'function') {
+            tr.setAttribute('data-age-ts', String(rowAgeTs));
+          }
+          tr.innerHTML = rowCells(timestampCells);
+          enhanceCoordinateCell({
+            cell: tr.querySelector('.nodes-col--latitude'),
+            document,
+            displayText: latitudeDisplay,
+            formattedLatitude: latitudeDisplay,
+            formattedLongitude: longitudeDisplay,
+            lat: n.latitude,
+            lon: n.longitude,
+            nodeName: nodeDisplayName,
+            onActivate: focusMapOnCoordinates
+          });
+          enhanceCoordinateCell({
+            cell: tr.querySelector('.nodes-col--longitude'),
+            document,
+            displayText: longitudeDisplay,
+            formattedLatitude: latitudeDisplay,
+            formattedLongitude: longitudeDisplay,
+            lat: n.latitude,
+            lon: n.longitude,
+            nodeName: nodeDisplayName,
+            onActivate: focusMapOnCoordinates
+          });
+          return tr;
+        },
+        // Per-render state, written only where it differs: the stripe, the
+        // freshness bucket at this render's clock, and the `+` state.
+        sync: tr => {
+          if (tr.classList.contains('row-alt') !== striped) tr.classList.toggle('row-alt', striped);
+          if (rowAgeTs != null) {
+            const bucket = nodeAgeBucket(rowAgeTs, nowSec);
+            if (tr.getAttribute('data-age') !== bucket) tr.setAttribute('data-age', bucket);
+          }
+          if (nodeId) {
+            applyNodeExtraToggleState(tr.querySelector(`.${NODE_EXTRA_TOGGLE_CLASS}`), openNodeExtras.has(nodeId));
+          }
+        },
       });
-      enhanceCoordinateCell({
-        cell: tr.querySelector('.nodes-col--longitude'),
-        document,
-        displayText: longitudeDisplay,
-        formattedLatitude: latitudeDisplay,
-        formattedLongitude: longitudeDisplay,
-        lat: n.latitude,
-        lon: n.longitude,
-        nodeName: nodeDisplayName,
-        onActivate: focusMapOnCoordinates
-      });
-      frag.appendChild(tr);
 
       // Destination sub-rows (SPEC RA2). The aspect takes over the first two
       // columns as its own leading cell -- the one thing a destination has that
       // its identity does not -- and every column past Long Name reports the
       // muted dash, because a destination has no radio, battery or position.
       for (const destination of planned.subRows) {
-        const subRow = document.createElement('tr');
-        // classList, matching the parent row above: some consumers (and the
-        // test DOM) read classList rather than the className string.
-        if (subRow.classList && typeof subRow.classList.add === 'function') {
-          subRow.classList.add('nodes-subrow');
-        } else {
-          subRow.className = 'nodes-subrow';
-        }
-        subRow.innerHTML = subRowCellsHtml(
+        /**
+         * The sub-row's cells with its Last Seen cell stamped at `clock`.
+         *
+         * @param {number} clock Reference time in unix seconds.
+         * @returns {string} The sub-row's inner markup.
+         */
+        const subRowCells = clock => subRowCellsHtml(
           destination,
           n.node_id,
-          buildNodeRowTimestampCellsHtml({ last_heard: destination.last_heard }, nowSec).lastSeen,
+          buildNodeRowTimestampCellsHtml({ last_heard: destination.last_heard }, clock).lastSeen,
           renderShortHtml,
         );
-        frag.appendChild(subRow);
+        specs.push({
+          key: `sub:${rowKey}:${destination.id}`,
+          signature: subRowCells(SIGNATURE_CLOCK_SECONDS),
+          create: () => {
+            const subRow = document.createElement('tr');
+            // classList, matching the parent row above: some consumers (and the
+            // test DOM) read classList rather than the className string.
+            subRow.classList.add('nodes-subrow');
+            subRow.innerHTML = subRowCells(nowSec);
+            return subRow;
+          },
+        });
       }
 
       // Hidden-field disclosure row (SPEC UX9): the `+` cell reveals every
@@ -4561,20 +4627,51 @@ export function initializeApp(config) {
         ]),
         NODES_TABLE_TOTAL_COLUMNS,
       );
-      const extraTr = document.createElement('tr');
-      extraTr.className = extraParts.className;
-      extraTr.hidden = true;
-      extraTr.innerHTML = extraParts.innerHtml;
-      frag.appendChild(extraTr);
+      specs.push({
+        key: `extra:${rowKey}`,
+        signature: extraParts.innerHtml,
+        create: () => {
+          const extraTr = document.createElement('tr');
+          extraTr.className = extraParts.className;
+          extraTr.hidden = true;
+          extraTr.innerHTML = extraParts.innerHtml;
+          return extraTr;
+        },
+        // Open or closed comes from the remembered set, never the signature,
+        // so opening a disclosure rebuilds nothing (SPEC DR1).
+        sync: nodeId ? extraTr => applyNodeExtraRowState(extraTr, openNodeExtras.has(nodeId)) : undefined,
+      });
     }
     if (capped) {
       // Reveal-the-rest control; its click is handled by the delegated listener.
-      frag.appendChild(buildShowAllRow(document, nodes.length, NODES_TABLE_TOTAL_COLUMNS));
+      specs.push({
+        key: 'show-all',
+        signature: String(nodes.length),
+        create: () => buildShowAllRow(document, nodes.length, NODES_TABLE_TOTAL_COLUMNS),
+      });
     }
-    tb.replaceChildren(frag);
+    // Snapshot what the reconcile could take from the reader, reconcile, then
+    // carry it over to the rebuilt rows (SPEC DR1).
+    const place = captureReaderPlace({
+      tbody: tb,
+      keyOf: nodeTableRows.keyOf,
+      documentRef: document,
+      overlayStack,
+      windowRef: window,
+    });
+    const reconciled = nodeTableRows.reconcile(tb, specs);
     // Keep the waiting row honest (SPEC UX4): present while the node set is
     // empty, gone the moment real rows render.
     syncNodesEmptyRow(tb, nodes.length, document, NODES_TABLE_TOTAL_COLUMNS);
+    restoreReaderPlace(place, {
+      tbody: tb,
+      elements: reconciled.elements,
+      documentRef: document,
+      overlayStack,
+      windowRef: window,
+      // Inserted, moved or removed rows shift the kept rows below them.
+      rowsShifted: reconciled.created + reconciled.moved + reconciled.removed > 0,
+    });
     overlayStack.cleanupOrphans();
   }
 
