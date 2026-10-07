@@ -20,6 +20,7 @@
 * Matrix: the bridge crate declares its crates.io package metadata, and its README screenshot no longer links outside the crate (#879)
 * Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
 * Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
+* Web: live refreshes keep map overlays, line tooltips and waypoint cards open, and repaint only the table, map or chat whose data changed (#881, SPEC DR2/DR4)
 * Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)
 * CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
 * CI: test results reach Codecov also when tests fail; workflows use codecov-action v7 and checkout v7; Dependabot opens up to 20 GitHub Actions update PRs at a time (SPEC DW1/DW2/DW4)

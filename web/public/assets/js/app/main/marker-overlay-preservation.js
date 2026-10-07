@@ -27,8 +27,14 @@
  * overlay stays open while updates fire. They take the overlay stack and the
  * node->marker map as arguments, so they unit-test without a real map or DOM.
  *
+ * Both delegate to the keyed helpers in `map-overlay-anchors.js` (SPEC DR2),
+ * which carry overlays and tooltips across a rebuild for every map layer; these
+ * keep the node-id-keyed shape the marker path and LD-A3 use.
+ *
  * @module main/marker-overlay-preservation
  */
+
+import { captureKeyedAnchors, restoreKeyedAnchors } from './map-overlay-anchors.js';
 
 /**
  * Snapshot the open marker overlays, keyed by node id, before a map rebuild.
@@ -40,17 +46,10 @@
  *   preserve; empty when the stack/map is missing or nothing is open.
  */
 export function captureOpenMarkerOverlays(overlayStack, markerByNodeId) {
-  const captured = [];
-  if (!overlayStack || typeof overlayStack.isOpen !== 'function' || !markerByNodeId) {
-    return captured;
-  }
-  for (const [nodeId, marker] of markerByNodeId) {
-    const anchor = marker && typeof marker.getElement === 'function' ? marker.getElement() : null;
-    if (anchor && overlayStack.isOpen(anchor)) {
-      captured.push({ nodeId, anchor });
-    }
-  }
-  return captured;
+  // Markers bind no tooltip, so only entries that host an overlay matter here.
+  return captureKeyedAnchors(overlayStack, markerByNodeId)
+    .filter(entry => entry.anchor)
+    .map(entry => ({ nodeId: entry.key, anchor: entry.anchor }));
 }
 
 /**
@@ -69,25 +68,9 @@ export function captureOpenMarkerOverlays(overlayStack, markerByNodeId) {
  * @returns {number} count of overlays re-anchored.
  */
 export function restoreMarkerOverlays(overlayStack, captured, markerByNodeId) {
-  if (
-    !overlayStack ||
-    typeof overlayStack.reanchor !== 'function' ||
-    !Array.isArray(captured) ||
-    !markerByNodeId ||
-    typeof markerByNodeId.get !== 'function'
-  ) {
-    return 0;
-  }
-  let restored = 0;
-  for (const entry of captured) {
-    if (!entry || !entry.nodeId) {
-      continue;
-    }
-    const marker = markerByNodeId.get(entry.nodeId);
-    const newAnchor = marker && typeof marker.getElement === 'function' ? marker.getElement() : null;
-    if (newAnchor && overlayStack.reanchor(entry.anchor, newAnchor)) {
-      restored += 1;
-    }
-  }
-  return restored;
+  if (!Array.isArray(captured)) return 0;
+  const snapshots = captured
+    .filter(entry => entry && entry.nodeId)
+    .map(entry => ({ key: entry.nodeId, anchor: entry.anchor, tooltipOpen: false, tooltipLatLng: null }));
+  return restoreKeyedAnchors(overlayStack, snapshots, markerByNodeId).overlays;
 }

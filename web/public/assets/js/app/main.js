@@ -234,6 +234,13 @@ import { getActiveFullscreenElement, legendClickHandler } from './main/fullscree
 import { createEventStream } from './main/event-stream.js';
 import { flashNodeTargets, flashMessageTargets, flashElement, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
+import {
+  captureKeyedAnchors,
+  restoreKeyedAnchors,
+  neighborSegmentKey,
+  traceSegmentKey,
+} from './main/map-overlay-anchors.js';
+import { createRepaintPlanner, nextChatRepaintAt, nextMapRepaintAt } from './main/repaint-planner.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 import {
   nodeAgeBucket,
@@ -488,6 +495,24 @@ export function initializeApp(config) {
    */
   let renderFilteredOutputsCount = 0;
   /**
+   * Which surfaces (table, map, chat) the next repaint covers: a refresh marks
+   * the collections whose rows changed, and only the surfaces that render one
+   * of them repaint (SPEC DR4).
+   */
+  const repaintPlanner = createRepaintPlanner();
+  /**
+   * Derived node records as of the last {@link rebuildNodeDerivedState}; the
+   * next derivation compares against them, so re-sent but unchanged nodes do
+   * not repaint the table or the map (SPEC DR4).
+   * @type {Array<Object>}
+   */
+  let lastDerivedNodes = [];
+  /**
+   * True while a destinations page waits in the coalesced backfill repaint;
+   * the flush then refreshes the stats-driven counts once (SPEC DR4).
+   */
+  let destinationStatsPending = false;
+  /**
    * True once the user clicked "show all" to lift the node-table render cap
    * ({@link NODE_TABLE_RENDER_CAP}); persists for the session so subsequent
    * refreshes keep showing every row.
@@ -705,6 +730,10 @@ export function initializeApp(config) {
     lastTraceTimestamp = maxRecordTimestamp(allTraces, ['rx_time']);
     lastWaypointTimestamp = maxRecordTimestamp(allWaypoints, ['rx_time']);
     initialFetchDone = true;
+    // The cached rows are already derived; the next refresh's derivation
+    // compares against them (SPEC DR4). Everything is new, so every surface
+    // paints.
+    lastDerivedNodes = allNodes;
     applyFilter();
     return true;
   }
@@ -1210,6 +1239,9 @@ export function initializeApp(config) {
   // Per-render map of canonical node id → its Leaflet marker, so a live update
   // can flash the marker for a changed node (SPEC VF3). Rebuilt every renderMap.
   let markerByNodeId = new Map();
+  // Per-render map of segment key → its neighbour or trace polyline, so an open
+  // line overlay or tooltip follows its line across a rebuild (SPEC DR2).
+  let lineBySegmentKey = new Map();
   // Per-render record of the offset markers we created so the zoom event
   // handlers can re-project them and keep the on-screen pixel gap constant
   // regardless of zoom level.  Each entry is
@@ -4035,7 +4067,9 @@ export function initializeApp(config) {
    * {@link refresh} and the background collection backfill (issue #832) so a
    * streamed history page derives the rendered node state identically to a full
    * refresh. Does not touch ``allMessages`` / ``allEncryptedMessages`` (hydrated
-   * separately) or ``allTraces`` (not node-derived).
+   * separately) or ``allTraces`` (not node-derived). The new records are
+   * compared with the previous derivation's, and the repaint planner marks the
+   * table, the map and the chat only when one of them changed (SPEC DR4).
    *
    * @returns {void}
    */
@@ -4054,6 +4088,10 @@ export function initializeApp(config) {
     // Rebuild lookup maps so marker updates and message hydration always resolve
     // to the latest node objects.
     rebuildNodeIndex(allNodes);
+    // SPEC DR4: the table, the map and the chat render these records; mark
+    // them only when a record really changed (a delta re-sends its overlap).
+    repaintPlanner.noteRows('nodes', lastDerivedNodes, allNodes);
+    lastDerivedNodes = allNodes;
     // The per-packet accumulators (allTelemetryEntries / allPositionEntries /
     // allNeighbors) are deliberately left RAW — the aggregated forms above are
     // locals used only to enrich the node records. Writing an aggregate back into
@@ -4066,6 +4104,24 @@ export function initializeApp(config) {
     // its aggregate would still collapse the Log's per-packet history.) Keeping
     // the accumulators raw gives every packet a stable, id-keyed Log entry
     // (bugfix A1).
+  }
+
+  /**
+   * The raw per-packet collections, by the names the repaint planner maps onto
+   * surfaces (SPEC DR4). Taken before and after a merge so the planner can
+   * tell which of them changed.
+   *
+   * @returns {{ positions: Array<Object>, telemetry: Array<Object>, neighbors: Array<Object>,
+   *   traces: Array<Object>, waypoints: Array<Object> }} Current rows per collection.
+   */
+  function rawCollections() {
+    return {
+      positions: allPositionEntries,
+      telemetry: allTelemetryEntries,
+      neighbors: allNeighbors,
+      traces: allTraces,
+      waypoints: allWaypoints,
+    };
   }
 
   /** Floor (unix s) below which backfilled positions/telemetry are dropped (FC3: 7 d). */
@@ -4217,7 +4273,9 @@ export function initializeApp(config) {
   /**
    * Run the coalesced backfill re-derive(s) and a single repaint, then clear the
    * pending state. Idempotent: a no-op when nothing is pending, so calling it
-   * again after a flush (or after the trailing idle callback) is harmless.
+   * again after a flush (or after the trailing idle callback) is harmless. The
+   * repaint covers the surfaces the merged pages changed (SPEC DR4); queued
+   * destination pages also refresh the stats-driven counts, once.
    *
    * @returns {void}
    */
@@ -4237,6 +4295,27 @@ export function initializeApp(config) {
       backfillRepaintDirty = false;
       renderFilteredOutputs();
     }
+    if (destinationStatsPending) {
+      // The legend and the protocol toggle count destinations (SPEC RA3).
+      destinationStatsPending = false;
+      refreshStatsDisplays();
+    }
+  }
+
+  /**
+   * Fold one Reticulum destinations page into the coalesced backfill repaint
+   * (SPEC DR4, the FP-A2 pattern). The background walk delivers up to 40
+   * pages; repainting the table and fetching ``/api/stats`` for each one
+   * rebuilt the table once per page. The index is already current when this
+   * runs; only the repaint waits for idle time.
+   *
+   * @returns {void}
+   */
+  function queueDestinationRepaint() {
+    repaintPlanner.markCollections(['destinations']);
+    destinationStatsPending = true;
+    backfillRepaintDirty = true;
+    scheduleBackfillRepaint();
   }
 
   /**
@@ -4259,7 +4338,8 @@ export function initializeApp(config) {
    * queue a coalesced re-derive + repaint (see the coalescing note above). The
    * merge is synchronous so it cannot interleave with a concurrent refresh or
    * another collection's commit and so ``getLoaded*Count`` always reflects every
-   * paged-in row; the repaint is deferred to idle time. The stats fetch is
+   * paged-in row; the repaint is deferred to idle time and covers only the
+   * surfaces whose rows the page changed (SPEC DR4). The stats fetch is
    * skipped (the authoritative count is server-computed and unchanged by how many
    * rows the client has paged in).
    *
@@ -4269,7 +4349,11 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function commitBackfillPage(spec, batch) {
+    const before = rawCollections();
     spec.merge(batch);
+    // SPEC DR4: mark the raw collection the page changed; node records are
+    // compared when the coalesced refine re-derives them.
+    repaintPlanner.noteCollections(before, rawCollections());
     pendingBackfillRefines.add(spec.refine);
     backfillRepaintDirty = true;
     scheduleBackfillRepaint();
@@ -4847,6 +4931,11 @@ export function initializeApp(config) {
   /**
    * Render the Leaflet map markers and neighbour connections.
    *
+   * Every layer is rebuilt; an open overlay or tooltip on a marker, a line or
+   * a waypoint pin moves to the rebuilt layer with the same node id, segment
+   * key or waypoint key (SPEC DR2, LD-A3). The render also schedules the map's
+   * next clock-driven repaint with the repaint planner (SPEC DR4).
+   *
    * @param {Array<Object>} nodes Node payloads.
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
@@ -4855,6 +4944,13 @@ export function initializeApp(config) {
     if (!map || !markersLayer || !hasLeaflet) {
       return;
     }
+    // SPEC DR2: snapshot each open overlay or tooltip on a line or a waypoint
+    // pin, by segment or waypoint key, before those layers are cleared; it is
+    // carried onto the rebuilt layer with the same key at the end. Markers
+    // keep their own LD-A3 snapshot below.
+    const preservedLineAnchors = captureKeyedAnchors(overlayStack, lineBySegmentKey);
+    const preservedWaypointAnchors = captureKeyedAnchors(overlayStack, waypointMarkerByKey);
+    lineBySegmentKey = new Map();
     if (neighborLinesLayer) {
       neighborLinesLayer.clearLayers();
     }
@@ -4982,6 +5078,9 @@ export function initializeApp(config) {
             opacity: 0.42,
             className: 'neighbor-connection-line'
           }).addTo(neighborLinesLayer);
+          // Register the line by its direction so DR2 can move an open
+          // overlay or tooltip onto it after the next rebuild.
+          lineBySegmentKey.set(neighborSegmentKey(segment.sourceId, segment.targetId), polyline);
           if (polyline && typeof polyline.bindTooltip === 'function') {
             const tooltipHtml = buildNeighborTooltipHtml({
               ...segment,
@@ -5033,6 +5132,9 @@ export function initializeApp(config) {
     }
 
     if (traceLinesLayer && traceSegments.length) {
+      // Hop position of each segment within its trace (the stable sort keeps a
+      // trace's hops in path order), for the DR2 segment key.
+      const traceHopIndex = new Map();
       traceSegments
         .sort((a, b) => {
           const rxA = Number.isFinite(a.rxTime) ? a.rxTime : -Infinity;
@@ -5048,6 +5150,10 @@ export function initializeApp(config) {
             dashArray: '6 6',
             className: 'neighbor-connection-line trace-connection-line'
           }).addTo(traceLinesLayer);
+          const hop = traceHopIndex.get(segment.traceId) ?? 0;
+          traceHopIndex.set(segment.traceId, hop + 1);
+          const traceKey = traceSegmentKey(segment.traceId, hop);
+          if (traceKey) lineBySegmentKey.set(traceKey, polyline);
           if (polyline && typeof polyline.bindTooltip === 'function') {
             const tooltipHtml = buildTraceTooltipHtml(segment.pathNodes);
             if (tooltipHtml) {
@@ -5285,9 +5391,15 @@ export function initializeApp(config) {
     }
     // Re-anchor any overlay preserved above onto its rebuilt marker so it
     // stays open across the re-render instead of being closed by
-    // cleanupOrphans (item 7).
+    // cleanupOrphans (item 7), and do the same for line overlays and
+    // tooltips and waypoint cards (SPEC DR2).
     restoreMarkerOverlays(overlayStack, preservedMarkerOverlays, markerByNodeId);
+    restoreKeyedAnchors(overlayStack, preservedLineAnchors, lineBySegmentKey);
+    restoreKeyedAnchors(overlayStack, preservedWaypointAnchors, waypointMarkerByKey);
     overlayStack.cleanupOrphans();
+    // SPEC DR4: freshness buckets and waypoint expiry move with the clock, not
+    // with data; repaint the map on the first refresh past the next such step.
+    repaintPlanner.expireAt('map', nextMapRepaintAt(nodes, allWaypoints, nowSec));
   }
 
   /**
@@ -5412,11 +5524,16 @@ export function initializeApp(config) {
    * (issue #802) so each streamed page repaints the chat without re-running the
    * full filter pipeline (node table, map, ``/api/stats`` fetch).
    *
+   * The paint also schedules the chat's next clock-driven repaint (SPEC DR4):
+   * the chat drops entries older than its 7-day window and counts waypoint
+   * entries down to their expiry, which no data change announces.
+   *
    * @param {string} [filterQuery] Raw filter text for substring highlighting;
    *   defaults to the current filter input value.
    * @returns {void}
    */
   function rerenderChatLog(filterQuery = filterInput ? filterInput.value : '') {
+    const paintedAt = Date.now() / 1000;
     renderChatLog({
       nodes: allNodes,
       messages: allMessages,
@@ -5428,47 +5545,95 @@ export function initializeApp(config) {
       waypointEntries: allWaypoints,
       filterQuery
     });
+    // No chat on this page (or chat disabled): nothing to age.
+    const nextChatChange = CHAT_ENABLED && chatEl
+      ? nextChatRepaintAt({
+        nodes: allNodes,
+        telemetry: allTelemetryEntries,
+        positions: allPositionEntries,
+        neighbors: allNeighbors,
+        traces: allTraces,
+        waypoints: allWaypoints,
+        messages: allMessages,
+        encrypted: allEncryptedMessages,
+      }, paintedAt, CHAT_RECENT_WINDOW_SECONDS)
+      : Infinity;
+    repaintPlanner.expireAt('chat', nextChatChange);
   }
 
   /**
    * Render the filter-dependent outputs — node table, map markers, sort
    * indicators, and chat log — from the current in-memory state, **without** the
-   * ``/api/stats`` fetch. {@link applyFilter} composes this with the stats
+   * ``/api/stats`` fetch. {@link applyDataChanges} composes this with the stats
    * refresh; the background collection backfill (issue #832) calls it directly so
    * streaming a history page repaints the table/map without firing a redundant
    * authoritative-count request per page — the ``/api/stats`` count is
    * server-computed and unaffected by how many rows the client has paged in.
+   *
+   * Only the surfaces the repaint planner hands out repaint: those whose
+   * collections changed since they last painted, those a user action marked,
+   * and the map once the clock moved a marker's freshness bucket (SPEC DR4).
+   * Nothing changed means nothing repaints.
    *
    * @param {string} [filterQuery] Raw filter text for substring highlighting;
    *   defaults to the current filter input value.
    * @returns {void}
    */
   function renderFilteredOutputs(filterQuery = filterInput ? filterInput.value : '') {
+    const nowSec = Date.now() / 1000;
+    const surfaces = repaintPlanner.take(nowSec);
+    if (surfaces.size === 0) return;
     // Instrumentation for the backfill de-jank guard (see
-    // {@link renderFilteredOutputsCount}); a plain increment, no behaviour change.
+    // {@link renderFilteredOutputsCount}): one count per repaint that paints.
     renderFilteredOutputsCount += 1;
     // Text and role filters apply only to the node table and map; the chat log
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
-    const sortedNodes = getFilteredSortedNodes();
-    const nowSec = Date.now() / 1000;
-    renderTable(sortedNodes, nowSec);
-    renderMap(sortedNodes, nowSec);
-    updateSortIndicators();
+    const sortedNodes = surfaces.has('table') || surfaces.has('map') ? getFilteredSortedNodes() : null;
+    if (surfaces.has('table')) renderTable(sortedNodes, nowSec);
+    if (surfaces.has('map')) renderMap(sortedNodes, nowSec);
+    if (surfaces.has('table')) updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
-    rerenderChatLog(filterQuery);
+    if (surfaces.has('chat')) rerenderChatLog(filterQuery);
   }
 
   /**
    * Apply text and role filters to the node list and re-render outputs.
    *
+   * The entry point for user actions — the filter input, sorting, the role
+   * and protocol toggles, the identity caret — and for the cache seed and a
+   * protocol un-strand: each changes what every surface shows, so all of them
+   * repaint (SPEC DR4).
+   *
    * @returns {void}
    */
   function applyFilter() {
+    repaintPlanner.markAllSurfaces();
+    applyDataChanges();
+  }
+
+  /**
+   * Repaint the surfaces whose data changed, then refresh the stats-driven
+   * displays. The entry point for a refresh: an SSE ping, the reconnect
+   * resync and the safety poll all end here (SPEC DR4).
+   *
+   * @returns {void}
+   */
+  function applyDataChanges() {
     updateFilterClearVisibility();
     const filterQuery = filterInput ? filterInput.value : '';
     renderFilteredOutputs(filterQuery);
+    refreshStatsDisplays();
+  }
+
+  /**
+   * Refresh the title, legend counts, protocol toggles, footer and mesh
+   * activity card from a local estimate first and then from ``/api/stats``.
+   *
+   * @returns {void}
+   */
+  function refreshStatsDisplays() {
     // Show an immediate local estimate for the title so it doesn't flicker
     // to (0) while waiting for the async /api/stats response.
     const nowSec = Date.now() / 1000;
@@ -5679,6 +5844,9 @@ export function initializeApp(config) {
       const messageWindowFloor = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
       const recentWindowFloor = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
       const longWindowFloor = nowSeconds - TRACE_MAX_AGE_SECONDS;
+      // SPEC DR4: the raw collections before this merge, so the planner can
+      // tell which ones the delta (or a window trim) actually changed.
+      const rawBefore = rawCollections();
       allNodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
       allPositionEntries = useSince
         ? trimToWindow(mergeById(allPositionEntries, incomingPositions, 'id'), recentWindowFloor)
@@ -5716,6 +5884,7 @@ export function initializeApp(config) {
       // (allPositionEntries/allTelemetryEntries/allNeighbors) are left RAW so the
       // Log keeps a stable entry per packet — re-storing the aggregated form would
       // erode history on the next tick (bugfix A1).
+      repaintPlanner.noteCollections(rawBefore, rawCollections());
       rebuildNodeDerivedState();
       // Hydrate messages with node metadata in parallel; the node index has just
       // been rebuilt (inside rebuildNodeDerivedState) so lookups find the freshly
@@ -5731,14 +5900,19 @@ export function initializeApp(config) {
       // The read-modify-write is synchronous, so it cannot interleave with a
       // backfill commit.  First load has no backfill yet, so it just takes the
       // newest page as-is.
+      const chatBefore = { messages: allMessages, encrypted: allEncryptedMessages };
       allMessages = useSince
         ? trimToWindow(mergeById(allMessages, hydratedChat, 'id'), messageWindowFloor)
         : hydratedChat;
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
+      repaintPlanner.noteCollections(chatBefore, { messages: allMessages, encrypted: allEncryptedMessages });
       initialFetchDone = true;
-      applyFilter();
+      // SPEC DR4: repaint only the surfaces whose rows this refresh changed; a
+      // messages ping that changes no node, position or neighbour data
+      // repaints the chat alone, and an idle refresh repaints nothing.
+      applyDataChanges();
       // SPEC VF2/VF3/VF4: only an SSE-ping refresh flashes (refreshOptions.flash),
-      // and only after the table + map have rendered (applyFilter above), so the
+      // and only after the table + map have rendered (applyDataChanges above), so the
       // highlight lands on the final, placed element. useSince excludes the
       // initial fill. A node/position/telemetry delta flashes the changed node.
       if (refreshOptions.flash && useSince) {
@@ -6027,8 +6201,9 @@ export function initializeApp(config) {
   }
 
   // Reticulum destinations load in the background after first paint (SPEC RA8).
-  // The table is already rendering from /api/nodes by now; each page that lands
-  // repaints it with more groups, and a failing or slow walk simply leaves the
+  // The table is already rendering from /api/nodes by now; the pages that land
+  // repaint it with more groups, coalesced into idle-time repaints like the
+  // collection backfill (SPEC DR4), and a failing or slow walk simply leaves the
   // table ungrouped rather than blocking it. `loadDestinationIndex` never
   // rejects, so this needs no catch of its own.
   // Gated on the same +runsOwnPageModule+ guard as the rest of the data
@@ -6038,8 +6213,12 @@ export function initializeApp(config) {
     void loadDestinationIndex({
       onUpdate: index => {
         destinationIndex = index;
-        applyFilter();
+        // Pages coalesce into one idle repaint of the table (SPEC DR4, FP-A2).
+        queueDestinationRepaint();
       },
+    }).then(() => {
+      // The walk is done: paint the final groups now rather than at idle time.
+      flushBackfillRepaint();
     });
   }
 
@@ -6203,11 +6382,19 @@ export function initializeApp(config) {
       /** Whether the node-table render cap has been lifted (test use only). */
       isNodeTableExpanded: () => nodeTableExpanded,
       /**
-       * Cumulative count of full {@link renderFilteredOutputs} repaints (test
-       * use only) — the backfill de-jank guard resets this after first paint and
-       * asserts the streamed backfill coalesces into a bounded repaint count.
+       * Cumulative count of {@link renderFilteredOutputs} repaints that painted
+       * at least one surface (test use only) — the backfill de-jank guard resets
+       * this after first paint and asserts the streamed backfill coalesces into a
+       * bounded repaint count.
        */
       getRenderCount: () => renderFilteredOutputsCount,
+      /**
+       * Repaints per surface handed out by the repaint planner (SPEC DR4; test
+       * use only): ``{ table, map, chat }``.
+       *
+       * @returns {{ table: number, map: number, chat: number }}
+       */
+      getSurfaceRenderCounts: () => repaintPlanner.renderCounts(),
       /** Reset the repaint counter (test use only). */
       resetRenderCount: () => {
         renderFilteredOutputsCount = 0;
