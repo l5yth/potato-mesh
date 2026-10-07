@@ -702,7 +702,10 @@ class LiveDomModel {
    * @returns {void}
    */
   parseInto(parent, html) {
-    const token = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>|<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*(\/?)>/g;
+    // Names and unquoted values exclude quotes, as in HTML, so a quoted value
+    // matches one way only; overlapping classes backtrack exponentially on an
+    // unclosed tag (CodeQL js/redos).
+    const token = /<\/([a-zA-Z][a-zA-Z0-9-]*)\s*>|<([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^\s"'=>/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?)*)\s*(\/?)>/g;
     const stack = [parent];
     let last = 0;
     let match;
