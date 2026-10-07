@@ -47,6 +47,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import meshcore_frames as frames  # noqa: E402 - pytest puts tests/ on sys.path
+
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
 from data.mesh_ingestor.mesh_protocol import MeshProtocol  # noqa: E402 - path setup
 from data.mesh_ingestor.protocols.meshtastic import (  # noqa: E402 - path setup
@@ -2807,6 +2809,45 @@ def test_rx_advert_to_node_dict_minimal_frame():
     assert isinstance(node["lastHeard"], int)
 
 
+def _signed_rx_advert(
+    seed, app_data, *, adv_timestamp, recv_time, snr=None, rssi=None, hops=0
+):
+    """Return a parsed RX-log ADVERT signed with the test key derived from *seed*.
+
+    The ingestor posts an RX-log advert only when its signature holds (SPEC
+    SG1), so every advert fixture is a real on-air payload signed with a key
+    derived from a fixed seed when the test runs; no private key is stored.
+
+    Parameters:
+        seed: Fixed label the advertiser's key is derived from.
+        app_data: Encoded app data (:func:`meshcore_frames.advert_app_data`).
+        adv_timestamp: Sender-side advert time the payload signs.
+        recv_time: Receiver-side reception time.
+        snr: Reception SNR in dB, or ``None``.
+        rssi: Reception RSSI in dBm, or ``None``.
+        hops: Repeaters the copy travelled.
+
+    Returns:
+        The frame as the pinned library's packet parser reports it.
+    """
+    payload = frames.advert_payload(frames.advert_key(seed), adv_timestamp, app_data)
+    return frames.rx_log_advert(
+        payload, recv_time=recv_time, snr=snr, rssi=rssi, hops=hops
+    )
+
+
+_BER_SEED = "potato-mesh test advertiser: BER Drachentoeter"
+"""Seed of the repeater key the BER Drachentoeter advert fixtures sign with."""
+
+_BER_APP_DATA = frames.advert_app_data(
+    frames.ADV_TYPE_REPEATER,
+    name="BER Drachentoeter",
+    lat_e6=52_516_274,
+    lon_e6=13_405_612,
+)
+"""App data of the BER Drachentoeter repeater: name, role and position."""
+
+
 def test_on_rx_log_data_advert_upserts_node_and_position(monkeypatch):
     """An RX-log ADVERT frame upserts the full node and stores its position."""
     import asyncio
@@ -2820,34 +2861,26 @@ def test_on_rx_log_data_advert_upserts_node_and_position(monkeypatch):
         lambda *args: positions.append(args),
     )
 
-    pub_key = "511617e3" + "00" * 28
-    asyncio.run(
-        hmap["RX_LOG_DATA"](
-            _FakeEvt(
-                {
-                    "payload_typename": "ADVERT",
-                    "adv_key": pub_key,
-                    "adv_name": "BER Drachentoeter",
-                    "adv_type": 2,
-                    "adv_lat": 52.516274,
-                    "adv_lon": 13.405612,
-                    "recv_time": 1_758_000_021,
-                    "snr": 11.5,
-                    "rssi": -70,
-                    "path_len": 3,
-                }
-            )
-        )
+    frame = _signed_rx_advert(
+        _BER_SEED,
+        _BER_APP_DATA,
+        adv_timestamp=1_758_000_000,
+        recv_time=1_758_000_021,
+        snr=11.5,
+        rssi=-70,
+        hops=3,
     )
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt(frame)))
 
+    expected_id = frames.advert_node_id(frames.advert_key(_BER_SEED))
     assert captured == []  # adverts never produce message packets
     assert len(upserted) == 1
     node_id, node = upserted[0]
-    assert node_id == "!511617e3"
+    assert node_id == expected_id
     assert node["user"]["longName"] == "BER Drachentoeter"
     assert node["snr"] == 11.5 and node["rssi"] == -70 and node["hopsAway"] == 3
     assert len(positions) == 1
-    assert positions[0][0] == "!511617e3"
+    assert positions[0][0] == expected_id
     assert positions[0][1] == 52.516274 and positions[0][2] == 13.405612
 
 
@@ -2867,23 +2900,14 @@ def test_on_rx_log_data_advert_position_rx_time_is_now(monkeypatch):
         lambda route, payload, **_k: posted.append((route, payload)),
     )
 
-    before = int(_time.time())
-    asyncio.run(
-        hmap["RX_LOG_DATA"](
-            _FakeEvt(
-                {
-                    "payload_typename": "ADVERT",
-                    "adv_key": "511617e3" + "00" * 28,
-                    "adv_name": "BER Drachentoeter",
-                    "adv_type": 2,
-                    "adv_lat": 52.516274,
-                    "adv_lon": 13.405612,
-                    "adv_timestamp": 1_758_000_000,
-                    "recv_time": 1_758_000_021,
-                }
-            )
-        )
+    frame = _signed_rx_advert(
+        _BER_SEED,
+        _BER_APP_DATA,
+        adv_timestamp=1_758_000_000,
+        recv_time=1_758_000_021,
     )
+    before = int(_time.time())
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt(frame)))
     after = int(_time.time())
 
     pos = [p for r, p in posted if r == "/api/positions"][0]
@@ -2904,17 +2928,14 @@ def test_on_rx_log_data_advert_without_position_skips_position_store(monkeypatch
         lambda *args: positions.append(args),
     )
 
-    asyncio.run(
-        hmap["RX_LOG_DATA"](
-            _FakeEvt(
-                {
-                    "payload_typename": "ADVERT",
-                    "adv_key": "aabbccdd" + "00" * 28,
-                    "snr": 4.0,
-                }
-            )
-        )
+    frame = _signed_rx_advert(
+        "potato-mesh test advertiser: unnamed",
+        frames.advert_app_data(),
+        adv_timestamp=1_758_000_000,
+        recv_time=1_758_000_022,
+        snr=4.0,
     )
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt(frame)))
 
     assert len(upserted) == 1
     assert positions == []
@@ -2989,23 +3010,31 @@ def test_on_rx_log_data_malformed_advert_tolerated(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _rx_advert_frame(**overrides):
-    """Build a full RX-log ADVERT frame with sender-side ``adv_timestamp``."""
-    frame = {
-        "payload_typename": "ADVERT",
-        "adv_key": "ae46e493" + "00" * 28,
-        "adv_name": "Flood Node",
-        "adv_type": 1,
-        "adv_lat": 52.498481,
-        "adv_lon": 13.475442,
-        "adv_timestamp": 1_784_803_284,
-        "recv_time": 1_784_803_284,
-        "snr": -11.5,
-        "rssi": -124,
-        "path_len": 5,
-    }
-    frame.update(overrides)
-    return frame
+def _rx_advert_frame(*, adv_timestamp=1_784_803_284, recv_time=1_784_803_284):
+    """Build a full, signed RX-log ADVERT frame with sender-side ``adv_timestamp``.
+
+    Parameters:
+        adv_timestamp: Sender-side advert time the payload signs.
+        recv_time: Receiver-side reception time of this copy.
+
+    Returns:
+        The parsed frame of a five-hop flood copy.
+    """
+    app_data = frames.advert_app_data(
+        frames.ADV_TYPE_CHAT,
+        name="Flood Node",
+        lat_e6=52_498_481,
+        lon_e6=13_475_442,
+    )
+    return _signed_rx_advert(
+        "potato-mesh test advertiser: Flood Node",
+        app_data,
+        adv_timestamp=adv_timestamp,
+        recv_time=recv_time,
+        snr=-11.5,
+        rssi=-124,
+        hops=5,
+    )
 
 
 def test_on_rx_log_data_advert_position_time_uses_sender_adv_timestamp(monkeypatch):
@@ -3013,10 +3042,13 @@ def test_on_rx_log_data_advert_position_time_uses_sender_adv_timestamp(monkeypat
 
     Every flood copy of one advert carries the same ``adv_timestamp`` but its
     own receiver-side ``recv_time``; keying the position on ``recv_time`` mints
-    one row per copy (and per ingestor) instead of deduplicating (MR-A3).
+    one row per copy (and per ingestor) instead of deduplicating (MR-A3).  One
+    ingestor posts only the first copy it hears (SPEC SG5), so here four
+    ingestors each hear one copy, each with its own empty replay memory.
     """
     import asyncio
     import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+    from data.mesh_ingestor.protocols.meshcore import advert_replay
 
     _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     positions: list = []
@@ -3027,6 +3059,7 @@ def test_on_rx_log_data_advert_position_time_uses_sender_adv_timestamp(monkeypat
     )
 
     for offset in (0, 3, 5, 17):
+        advert_replay._reset_replay_memory()  # the next ingestor's process
         asyncio.run(
             hmap["RX_LOG_DATA"](
                 _FakeEvt(_rx_advert_frame(recv_time=1_784_803_284 + offset))
@@ -3040,9 +3073,15 @@ def test_on_rx_log_data_advert_position_time_uses_sender_adv_timestamp(monkeypat
 
 
 def test_on_rx_log_data_advert_flood_copies_collapse_to_one_position_id(monkeypatch):
-    """Four flood copies of one advert must queue a single position identity."""
+    """Four flood copies of one advert must queue a single position identity.
+
+    One ingestor posts only the first copy it hears (SPEC SG5), so here four
+    ingestors each hear one copy, each with its own empty replay memory, and
+    their four position posts must share one id.
+    """
     import asyncio
     import data.mesh_ingestor.protocols.meshcore as _mod
+    from data.mesh_ingestor.protocols.meshcore import advert_replay
 
     _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     posted: list = []
@@ -3053,20 +3092,23 @@ def test_on_rx_log_data_advert_flood_copies_collapse_to_one_position_id(monkeypa
     )
 
     for offset in (0, 3, 5, 17):
+        advert_replay._reset_replay_memory()  # the next ingestor's process
         asyncio.run(
             hmap["RX_LOG_DATA"](
                 _FakeEvt(_rx_advert_frame(recv_time=1_784_803_284 + offset))
             )
         )
 
-    position_ids = {p["id"] for route, p in posted if route == "/api/positions"}
-    assert len(position_ids) == 1
+    position_posts = [p for route, p in posted if route == "/api/positions"]
+    assert len(position_posts) == 4
+    assert len({p["id"] for p in position_posts}) == 1
 
 
 def test_on_rx_log_data_advert_position_falls_back_to_recv_time(monkeypatch):
     """Absent or zero ``adv_timestamp`` degrades to the receiver-side time."""
     import asyncio
     import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+    from data.mesh_ingestor.protocols.meshcore import advert_replay
 
     _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     positions: list = []
@@ -3079,6 +3121,10 @@ def test_on_rx_log_data_advert_position_falls_back_to_recv_time(monkeypatch):
     frame = _rx_advert_frame(recv_time=1_784_803_300)
     del frame["adv_timestamp"]
     asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt(frame)))
+    # The zero-timestamp advert is older than the first (signed 1_784_803_284),
+    # so the same ingestor would refuse it (SPEC SG5); another ingestor, with
+    # its own replay memory, hears it.
+    advert_replay._reset_replay_memory()
     asyncio.run(
         hmap["RX_LOG_DATA"](
             _FakeEvt(_rx_advert_frame(adv_timestamp=0, recv_time=1_784_803_301))

@@ -20,6 +20,12 @@ import sys
 import time
 
 from ... import config, ingestors as _ingestors
+from .advert_replay import (
+    _accept_advert_timestamp,
+    _raise_roster_advert,
+    _take_roster_listing,
+)
+from .advert_signature import _rx_advert_signature_problem, _rx_advert_signed_timestamp
 from .decode import (
     _advert_to_node_dict,
     _contact_to_node_dict,
@@ -108,20 +114,32 @@ def _process_self_info(
 
 
 def _process_contacts(
-    contacts: dict, iface: _MeshcoreInterface, handlers: object
+    contacts: dict,
+    iface: _MeshcoreInterface,
+    handlers: object,
+    *,
+    full_listing: bool = False,
 ) -> None:
     """Apply a bulk ``CONTACTS`` payload: update the local snapshot and upsert nodes.
+
+    The listing also sets which keys the RX-log replay memory treats as the
+    radio's roster (SPEC SG5, :func:`.advert_replay._take_roster_listing`).
 
     Parameters:
         contacts: Mapping of full ``public_key`` hex strings to contact dicts.
         iface: Active interface whose contact snapshot will be updated.
         handlers: Module reference for :func:`~data.mesh_ingestor.handlers`.
+        full_listing: ``True`` when *contacts* is the radio's whole roster
+            (the first listing of a connection), ``False`` for a listing of
+            changed contacts only (the auto-update re-fetch).
     """
+    last_adverts: dict[str, object] = {}
     for pub_key, contact in contacts.items():
         node_id = _meshcore_node_id(pub_key)
         if node_id is None:
             continue
         iface._update_contact(contact)
+        last_adverts[pub_key] = contact.get("last_advert")
         handlers.upsert_node(node_id, _contact_to_node_dict(contact))
         lat = contact.get("adv_lat")
         lon = contact.get("adv_lon")
@@ -139,6 +157,10 @@ def _process_contacts(
                 pub_key,
                 rx_time=last_advert,
             )
+    # The firmware verified each listed contact's last advert: the listing
+    # sets the roster pool, whose timestamps refuse an RX-log copy of those
+    # adverts, or older ones (SPEC SG5).
+    _take_roster_listing(last_adverts, full=full_listing)
     # Companion-link roster fetch, not over-air frames: clock only (Model A).
     handlers._mark_packet_activity()
 
@@ -158,6 +180,9 @@ def _process_contact_update(
     if node_id is None:
         return
     iface._update_contact(contact)
+    # Raises a roster member's timestamp only, never adds a member: the radio
+    # pushes NEW_CONTACT for an advert from a key it did not add (SPEC SG5).
+    _raise_roster_advert(pub_key, contact.get("last_advert"))
     handlers.upsert_node(node_id, _contact_to_node_dict(contact))
     lat = contact.get("adv_lat")
     lon = contact.get("adv_lon")
@@ -215,8 +240,18 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     async def on_self_info(evt) -> None:
         _process_self_info(evt.payload or {}, iface, _handlers)
 
+    # The first CONTACTS listing of a connection is the radio's whole roster:
+    # each connection builds a new MeshCore, whose first fetch asks with
+    # since = 0.  Later listings come from the auto-update re-fetch, which asks
+    # only for contacts changed since the newest lastmod (SPEC SG5).
+    full_listing_seen = False
+
     async def on_contacts(evt) -> None:
-        _process_contacts(evt.payload or {}, iface, _handlers)
+        nonlocal full_listing_seen
+        _process_contacts(
+            evt.payload or {}, iface, _handlers, full_listing=not full_listing_seen
+        )
+        full_listing_seen = True
 
     async def on_contact_update(evt) -> None:
         _process_contact_update(evt.payload or {}, iface, _handlers)
@@ -363,8 +398,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # "what is in the air" — while the decoded high-level events
         # (CHANNEL_MSG_RECV, CONTACT_MSG_RECV, ADVERTISEMENT, telemetry
         # responses) are duplicates of these same frames and only advance the
-        # reconnect clock. Counting precedes the DEBUG-capture drop and the
-        # malformed-advert skip, so no received frame — ignored, errored, or
+        # reconnect clock. Counting precedes the DEBUG-capture drop, the
+        # malformed-advert skip and the signature and replay checks, so no
+        # received frame — ignored, errored, forged, replayed, or
         # unimplemented — is under-reported.
         _handlers._mark_packet_seen()
         # Remember each decrypted channel-message copy so on_channel_msg can
@@ -392,6 +428,30 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 "Malformed RX-log advert skipped",
                 context="meshcore.rx_advert",
                 severity="warning",
+            )
+            return
+
+        # The radio logs every frame before the firmware checks it, and the
+        # library parses an advert without checking its signature, so an
+        # RX-log advert posts its node and position only when its signature
+        # holds under a key not of small order (SPEC SG1, SG4) and its signed
+        # timestamp is newer than the last one accepted for that key (SG5):
+        # a replay, or the same advert over another path, posts nothing.  The
+        # replay check runs only on a verified advert, so a forged timestamp
+        # is never remembered.  The drop logs at debug level: a forged, broken
+        # or repeated frame is per-packet noise a warning would flood the log
+        # with.
+        reason = _rx_advert_signature_problem(payload)
+        if reason is None and not _accept_advert_timestamp(
+            pub_key, _rx_advert_signed_timestamp(payload)
+        ):
+            reason = "replayed advert"
+        if reason is not None:
+            config._debug_log(
+                "Unverified RX-log advert dropped",
+                context="meshcore.rx_advert",
+                node_id=node_id,
+                reason=reason,
             )
             return
 
