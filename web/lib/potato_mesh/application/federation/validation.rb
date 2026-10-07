@@ -18,7 +18,8 @@ module PotatoMesh
   module App
     module Federation
       # Validate a remote +/.well-known+ document, including signature checks
-      # against the supplied public key.
+      # against the supplied public key. Domains compare without a default
+      # port, so a document for +host+ vouches for +host:443+ (SPEC FL1).
       #
       # @param document [Hash] decoded well-known document.
       # @param domain [String] expected sanitized domain.
@@ -36,7 +37,7 @@ module PotatoMesh
 
         remote_domain = string_or_nil(document["domain"])
         return [false, "domain missing"] unless remote_domain
-        return [false, "domain mismatch"] unless remote_domain.casecmp?(domain)
+        return [false, "domain mismatch"] unless same_federation_domain?(remote_domain, domain)
 
         algorithm = string_or_nil(document["signature_algorithm"] || document["signatureAlgorithm"])
         unless algorithm&.casecmp?(PotatoMesh::Config.instance_signature_algorithm)
@@ -62,7 +63,7 @@ module PotatoMesh
 
         payload_domain = string_or_nil(payload["domain"])
         payload_pubkey = sanitize_public_key_pem(payload["public_key"] || payload["publicKey"])
-        return [false, "signed payload domain mismatch"] unless payload_domain&.casecmp?(domain)
+        return [false, "signed payload domain mismatch"] unless payload_domain && same_federation_domain?(payload_domain, domain)
         return [false, "signed payload public key mismatch"] unless payload_pubkey == pubkey
 
         [true, nil]
@@ -70,6 +71,16 @@ module PotatoMesh
         [false, e.message]
       rescue JSON::ParserError => e
         [false, "signed payload JSON error: #{e.message}"]
+      end
+
+      # Whether two domains name one instance endpoint: equal ignoring case
+      # and a default port (SPEC FL1).
+      #
+      # @param left [String] a domain.
+      # @param right [String] another domain.
+      # @return [Boolean] true when they compare equal.
+      def same_federation_domain?(left, right)
+        federation_domain_key(left.downcase) == federation_domain_key(right.to_s.downcase)
       end
 
       # Confirm a remote +/api/nodes+ payload contains a sufficient set of

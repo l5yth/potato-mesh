@@ -143,19 +143,18 @@ RSpec.describe "Federation relayed records" do
   let(:warnings) { [] }
 
   # Enable federation, keep DNS offline, answer the registration route's
-  # well-known fetch with +result+ and its node fetch with fresh nodes, record
-  # its warnings, and schedule no crawl.
+  # well-known fetch with +result+ and its node fetch with fresh nodes, and
+  # record its warnings. A registration schedules no crawl (SPEC FL3).
   #
   # @param result [Array] result returned for +/.well-known/potato-mesh+.
   # @return [void]
   def stub_registration(result)
     allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
     allow_any_instance_of(Sinatra::Application).to receive(:resolve_remote_ip_addresses).and_return([])
-    allow_any_instance_of(Sinatra::Application).to receive(:enqueue_federation_crawl).and_return(false)
     allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
       if path == well_known_path
         result
-      elsif path == "/api/nodes"
+      elsif path.start_with?("/api/nodes")
         [fresh_nodes, URI("https://#{host}#{path}")]
       else
         [nil, ["#{host}#{path}: not served"]]
@@ -216,7 +215,7 @@ RSpec.describe "Federation relayed records" do
 
     # Crawl the relaying peer once.
     #
-    # @return [Set<String>] visited domains.
+    # @return [PotatoMesh::App::Federation::CrawlState] the crawl.
     def crawl
       with_db { |db| application_class.ingest_known_instances_from!(db, relay_domain) }
     end
@@ -342,8 +341,8 @@ RSpec.describe "Federation relayed records" do
       it "keeps a genuine row stored between the check of a record carrying its id and that record's upsert" do
         # Simulate the genuine instance announcing directly while the crawl
         # handles the record: its row lands right after the check.
-        allow(application_class).to receive(:confirm_relayed_instance_key).and_wrap_original do |original, *args|
-          original.call(*args).tap { store(genuine_key, genuine) }
+        allow(application_class).to receive(:confirm_relayed_instance_key).and_wrap_original do |original, *args, **kwargs|
+          original.call(*args, **kwargs).tap { store(genuine_key, genuine) }
         end
         stub_peers(relayed: wire_record(other_key, hijack), well_known: attacker_well_known)
 

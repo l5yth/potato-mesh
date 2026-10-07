@@ -137,311 +137,530 @@ module PotatoMesh
         [nil, nil, e.message]
       end
 
-      # Enqueue a federation crawl for the supplied domain using the worker pool.
+      # Count fields of a federation record.
+      INSTANCE_COUNT_KEYS = %i[nodes_count meshcore_nodes_count meshtastic_nodes_count reticulum_nodes_count].freeze
+
+      # Per-protocol count fields and the protocol each counts.
+      PROTOCOL_COUNT_KEYS = {
+        meshcore_nodes_count: "meshcore",
+        meshtastic_nodes_count: "meshtastic",
+        reticulum_nodes_count: "reticulum",
+      }.freeze
+
+      # Symbol a crawl throws once it spent a budget or passed its deadline;
+      # each level of the crawl catches it and unwinds (SPEC FL6).
+      FEDERATION_CRAWL_STOPPED = :potato_mesh_federation_crawl_stopped
+
+      # Path of the node list a peer is judged on: its newest
+      # {PotatoMesh::Config.remote_instance_min_node_count} nodes inside the
+      # 7-day floor of every +GET /api/nodes+, the acceptance window of
+      # ACCEPTANCE FS-A5 (SPEC FL2, RL9).
       #
-      # @param domain [String] sanitized remote domain to crawl.
-      # @param per_response_limit [Integer, nil] maximum entries processed per response.
-      # @param overall_limit [Integer, nil] maximum unique domains visited.
-      # @return [Boolean] true when the crawl was scheduled successfully.
-      def enqueue_federation_crawl(domain, per_response_limit:, overall_limit:)
-        sanitized_domain = sanitize_instance_domain(domain)
-        unless sanitized_domain
-          warn_log(
-            "Skipped remote instance crawl",
-            context: "federation.instances",
-            domain: domain,
-            reason: "invalid domain",
-          )
-          return false
-        end
-        return false if federation_shutdown_requested?
+      # @return [String] request path.
+      def remote_instance_acceptance_path
+        "/api/nodes?limit=#{PotatoMesh::Config.remote_instance_min_node_count}"
+      end
 
-        application = is_a?(Class) ? self : self.class
-        pool = application.federation_worker_pool
-        unless pool
-          debug_log(
-            "Skipped remote instance crawl",
-            context: "federation.instances",
-            domain: sanitized_domain,
-            reason: "federation disabled",
-          )
-          return false
-        end
+      # Path of a peer's node list for the 24 hours of the federation counts
+      # (SPEC RL9).
+      #
+      # @return [String] request path.
+      def remote_instance_recent_nodes_path
+        since = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        "/api/nodes?since=#{since}&limit=1000"
+      end
 
-        claim_result = application.claim_federation_crawl_slot(sanitized_domain)
-        unless claim_result == :claimed
-          debug_log(
-            "Skipped remote instance crawl",
-            context: "federation.instances",
-            domain: sanitized_domain,
-            reason: claim_result == :in_flight ? "crawl already in flight" : "recent crawl completed",
-          )
-          return false
-        end
+      # Fill the node counts a federation record lacks, on both paths, the
+      # crawl and the registration (SPEC FL2, RL9).
+      #
+      # The signed counts stay as they are. Only when one is missing is the
+      # peer's +/api/stats+ read for its 24-hour figures, and only when the
+      # total is still missing its 24-hour node list, whose entries heard in
+      # those 24 hours are counted, in total and per protocol. The node list
+      # that decides acceptance never feeds a count.
+      #
+      # @param attributes [Hash] record attributes; nil counts are filled in
+      #   place.
+      # @param domain [String] peer domain, for the log.
+      # @param stats [#call] returns the peer's +/api/stats+ fetch result.
+      # @param recent_nodes [#call] returns the peer's 24-hour node list fetch
+      #   result.
+      # @return [Hash] +attributes+.
+      def fill_missing_instance_counts!(attributes, domain:, stats:, recent_nodes:)
+        return attributes unless INSTANCE_COUNT_KEYS.any? { |key| attributes[key].nil? }
 
-        pool.schedule do
-          db = nil
-          begin
-            db = application.open_database
-            application.ingest_known_instances_from!(
-              db,
-              sanitized_domain,
-              per_response_limit: per_response_limit,
-              overall_limit: overall_limit,
-            )
-          ensure
-            db&.close
-            application.release_federation_crawl_slot(sanitized_domain)
+        window = PotatoMesh::Config.remote_instance_max_node_age
+        stats_payload, stats_metadata = stats.call
+        if stats_payload.is_a?(Hash)
+          total = remote_active_node_count_from_stats(stats_payload, max_age_seconds: window)
+          attributes[:nodes_count] = total if total && attributes[:nodes_count].nil?
+          PROTOCOL_COUNT_KEYS.each do |key, protocol|
+            value = remote_stats_protocol_day(stats_payload, protocol)
+            attributes[key] = value if value && attributes[key].nil?
           end
         end
+        return attributes unless attributes[:nodes_count].nil?
 
-        true
-      rescue PotatoMesh::App::WorkerPool::QueueFullError
-        application.handle_failed_federation_crawl_schedule(sanitized_domain, "worker queue saturated")
-      rescue PotatoMesh::App::WorkerPool::ShutdownError
-        application.handle_failed_federation_crawl_schedule(sanitized_domain, "worker pool shut down")
+        if Array(stats_metadata).any?
+          debug_log(
+            "Remote instance /api/stats unavailable; using node list fallback",
+            context: "federation.instances",
+            domain: domain,
+            reason: Array(stats_metadata).map(&:to_s).join("; "),
+          )
+        end
+        nodes, = recent_nodes.call
+        return attributes unless nodes.is_a?(Array)
+
+        cutoff = Time.now.to_i - window
+        heard = nodes.select { |node| (remote_node_last_heard(node) || 0) >= cutoff }
+        attributes[:nodes_count] = heard.length
+        PROTOCOL_COUNT_KEYS.each do |key, protocol|
+          next unless attributes[key].nil?
+
+          attributes[key] = heard.count { |node| (node["protocol"] || node["mesh_protocol"]).to_s.downcase == protocol }
+        end
+        attributes
       end
 
-      # Handle a failed crawl schedule attempt without applying cooldown.
+      # Start the state of a new crawl, with its limits (SPEC FL1, FL6).
       #
-      # @param domain [String] canonical domain that failed to schedule.
-      # @param reason [String] human-readable failure reason.
-      # @return [Boolean] always false because scheduling did not succeed.
-      def handle_failed_federation_crawl_schedule(domain, reason)
-        release_federation_crawl_slot(domain, record_completion: false)
-        warn_log(
-          "Skipped remote instance crawl",
+      # @param max_domains [Integer, nil] most domains the crawl fetches;
+      #   nil for {PotatoMesh::Config.federation_max_domains_per_crawl}.
+      # @return [CrawlState] the new crawl.
+      def new_federation_crawl(max_domains: nil)
+        CrawlState.new(
+          own_domain: federation_domain_key(sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))),
+          max_domains: max_domains || PotatoMesh::Config.federation_max_domains_per_crawl,
+          max_requests: PotatoMesh::Config.federation_max_requests_per_crawl,
+          deadline_seconds: PotatoMesh::Config.federation_task_timeout_seconds,
+        )
+      end
+
+      # Send one crawl request through the crawl's limits and the peer fetch
+      # cooldown (SPEC FL1, FL3, FL6).
+      #
+      # When a request would pass the crawl's request budget, its domain
+      # budget or its deadline, the crawl stops: this logs it and throws
+      # {FEDERATION_CRAWL_STOPPED}. The first request to a host claims the
+      # host's cooldown for this crawl, so its later requests in the crawl
+      # pass while every other crawl and registration waits.
+      #
+      # @param crawl [CrawlState] the crawl.
+      # @param domain [String] sanitized domain the request goes to.
+      # @yieldreturn [Array(Object, Object)] the +fetch_instance_json+ result.
+      # @return [Array(Object, Object)] the block's result, or
+      #   +[nil, [reason]]+ when the host's cooldown is held elsewhere.
+      def federation_crawl_request(crawl, domain)
+        unless crawl.request_allowed?(domain)
+          debug_log(
+            "Stopped federation crawl",
+            context: "federation.instances",
+            domain: domain,
+            reason: crawl.stop_reason,
+            request_count: crawl.requests,
+            domain_count: crawl.fetched_domains.size,
+          )
+          throw FEDERATION_CRAWL_STOPPED
+        end
+
+        host = federation_peer_host(domain)
+        unless crawl.claimed?(host)
+          wait = federation_peer_backoff.claim(host, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
+          return [nil, ["#{domain}: peer fetch cooldown, #{wait.ceil} s left"]] if wait.positive?
+
+          crawl.claim(host)
+        end
+        crawl.spend_request(domain)
+        yield
+      end
+
+      # Whether a crawl leaves +host+ alone: another domain of the host was
+      # already visited in this crawl, or the host was fetched inside its
+      # cooldown, or backs off, outside this crawl (SPEC FL1, FL3). The
+      # stored record is kept.
+      #
+      # @param crawl [CrawlState] the crawl.
+      # @param host [String, nil] peer host.
+      # @param domain [String] sanitized domain on the host.
+      # @param message [String] debug log message for a skip.
+      # @return [Boolean] true when the crawl must skip the host.
+      def federation_crawl_skip?(crawl, host, domain, message)
+        visit = crawl.visit(host)
+        if visit && federation_domain_key(visit[:domain]) != federation_domain_key(domain)
+          debug_log(
+            message,
+            context: "federation.instances",
+            domain: domain,
+            reason: "host already fetched in this crawl for #{visit[:domain]}",
+          )
+          return true
+        end
+        return false if crawl.claimed?(host)
+
+        wait = federation_peer_backoff.wait_seconds(host, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
+        return false unless wait.positive?
+
+        debug_log(
+          message,
           context: "federation.instances",
           domain: domain,
-          reason: reason,
+          reason: federation_peer_backoff.backoff_seconds(host).positive? ? "peer backoff" : "peer fetch cooldown",
+          retry_in: wait.ceil,
         )
-        false
+        true
       end
 
-      # Recursively ingest federation records exposed by the supplied domain.
+      # Judge a peer on the result of its acceptance-list fetch (SPEC FL2),
+      # in the shape both paths keep for the host's cooldown (SPEC FL7).
       #
-      # A peer is judged on its +/api/nodes+ list or, when that fails, on the
-      # nodes it heard within {PotatoMesh::Config.remote_instance_max_inactivity}
-      # (ACCEPTANCE FS-A5).  Node counts cover only
-      # {PotatoMesh::Config.remote_instance_max_node_age} (SPEC RL9): the
-      # 24-hour +/api/nodes?since=+ list, or the +/api/nodes+ entries heard in
-      # that window; the 7-day list never feeds them.
+      # @param nodes [Array, nil] the decoded node list, nil when the fetch
+      #   failed.
+      # @param metadata [Object] the fetch's URI or its errors.
+      # @return [Hash] +:accepted+; for a refusal also the response +:error+,
+      #   the log +:reason+ and, for a failed fetch, the log +:details+.
+      def remote_instance_acceptance(nodes, metadata)
+        if nodes.nil?
+          details = Array(metadata).map(&:to_s)
+          return {
+                   accepted: false, error: "failed to fetch nodes", reason: "failed to fetch nodes",
+                   details: details.empty? ? "no response" : details.join("; "),
+                 }
+        end
+
+        fresh, reason = validate_remote_nodes(nodes)
+        return { accepted: true } if fresh
+
+        { accepted: false, error: reason || "stale node data", reason: reason || "stale node data" }
+      end
+
+      # Judge +domain+ on its one node list, once per host and crawl (SPEC
+      # FL1, FL2): later copies reuse the outcome, a failure included. The
+      # outcome is also kept for the host's cooldown (SPEC FL7).
+      #
+      # @param crawl [CrawlState] the crawl.
+      # @param domain [String] sanitized domain.
+      # @param host [String, nil] the domain's host.
+      # @return [Hash] the visit: +:domain+ and whether it was +:accepted+.
+      def visit_crawled_instance(crawl, domain, host)
+        visit = crawl.visit(host)
+        return visit if visit
+
+        acceptance = nil
+        nodes, metadata = federation_crawl_request(crawl, domain) do
+          fetch_instance_json(domain, remote_instance_acceptance_path).tap do |result|
+            acceptance = remote_instance_acceptance(*result)
+            federation_peer_backoff.record_acceptance(host, federation_domain_key(domain), acceptance)
+          end
+        end
+        acceptance ||= remote_instance_acceptance(nodes, metadata)
+        unless acceptance[:accepted]
+          warn_log(
+            nodes.nil? ? "Failed to load remote node data" : "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: domain,
+            reason: nodes.nil? ? acceptance[:details] : acceptance[:reason],
+          )
+        end
+        crawl.record_visit(host, { domain: domain, accepted: acceptance[:accepted] })
+      end
+
+      # Store one accepted copy of a relayed record, unless the row stored
+      # under its key is at least as new: among copies the newest signed
+      # +last_update+ wins and an older copy never rolls a row back (SPEC
+      # FL1). Missing counts are filled first, their fetches made once per
+      # host; the row is checked again right before the write, as one stored
+      # while they were fetched may be newer.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @param host [String, nil] the record's host.
+      # @param attributes [Hash] verified record attributes.
+      # @param signature [String] the record's signature.
+      # @return [Boolean] true when the copy was written.
+      # @raise [ArgumentError] when the domain is invalid or restricted.
+      def store_crawled_instance(db, crawl, host, attributes, signature)
+        domain = attributes[:domain]
+        return false if crawled_copy_outdated?(db, attributes)
+
+        visit = crawl.visit(host)
+        fill_missing_instance_counts!(
+          attributes,
+          domain: domain,
+          stats: -> { visit[:stats] ||= federation_crawl_request(crawl, domain) { fetch_instance_json(domain, "/api/stats") } },
+          recent_nodes: lambda {
+            visit[:recent_nodes] ||= federation_crawl_request(crawl, domain) do
+              fetch_instance_json(domain, remote_instance_recent_nodes_path)
+            end
+          },
+        )
+        return false if crawled_copy_outdated?(db, attributes)
+
+        upsert_instance_record(db, attributes, signature)
+        true
+      end
+
+      # Whether the row stored under a relayed copy's key is at least as new
+      # as the copy, logging the copy kept out (SPEC FL1).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param attributes [Hash] verified record attributes.
+      # @return [Boolean] true when the copy must not be stored.
+      def crawled_copy_outdated?(db, attributes)
+        stored = stored_instance_copy(db, attributes)
+        return false unless instance_copy_outdated?(stored, attributes)
+
+        debug_log(
+          "Kept stored remote instance",
+          context: "federation.instances",
+          domain: attributes[:domain],
+          stored_last_update: stored.last,
+          relayed_last_update: attributes[:last_update_time],
+        )
+        true
+      end
+
+      # Handle one entry of a peer's +/api/instances+ list.
+      #
+      # Every entry gets the local checks: its shape, the private flag, its
+      # signature, then FS9's id rule and FS8's well-known check, the
+      # document memoized per crawl. The network fetches after them, the
+      # node list, the count fallbacks and the walk of the entry's own list,
+      # happen once per host and crawl; the crawl never fetches this
+      # instance's own domain nor a host inside its peer fetch cooldown
+      # (SPEC FL1-FL3, FS8, FS9).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @param entry [Object] one decoded list entry.
+      # @param relayed_by [String] domain whose list holds the entry.
+      # @param per_response_limit [Integer] most entries read per list.
+      # @return [void]
+      def ingest_crawled_instance_entry(db, crawl, entry, relayed_by:, per_response_limit:)
+        attributes, signature, reason = remote_instance_attributes_from_payload(entry)
+        unless attributes && signature
+          warn_log(
+            "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: relayed_by,
+            reason: reason || "invalid payload",
+          )
+          return
+        end
+
+        if attributes[:is_private]
+          debug_log(
+            "Skipped private remote instance",
+            context: "federation.instances",
+            domain: attributes[:domain],
+          )
+          return
+        end
+
+        unless verify_instance_signature(attributes, signature, attributes[:pubkey])
+          warn_log(
+            "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: attributes[:domain],
+            reason: "invalid signature",
+          )
+          return
+        end
+
+        domain = attributes[:domain]
+        if crawl.own_domain?(federation_domain_key(domain))
+          debug_log(
+            "Skipped remote instance entry",
+            context: "federation.instances",
+            domain: domain,
+            reason: "own instance",
+          )
+          return
+        end
+
+        host = federation_peer_host(domain)
+        return if federation_crawl_skip?(crawl, host, domain, "Skipped remote instance entry")
+
+        # The signature proves only that the record was signed by the key it
+        # carries. Its id must be the one that key derives, and unless the
+        # record refreshes its domain's row under the stored key, the
+        # domain's own well-known document must name that key (SPEC FS8,
+        # FS9).
+        key_confirmed, key_reason = confirm_relayed_instance_key(db, attributes, crawl: crawl)
+        unless key_confirmed
+          warn_log(
+            "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: domain,
+            reason: key_reason,
+            relayed_by: relayed_by,
+          )
+          return
+        end
+
+        attributes[:is_private] = false if attributes[:is_private].nil?
+        return unless visit_crawled_instance(crawl, domain, host)[:accepted]
+
+        begin
+          store_crawled_instance(db, crawl, host, attributes, signature)
+          ingest_known_instances_from!(db, domain, crawl: crawl, per_response_limit: per_response_limit)
+        rescue ArgumentError => e
+          warn_log(
+            "Failed to persist remote instance",
+            context: "federation.instances",
+            domain: domain,
+            error_class: e.class.name,
+            error_message: e.message,
+          )
+        end
+      end
+
+      # Walk the federation records exposed by the supplied domain, and
+      # recursively the lists of the peers it names.
+      #
+      # One crawl state runs through the recursion (SPEC FL1, FL6): each
+      # host is fetched at most once, the walk stops at the crawl's request
+      # budget, domain budget ({PotatoMesh::Config.federation_max_domains_per_crawl}
+      # domains fetched) or deadline, and a host fetched inside its
+      # {PotatoMesh::Config.federation_peer_fetch_cooldown_seconds} outside
+      # this crawl is skipped. A peer is judged on one
+      # +/api/nodes?limit=10+ list, its newest nodes inside the 7-day floor
+      # (ACCEPTANCE FS-A5); node counts come from the signed record, else
+      # from {#fill_missing_instance_counts!} (SPEC FL2, RL9).
       #
       # @param db [SQLite3::Database] open database connection used for writes.
       # @param domain [String] remote domain to crawl for federation records.
-      # @param visited [Set<String>] domains processed during this crawl.
+      # @param crawl [CrawlState, nil] the crawl this walk belongs to; nil
+      #   starts a new one.
       # @param per_response_limit [Integer, nil] maximum entries processed per response.
-      # @param overall_limit [Integer, nil] maximum unique domains visited.
-      # @return [Set<String>] updated set of visited domains.
+      # @param overall_limit [Integer, nil] most domains a crawl started here
+      #   fetches.
+      # @return [CrawlState] the crawl.
       def ingest_known_instances_from!(
         db,
         domain,
-        visited: nil,
+        crawl: nil,
         per_response_limit: nil,
         overall_limit: nil
       )
-        sanitized = sanitize_instance_domain(domain)
-        return visited || Set.new unless sanitized
-        return visited || Set.new if federation_shutdown_requested?
-
-        visited ||= Set.new
-
-        overall_limit ||= PotatoMesh::Config.federation_max_domains_per_crawl
+        crawl ||= new_federation_crawl(max_domains: overall_limit)
         per_response_limit ||= PotatoMesh::Config.federation_max_instances_per_response
+        sanitized = sanitize_instance_domain(domain)
+        return crawl unless sanitized
+        return crawl if federation_shutdown_requested? || crawl.stopped? || crawl.own_domain?(federation_domain_key(sanitized))
 
-        if overall_limit && overall_limit.positive? && visited.size >= overall_limit
-          debug_log(
-            "Skipped remote instance crawl due to crawl limit",
-            context: "federation.instances",
-            domain: sanitized,
-            limit: overall_limit,
-          )
-          return visited
+        host = federation_peer_host(sanitized)
+        return crawl if crawl.walked?(host)
+        return crawl if federation_crawl_skip?(crawl, host, sanitized, "Skipped remote instance crawl")
+
+        crawl.walk(host)
+        catch(FEDERATION_CRAWL_STOPPED) do
+          walk_remote_instance_list(db, crawl, sanitized, per_response_limit)
         end
+        crawl
+      end
 
-        return visited if visited.include?(sanitized)
-
-        visited << sanitized
-
-        payload, metadata = fetch_instance_json(sanitized, "/api/instances")
+      # Fetch +domain+'s +/api/instances+ list and handle its entries.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @param domain [String] sanitized domain whose list is walked.
+      # @param per_response_limit [Integer, nil] most entries read.
+      # @return [void]
+      def walk_remote_instance_list(db, crawl, domain, per_response_limit)
+        payload, metadata = federation_crawl_request(crawl, domain) do
+          fetch_instance_json(domain, "/api/instances")
+        end
         unless payload.is_a?(Array)
           warn_log(
             "Failed to load remote federation instances",
             context: "federation.instances",
-            domain: sanitized,
+            domain: domain,
             reason: Array(metadata).map(&:to_s).join("; "),
           )
-          return visited
+          return
         end
 
         processed_entries = 0
-        recent_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
-        active_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_inactivity
         payload.each do |entry|
-          break if federation_shutdown_requested?
+          break if federation_shutdown_requested? || crawl.stopped?
 
           if per_response_limit && per_response_limit.positive? && processed_entries >= per_response_limit
             debug_log(
               "Skipped remote instance entry due to response limit",
               context: "federation.instances",
-              domain: sanitized,
+              domain: domain,
               limit: per_response_limit,
             )
             break
           end
 
-          if overall_limit && overall_limit.positive? && visited.size >= overall_limit
-            debug_log(
-              "Skipped remote instance entry due to crawl limit",
-              context: "federation.instances",
-              domain: sanitized,
-              limit: overall_limit,
-            )
-            break
-          end
-
           processed_entries += 1
-          attributes, signature, reason = remote_instance_attributes_from_payload(entry)
-          unless attributes && signature
-            warn_log(
-              "Discarded remote instance entry",
-              context: "federation.instances",
-              domain: sanitized,
-              reason: reason || "invalid payload",
-            )
-            next
-          end
+          ingest_crawled_instance_entry(db, crawl, entry, relayed_by: domain, per_response_limit: per_response_limit)
+        end
+      end
 
-          if attributes[:is_private]
-            debug_log(
-              "Skipped private remote instance",
-              context: "federation.instances",
-              domain: attributes[:domain],
-            )
-            next
-          end
+      # Crawl the federation once from this instance's seeds and known peers
+      # under one crawl state (SPEC FL3). The announcer thread runs it every
+      # announcement interval through {#run_federation_crawl_cycle}.
+      #
+      # @return [CrawlState] the finished crawl.
+      def crawl_federation!
+        crawl = new_federation_crawl
+        roots = federation_target_domains(crawl.own_domain)
+        db = open_database
+        roots.each do |root|
+          break if federation_shutdown_requested? || crawl.stopped?
 
-          unless verify_instance_signature(attributes, signature, attributes[:pubkey])
-            warn_log(
-              "Discarded remote instance entry",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: "invalid signature",
-            )
-            next
-          end
+          ingest_known_instances_from!(db, root, crawl: crawl)
+        end
+        info_log(
+          "Federation crawl complete",
+          context: "federation.instances",
+          root_count: roots.length,
+          domain_count: crawl.fetched_domains.size,
+          request_count: crawl.requests,
+          stop_reason: crawl.stop_reason,
+        )
+        crawl
+      ensure
+        db&.close
+      end
 
-          # The signature proves only that the record was signed by the key it
-          # carries. Its id must be the one that key derives, and unless the
-          # record refreshes its domain's row under the stored key, the
-          # domain's own well-known document must name that key (SPEC FS8,
-          # FS9).
-          key_confirmed, key_reason = confirm_relayed_instance_key(db, attributes)
-          unless key_confirmed
-            warn_log(
-              "Discarded remote instance entry",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: key_reason,
-              relayed_by: sanitized,
-            )
-            next
-          end
+      # Run one crawl on the federation worker pool and wait for it; the
+      # pool's task timeout ends a crawl that outlives it (SPEC FL3, FL6).
+      #
+      # @return [Boolean] true when the crawl ran to its end.
+      def run_federation_crawl_cycle
+        return false if federation_shutdown_requested?
 
-          attributes[:is_private] = false if attributes[:is_private].nil?
-
-          stats_payload, stats_metadata = fetch_instance_json(attributes[:domain], "/api/stats")
-          stats_count = remote_active_node_count_from_stats(
-            stats_payload,
-            max_age_seconds: PotatoMesh::Config.remote_instance_max_node_age,
+        pool = federation_worker_pool
+        unless pool
+          debug_log(
+            "Skipped federation crawl",
+            context: "federation.instances",
+            reason: "federation disabled",
           )
-          # Keep the SIGNED counts from the verified entry verbatim (SPEC FS2/(a)
-          # — relay-consistent); only fall back to the peer's live /api/stats when
-          # the entry carried no count.
-          attributes[:nodes_count] = stats_count if stats_count && attributes[:nodes_count].nil?
-
-          if stats_payload.is_a?(Hash)
-            mc_day = remote_stats_protocol_day(stats_payload, "meshcore")
-            mt_day = remote_stats_protocol_day(stats_payload, "meshtastic")
-            rt_day = remote_stats_protocol_day(stats_payload, "reticulum")
-            attributes[:meshcore_nodes_count] = mc_day if mc_day && attributes[:meshcore_nodes_count].nil?
-            attributes[:meshtastic_nodes_count] = mt_day if mt_day && attributes[:meshtastic_nodes_count].nil?
-            attributes[:reticulum_nodes_count] = rt_day if rt_day && attributes[:reticulum_nodes_count].nil?
-          end
-
-          nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
-          nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
-          if stats_count.nil? && attributes[:nodes_count].nil? && nodes_since_window.is_a?(Array)
-            attributes[:nodes_count] = nodes_since_window.length
-          end
-
-          remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          if attributes[:nodes_count].nil? && remote_nodes.is_a?(Array)
-            # The plain list covers 7 days; count only the nodes heard inside
-            # the 24-hour count window.
-            attributes[:nodes_count] = remote_nodes.count do |node|
-              (remote_node_last_heard(node) || 0) >= recent_cutoff
-            end
-          end
-          # Without the full list, judge the peer on its 7-day window: the
-          # 24-hour list above only feeds the counts.  The peer sorts by
-          # last_heard, so the newest minimum-count nodes decide acceptance.
-          if remote_nodes.nil?
-            min_nodes = PotatoMesh::Config.remote_instance_min_node_count
-            active_nodes_path = "/api/nodes?since=#{active_cutoff}&limit=#{min_nodes}"
-            remote_nodes, = fetch_instance_json(attributes[:domain], active_nodes_path)
-          end
-
-          if stats_count.nil? && Array(stats_metadata).any?
-            debug_log(
-              "Remote instance /api/stats unavailable; using node list fallback",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: Array(stats_metadata).map(&:to_s).join("; "),
-            )
-          end
-          unless remote_nodes
-            warn_log(
-              "Failed to load remote node data",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: Array(node_metadata || nodes_since_metadata).map(&:to_s).join("; "),
-            )
-            next
-          end
-
-          fresh, freshness_reason = validate_remote_nodes(remote_nodes)
-          unless fresh
-            warn_log(
-              "Discarded remote instance entry",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: freshness_reason || "stale node data",
-            )
-            next
-          end
-
-          begin
-            upsert_instance_record(db, attributes, signature)
-            ingest_known_instances_from!(
-              db,
-              attributes[:domain],
-              visited: visited,
-              per_response_limit: per_response_limit,
-              overall_limit: overall_limit,
-            )
-          rescue ArgumentError => e
-            warn_log(
-              "Failed to persist remote instance",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              error_class: e.class.name,
-              error_message: e.message,
-            )
-          end
+          return false
         end
 
-        visited
+        timeout = PotatoMesh::Config.federation_task_timeout_seconds
+        pool.schedule { crawl_federation! }.wait(timeout: timeout)
+        true
+      rescue PotatoMesh::App::WorkerPool::QueueFullError
+        warn_log("Skipped federation crawl", context: "federation.instances", reason: "worker queue saturated")
+        false
+      rescue PotatoMesh::App::WorkerPool::ShutdownError
+        warn_log("Skipped federation crawl", context: "federation.instances", reason: "worker pool shut down")
+        false
+      rescue PotatoMesh::App::WorkerPool::TaskTimeoutError => e
+        warn_log(
+          "Federation crawl timed out",
+          context: "federation.instances",
+          timeout: timeout,
+          error_message: e.message,
+        )
+        false
       end
     end
   end

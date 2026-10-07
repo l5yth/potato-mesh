@@ -23,6 +23,37 @@ module PotatoMesh
     # indicate success (e.g. 4xx/5xx).  Distinguished from {InstanceFetchError}
     # so callers can stop probing alternative transports (HTTP after HTTPS)
     # once a remote peer has already responded at the HTTP layer.
-    class InstanceHttpResponseError < InstanceFetchError; end
+    class InstanceHttpResponseError < InstanceFetchError
+      # @return [Integer, nil] HTTP status the peer answered with, or nil when
+      #   the error is not tied to a status (a body over the size cap).
+      attr_reader :status
+
+      # @return [Float, nil] seconds the peer's +Retry-After+ header asked
+      #   for, or nil when it sent none that parses.
+      attr_reader :retry_after
+
+      # @param message [String, nil] error message.
+      # @param status [Integer, nil] HTTP status of the response.
+      # @param retry_after [Float, nil] parsed +Retry-After+ seconds.
+      def initialize(message = nil, status: nil, retry_after: nil)
+        super(message)
+        @status = status
+        @retry_after = retry_after
+      end
+
+      # Whether the peer asked for less traffic, which backs off further
+      # requests to its host (SPEC FL4): a 429 or a 503. Any other answer,
+      # an error on one path included, shows the host is up.
+      #
+      # @return [Boolean] true for a 429 or a 503.
+      def peer_failure?
+        [429, 503].include?(status)
+      end
+    end
+
+    # Raised instead of sending a federation request once this instance's own
+    # federation deadline has passed (SPEC FL7). No request reached the peer,
+    # so it does not count against the peer's backoff (SPEC FL4).
+    class FederationDeadlineError < InstanceFetchError; end
   end
 end

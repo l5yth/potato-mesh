@@ -274,118 +274,93 @@ module PotatoMesh
               halt 400, { error: "restricted domain" }.to_json
             end
 
-            begin
-              resolve_remote_ip_addresses(URI.parse("https://#{attributes[:domain]}"))
-            rescue ArgumentError => e
-              warn_log(
-                "Instance registration rejected",
-                context: "ingest.register",
-                domain: attributes[:domain],
-                reason: "restricted domain",
-                error_message: e.message,
-              )
-              halt 400, { error: "restricted domain" }.to_json
-            rescue SocketError
-              # DNS lookups that fail to resolve are handled later when the
-              # registration flow attempts to contact the remote instance.
-            end
-
-            well_known_valid, well_known_failure, well_known_detail =
-              verify_well_known_identity(attributes[:domain], attributes[:pubkey])
-            if well_known_failure == :fetch_failed
-              warn_log(
-                "Instance registration rejected",
-                context: "ingest.register",
-                domain: attributes[:domain],
-                reason: "failed to fetch well-known document",
-                details: well_known_detail,
-              )
-              halt 400, { error: "failed to verify well-known document" }.to_json
-            end
-
-            unless well_known_valid
-              warn_log(
-                "Instance registration rejected",
-                context: "ingest.register",
-                domain: attributes[:domain],
-                reason: well_known_detail,
-              )
-              halt 400, { error: well_known_detail }.to_json
-            end
-
-            remote_nodes, node_source = fetch_instance_json(attributes[:domain], "/api/nodes")
-            unless remote_nodes
-              details_list = Array(node_source).map(&:to_s)
-              details = details_list.empty? ? "no response" : details_list.join("; ")
-              warn_log(
-                "Instance registration rejected",
-                context: "ingest.register",
-                domain: attributes[:domain],
-                reason: "failed to fetch nodes",
-                details: details,
-              )
-              halt 400, { error: "failed to fetch nodes" }.to_json
-            end
-
-            fresh, freshness_reason = validate_remote_nodes(remote_nodes)
-            unless fresh
-              warn_log(
-                "Instance registration rejected",
-                context: "ingest.register",
-                domain: attributes[:domain],
-                reason: freshness_reason || "stale node data",
-              )
-              halt 400, { error: freshness_reason || "stale node data" }.to_json
-            end
-
-            # Node-count fallback only (SPEC FS2/(a)): v2 announcements carry
-            # SIGNED counts, which we keep verbatim so the stored — and later
-            # relayed — record stays signature-consistent (a re-verifying peer
-            # rebuilds the same canonical).  We derive counts from the fetched
-            # node list only when the announcement omits them.
-            if remote_nodes.is_a?(Array) && attributes[:nodes_count].nil?
-              cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
-              total = 0
-              meshcore = 0
-              meshtastic = 0
-              reticulum = 0
-              remote_nodes.each do |n|
-                next unless n.is_a?(Hash)
-                ts = coerce_integer(n["lastHeard"] || n["last_heard"])
-                next unless ts && ts >= cutoff
-                total += 1
-                case (n["protocol"] || n["mesh_protocol"]).to_s.downcase
-                when "meshcore" then meshcore += 1
-                when "meshtastic" then meshtastic += 1
-                when "reticulum" then reticulum += 1
-                end
-              end
-              attributes[:nodes_count] = total
-              attributes[:meshcore_nodes_count] = meshcore
-              attributes[:meshtastic_nodes_count] = meshtastic
-              attributes[:reticulum_nodes_count] = reticulum
-            end
-
+            # An announcement under the stored key whose signed last_update is
+            # not newer than the stored row changes nothing, so it is answered
+            # 201 at once, without a fetch: a replayed older copy never rolls
+            # the row back, and announcers count any 2xx as success (SPEC FL1,
+            # FL7).
             db = open_database
-            upsert_instance_record(db, attributes, signature)
-            # Drop the cached /api/instances payload so the new peer becomes
-            # visible on the next dashboard refresh instead of after the TTL
-            # naturally expires.
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:instances:")
-            enqueued = enqueue_federation_crawl(
-              attributes[:domain],
-              per_response_limit: PotatoMesh::Config.federation_max_instances_per_response,
-              overall_limit: PotatoMesh::Config.federation_max_domains_per_crawl,
-            )
-            info_log(
-              "Registered remote instance",
-              context: "ingest.register",
-              domain: attributes[:domain],
-              instance_id: attributes[:id],
-              crawl_enqueued: enqueued,
-            )
-            status 201
-            { status: "registered" }.to_json
+            same_key = stored_instance_key_and_update(db, attributes[:domain]).first == attributes[:pubkey]
+            if instance_copy_outdated?(stored_instance_copy(db, attributes), attributes)
+              debug_log(
+                "Kept stored remote instance",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                instance_id: attributes[:id],
+                reason: "announced copy is not newer",
+              )
+              halt 201, { status: "registered" }.to_json
+            end
+
+            # A peer host is fetched at most once per
+            # FEDERATION_PEER_FETCH_COOLDOWN, by a crawl or a registration;
+            # inside it a registration is answered from what that fetch
+            # learned (SPEC FL3, FL7).
+            peer_host = federation_peer_host(attributes[:domain])
+            cooldown = PotatoMesh::Config.federation_peer_fetch_cooldown_seconds
+            peer_wait = federation_peer_backoff.wait_seconds(peer_host, cooldown: cooldown)
+            if peer_wait.positive?
+              answer_instance_registration_from_cooldown!(
+                db, attributes, signature, same_key: same_key, wait: peer_wait,
+              )
+            end
+
+            # Few verifications run at once, and each one, DNS included, ends
+            # within REMOTE_INSTANCE_REQUEST_TIMEOUT (SPEC FL7).
+            verification_deadline = PotatoMesh::Config.remote_instance_request_timeout
+            unless claim_federation_registration_slot
+              defer_instance_registration!(attributes[:domain], verification_deadline, "too many registrations in flight")
+            end
+            begin
+              peer_wait = federation_peer_backoff.claim(peer_host, cooldown: cooldown)
+              defer_instance_registration!(attributes[:domain], peer_wait, "peer fetch cooldown") if peer_wait.positive?
+
+              with_federation_deadline(verification_deadline) do
+                begin
+                  within_federation_deadline { resolve_remote_ip_addresses(URI.parse("https://#{attributes[:domain]}")) }
+                rescue ArgumentError => e
+                  warn_log(
+                    "Instance registration rejected",
+                    context: "ingest.register",
+                    domain: attributes[:domain],
+                    reason: "restricted domain",
+                    error_message: e.message,
+                  )
+                  halt 400, { error: "restricted domain" }.to_json
+                rescue SocketError, Timeout::Error
+                  # DNS lookups that fail to resolve or run out of time are
+                  # handled later when the registration flow attempts to
+                  # contact the remote instance.
+                end
+
+                # The key stored for the domain vouches for an announcement under
+                # it, as in the crawl: only first contact and a key change read
+                # the well-known (SPEC FS8, FL7).
+                well_known = same_key ? [true, nil, nil] : verify_well_known_identity(attributes[:domain], attributes[:pubkey])
+                # One node list judges the peer, as in the crawl (SPEC FL2). It
+                # is fetched also when the well-known names another key, so the
+                # cooldown this verification starts can answer the domain's own
+                # registration (SPEC FL7).
+                acceptance = judge_registering_instance(attributes[:domain]) unless well_known[1] == :fetch_failed
+                reject_instance_registration_unless_vouched!(attributes[:domain], well_known)
+                reject_instance_registration_unless_accepted!(attributes[:domain], acceptance)
+
+                # v2 announcements carry SIGNED counts, kept verbatim so the
+                # stored and later relayed record stays signature-consistent;
+                # only an announcement without counts is completed from the
+                # peer (SPEC FS2, FL2).
+                fill_missing_instance_counts!(
+                  attributes,
+                  domain: attributes[:domain],
+                  stats: -> { fetch_instance_json(attributes[:domain], "/api/stats") },
+                  recent_nodes: -> { fetch_instance_json(attributes[:domain], remote_instance_recent_nodes_path) },
+                )
+              end
+            ensure
+              release_federation_registration_slot
+            end
+
+            register_verified_instance!(db, attributes, signature)
           ensure
             db&.close
           end

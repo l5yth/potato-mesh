@@ -32,9 +32,11 @@ module PotatoMesh
       #
       # Threading model: the pool is a fixed-size thread pool backed by a bounded
       # queue.  A single long-lived announcer thread (started by
-      # {#start_federation_announcer!}) drives periodic crawl and announcement
-      # cycles by submitting tasks onto the pool; individual crawl and announce
-      # jobs then run concurrently on pool threads.  The pool is lazily
+      # {#start_federation_announcer!}) drives the periodic announcement and
+      # crawl cycles by submitting tasks onto the pool: the announcements to
+      # all peers run concurrently on pool threads, then one crawl runs on a
+      # pool thread while the announcer waits for it.  An inbound announcement
+      # schedules no crawl (SPEC FL3).  The pool is lazily
       # instantiated on first use and is memoized on the Sinatra settings object so
       # that all requests share the same instance.  An +at_exit+ hook
       # ({#ensure_federation_shutdown_hook!}) guarantees the pool drains cleanly on

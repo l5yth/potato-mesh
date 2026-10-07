@@ -40,21 +40,24 @@ RSpec.describe "Federation activity windows" do
     end
   end
 
-  # Answer one peer request the way the peer's own routes do: +since=+ keeps
-  # the nodes heard since then and +limit=+ the newest of them.  The peer
-  # also serves its well-known document, which a first-contact key check
-  # reads.
+  # Answer one peer request the way the peer's own routes do: every node list
+  # keeps the nodes heard since +since=+ and, from v0.5.10 on, within the
+  # 7-day floor of +GET /api/nodes+, and +limit=+ keeps the newest of them.
+  # The peer also serves its well-known document, which a first-contact key
+  # check reads.
   #
   # @param domain [String] the peer's domain.
   # @param nodes [Array<Hash>] the peer's nodes, newest first.
   # @param path [String] requested path and query string.
-  # @param serves [Array<Symbol>] node lists the peer answers: +:full+ (plain
-  #   +/api/nodes+), +:recent+ (+since=+ inside the last day) and +:active+
-  #   (an older +since=+, the 7-day list).
+  # @param serves [Array<Symbol>] node lists the peer answers: +:acceptance+
+  #   (no +since=+, the list a peer is judged on) and +:recent+ (+since=+
+  #   inside the last day, the 24-hour count fallback).
   # @param stats [Hash, nil] the peer's /api/stats payload; nil fails it.
+  # @param floor [Boolean] whether the peer applies the 7-day floor.
+  # @param extra [Array<Hash>] entries the peer adds to every list unfiltered.
   # @return [Array(Object, Object)] payload and metadata, as
   #   +fetch_instance_json+ returns them.
-  def peer_response(domain, nodes, path, serves:, stats:)
+  def peer_response(domain, nodes, path, serves:, stats:, floor:, extra:)
     if path == "/.well-known/potato-mesh"
       return [{ "domain" => domain, "public_key" => "peer-key" }, :well_known]
     end
@@ -67,16 +70,12 @@ RSpec.describe "Federation activity windows" do
 
     query = URI.decode_www_form(uri.query.to_s).to_h
     since = query["since"]&.to_i
-    list = if since.nil?
-        :full
-      elsif since >= now - day
-        :recent
-      else
-        :active
-      end
+    list = since.nil? ? :acceptance : :recent
     return [nil, ["#{list} node list unavailable"]] unless serves.include?(list)
 
-    heard = since ? nodes.select { |node| node["last_heard"] && node["last_heard"] >= since } : nodes
+    threshold = [since, floor ? now - (7 * day) : nil].compact.max
+    heard = threshold ? nodes.select { |node| node["last_heard"] && node["last_heard"] >= threshold } : nodes
+    heard += extra
     [query.key?("limit") ? heard.first(query["limit"].to_i) : heard, :nodes]
   end
 
@@ -88,9 +87,10 @@ RSpec.describe "Federation activity windows" do
   # @param serves [Array<Symbol>] node lists the peers answer, see
   #   {#peer_response}.
   # @param stats [Hash, nil] /api/stats payload the peers serve.
-  # @param extra [Array<Hash>] entries every peer appends to its node list.
+  # @param floor [Boolean] whether the peers apply the 7-day floor.
+  # @param extra [Array<Hash>] entries every peer adds to its node lists.
   # @return [Array<Hash>] attributes of the peers the crawl stored.
-  def crawl_peers(quiet_for, serves: %i[full recent active], stats: nil, extra: [])
+  def crawl_peers(quiet_for, serves: %i[acceptance recent], stats: nil, floor: true, extra: [])
     listing = quiet_for.keys.map do |domain|
       { "id" => Digest::SHA256.hexdigest("peer-key"), "domain" => domain, "public_key" => "peer-key", "signature" => "peer-signature" }
     end
@@ -98,7 +98,7 @@ RSpec.describe "Federation activity windows" do
       if host == "seed.mesh.test" && path == "/api/instances"
         [listing, :instances]
       elsif quiet_for.key?(host)
-        peer_response(host, peer_nodes(quiet_for[host]) + extra, path, serves: serves, stats: stats)
+        peer_response(host, peer_nodes(quiet_for[host]), path, serves: serves, stats: stats, floor: floor, extra: extra)
       else
         [nil, []]
       end
@@ -112,7 +112,7 @@ RSpec.describe "Federation activity windows" do
       stored << attributes
     end
 
-    application_class.ingest_known_instances_from!(double(:db, get_first_value: nil), "seed.mesh.test")
+    application_class.ingest_known_instances_from!(double(:db, get_first_value: nil, get_first_row: nil), "seed.mesh.test")
     stored
   end
 
@@ -191,28 +191,28 @@ RSpec.describe "Federation activity windows" do
       expect(stored.map { |attributes| attributes[:nodes_count] }).to eq([2])
     end
 
-    it "counts only the last 24 hours of the plain /api/nodes list when stats and the 24-hour list fail" do
-      stored = crawl_peers({ "quiet.mesh.test" => 2 * day }, serves: %i[full active])
+    it "counts the 24-hour list when /api/stats fails" do
+      stored = crawl_peers({ "quiet.mesh.test" => 2 * day })
 
       expect(stored.map { |attributes| attributes[:nodes_count] }).to eq([0])
     end
 
-    it "counts a plain-list node heard exactly 24 hours ago" do
+    it "counts a 24-hour-list node heard exactly 24 hours ago" do
       allow(Time).to receive(:now).and_return(Time.at(now))
 
-      stored = crawl_peers({ "edge.mesh.test" => day }, serves: %i[full active])
+      stored = crawl_peers({ "edge.mesh.test" => day })
 
       expect(stored.map { |attributes| attributes[:nodes_count] }).to eq([1])
     end
 
-    it "does not count a plain-list entry without last_heard" do
-      stored = crawl_peers({ "quiet.mesh.test" => 2 * day }, serves: %i[full active], extra: [{ "node_id" => "!0000beef" }])
+    it "does not count a 24-hour-list entry without last_heard" do
+      stored = crawl_peers({ "quiet.mesh.test" => 2 * day }, extra: [{ "node_id" => "!0000beef" }])
 
       expect(stored.map { |attributes| attributes[:nodes_count] }).to eq([0])
     end
 
     it "never counts the 7-day acceptance list" do
-      stored = crawl_peers({ "quiet.mesh.test" => 2 * day }, serves: %i[active])
+      stored = crawl_peers({ "quiet.mesh.test" => 2 * day }, serves: %i[acceptance])
 
       expect(stored.map { |attributes| attributes[:domain] }).to eq(["quiet.mesh.test"])
       expect(stored.first[:nodes_count]).to be_nil
@@ -236,8 +236,8 @@ RSpec.describe "Federation activity windows" do
       expect(application_class.validate_remote_nodes(peer_nodes(7 * day + hour))).to eq([false, "node data is stale"])
     end
 
-    it "keeps a peer quiet for 2 days in the crawl and drops one quiet for 8 days" do
-      stored = crawl_peers({ "quiet.mesh.test" => 2 * day, "gone.mesh.test" => 8 * day })
+    it "keeps a peer quiet for 2 days in the crawl and drops one that lists nodes 8 days old as stale" do
+      stored = crawl_peers({ "quiet.mesh.test" => 2 * day, "gone.mesh.test" => 8 * day }, floor: false)
 
       expect(stored.map { |attributes| attributes[:domain] }).to eq(["quiet.mesh.test"])
       expect(application_class).to have_received(:warn_log).with(
@@ -246,13 +246,13 @@ RSpec.describe "Federation activity windows" do
       )
     end
 
-    it "keeps the 2-day peer and drops the 8-day one when /api/nodes fails, counting 24 hours" do
-      # Each peer has exactly the minimum node count, so the 7-day request's
-      # limit must still return enough nodes to accept the 2-day peer.
-      stored = crawl_peers({ "quiet.mesh.test" => 2 * day, "gone.mesh.test" => 8 * day }, serves: %i[recent active])
+    it "judges each peer on its 10 newest nodes inside its 7-day floor, counting 24 hours" do
+      # Each peer has exactly the minimum node count, so the request's limit
+      # must still return enough nodes to accept the 2-day peer.
+      stored = crawl_peers({ "quiet.mesh.test" => 2 * day, "gone.mesh.test" => 8 * day })
 
       expect(stored.map { |attributes| attributes[:domain] }).to eq(["quiet.mesh.test"])
-      # The count still comes from the 24-hour list, empty for a quiet peer.
+      # The count comes from the 24-hour list, empty for a quiet peer.
       expect(stored.first[:nodes_count]).to eq(0)
       expect(application_class).to have_received(:warn_log).with(
         "Discarded remote instance entry",

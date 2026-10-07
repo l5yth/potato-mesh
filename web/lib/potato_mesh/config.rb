@@ -80,7 +80,12 @@ module PotatoMesh
     DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY = 128
     DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS = 120
     DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS = 3
-    DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS = 300
+    # Seconds between two federation fetches of one peer host (SPEC FL3).
+    DEFAULT_FEDERATION_PEER_FETCH_COOLDOWN_SECONDS = 900
+    # A full crawl of DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL domains at four
+    # requests per domain: its instance list, its node list, a first-contact
+    # well-known and one count fallback (SPEC FL6).
+    DEFAULT_FEDERATION_MAX_REQUESTS_PER_CRAWL = 1024
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
     DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net mesh.qrp.ro mesh.dmz.pt].freeze
     DEFAULT_OG_IMAGE_TTL_SECONDS = 3_600
@@ -597,14 +602,54 @@ module PotatoMesh
       )
     end
 
-    # Limit the total number of distinct domains crawled during one ingestion.
+    # Limit the number of distinct domains one crawl sends requests to (SPEC
+    # FL1).
     #
-    # @return [Integer] maximum unique domains visited per crawl.
+    # @return [Integer] maximum domains fetched per crawl.
     def federation_max_domains_per_crawl
       fetch_positive_integer(
         "FEDERATION_MAX_DOMAINS_PER_CRAWL",
         DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL,
       )
+    end
+
+    # Limit the number of requests one crawl sends (SPEC FL6).  The default
+    # covers a full crawl of {#federation_max_domains_per_crawl} domains.
+    #
+    # @return [Integer] maximum requests per crawl.
+    def federation_max_requests_per_crawl
+      fetch_positive_integer(
+        "FEDERATION_MAX_REQUESTS_PER_CRAWL",
+        DEFAULT_FEDERATION_MAX_REQUESTS_PER_CRAWL,
+      )
+    end
+
+    # Minimum seconds between two federation fetches of one peer host, from
+    # a crawl or a registration (SPEC FL3).
+    #
+    # @return [Integer] cooldown in seconds.
+    def federation_peer_fetch_cooldown_seconds
+      fetch_positive_integer(
+        "FEDERATION_PEER_FETCH_COOLDOWN",
+        DEFAULT_FEDERATION_PEER_FETCH_COOLDOWN_SECONDS,
+      )
+    end
+
+    # Most +POST /api/instances+ verifications that run at once; a
+    # registration beyond them is answered 503 (SPEC FL7).  A fixed value.
+    #
+    # @return [Integer] verifications in flight.
+    def federation_max_registrations_in_flight
+      4
+    end
+
+    # Upper bound of the random delay between an announcement cycle and the
+    # crawl that follows it: a tenth of {#federation_announcement_interval}
+    # (SPEC FL3).
+    #
+    # @return [Numeric] seconds.
+    def federation_crawl_max_jitter_seconds
+      federation_announcement_interval / 10.0
     end
 
     # Determine the worker pool size used for federation tasks.
@@ -628,6 +673,7 @@ module PotatoMesh
     end
 
     # Determine the timeout applied when awaiting federation worker tasks.
+    # It is also the deadline of one crawl (SPEC FL6).
     #
     # @return [Integer] seconds to wait for asynchronous jobs to complete.
     def federation_task_timeout_seconds
@@ -644,16 +690,6 @@ module PotatoMesh
       fetch_positive_integer(
         "FEDERATION_SHUTDOWN_TIMEOUT",
         DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS,
-      )
-    end
-
-    # Define how long finished crawl domains remain on cooldown.
-    #
-    # @return [Integer] cooldown window in seconds.
-    def federation_crawl_cooldown_seconds
-      fetch_positive_integer(
-        "FEDERATION_CRAWL_COOLDOWN",
-        DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
       )
     end
 
