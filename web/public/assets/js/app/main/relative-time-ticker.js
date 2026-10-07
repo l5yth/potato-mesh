@@ -26,10 +26,10 @@
  * chat entries and cannot restart a live-flash fade, reset scroll, or close
  * an open overlay.
  *
- * The attribute-scan design is deliberate: rows are re-materialised wholesale
- * on data refresh, so an element registry would need per-render bookkeeping —
- * a scan is self-healing (a replaced row simply carries a fresh attribute; a
- * removed row is no longer matched).
+ * The attribute-scan design is deliberate: a data refresh keeps unchanged rows
+ * and rebuilds changed ones (SPEC DR1), so an element registry would need
+ * per-render bookkeeping — a scan is self-healing (a replaced row simply
+ * carries a fresh attribute; a removed row is no longer matched).
  *
  * The ticker is a pure presentation clock: it performs no fetch, never
  * consults the auto-refresh play/pause toggle (RT3 — the toggle pauses

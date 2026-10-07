@@ -208,6 +208,26 @@ export function createShortInfoOverlayStack(options = {}) {
 
   const overlayStates = new Map();
   const overlayOrder = [];
+  // Replaced anchor -> its replacement, recorded by reanchor(). A caller that
+  // still holds the old element -- a details fetch in flight when a live
+  // re-render rebuilt the badge (#881) -- reaches the overlay that moved.
+  const replacedAnchors = new WeakMap();
+
+  /**
+   * Follow {@link reanchor} hops from a possibly replaced anchor to the
+   * element that hosts its overlay now. Terminates: reanchor clears the
+   * replacement's own hop, so every chain ends at an anchor without one.
+   *
+   * @param {Element} anchor Anchor a caller captured earlier.
+   * @returns {Element} The current anchor (``anchor`` itself when never replaced).
+   */
+  function currentAnchor(anchor) {
+    let current = anchor;
+    while (replacedAnchors.has(current)) {
+      current = replacedAnchors.get(current);
+    }
+    return current;
+  }
 
   /**
    * Retrieve the active overlay host element.
@@ -420,14 +440,15 @@ export function createShortInfoOverlayStack(options = {}) {
   }
 
   /**
-   * Render overlay content anchored to the provided element.
+   * Render overlay content anchored to the provided element. An anchor that
+   * {@link reanchor} replaced renders onto its replacement.
    *
    * @param {Element} anchor Anchor element driving overlay placement.
    * @param {string} html Inner HTML displayed in the overlay body.
    * @returns {void}
    */
   function render(anchor, html) {
-    const state = ensureState(anchor);
+    const state = ensureState(currentAnchor(anchor));
     if (!state) {
       return;
     }
@@ -442,16 +463,19 @@ export function createShortInfoOverlayStack(options = {}) {
   }
 
   /**
-   * Close the overlay associated with ``anchor``.
+   * Close the overlay associated with ``anchor``. An anchor that
+   * {@link reanchor} replaced closes the overlay that moved: the overlay's own
+   * close button still holds the anchor it was created for.
    *
    * @param {Element} anchor Anchor element whose overlay should be removed.
    * @returns {void}
    */
   function close(anchor) {
-    const state = overlayStates.get(anchor);
+    const current = currentAnchor(anchor);
+    const state = overlayStates.get(current);
     if (!state) return;
     state.requestToken += 1;
-    removeState(anchor);
+    removeState(current);
   }
 
   /**
@@ -469,7 +493,11 @@ export function createShortInfoOverlayStack(options = {}) {
    * its content and request token. Used when the anchored element is replaced
    * by a fresh DOM node (e.g. a Leaflet marker rebuilt on a map re-render) so
    * the overlay is carried across instead of orphaned and closed by
-   * {@link cleanupOrphans} (item 7).
+   * {@link cleanupOrphans} (item 7). The old anchor is remembered as replaced,
+   * so {@link render} and {@link isTokenCurrent} called with it later (an
+   * answer still in flight) reach the moved overlay; {@link isOpen} keeps
+   * answering for the anchor that hosts the overlay now, and {@link close}
+   * with the old anchor (its close button) closes the moved overlay.
    *
    * @param {Element} oldAnchor Anchor the overlay is currently keyed by.
    * @param {Element} newAnchor Replacement anchor element.
@@ -488,6 +516,8 @@ export function createShortInfoOverlayStack(options = {}) {
     overlayStates.delete(oldAnchor);
     state.anchor = newAnchor;
     overlayStates.set(newAnchor, state);
+    replacedAnchors.set(oldAnchor, newAnchor);
+    replacedAnchors.delete(newAnchor);
     // Keep the overlay attached and reposition it against the new anchor box.
     ensureOverlayAttached(state.element);
     schedulePosition(state);
@@ -564,14 +594,16 @@ export function createShortInfoOverlayStack(options = {}) {
   }
 
   /**
-   * Determine whether ``token`` is still current for ``anchor``.
+   * Determine whether ``token`` is still current for ``anchor``. A request
+   * made for an anchor that {@link reanchor} replaced stays current on the
+   * overlay that moved, so its answer still lands.
    *
    * @param {Element} anchor Anchor element associated with the request.
    * @param {number} token Token obtained from ``incrementRequestToken``.
    * @returns {boolean} ``true`` when the token is current.
    */
   function isTokenCurrent(anchor, token) {
-    const state = overlayStates.get(anchor);
+    const state = overlayStates.get(currentAnchor(anchor));
     if (!state) {
       return false;
     }
