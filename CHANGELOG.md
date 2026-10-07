@@ -33,6 +33,7 @@
 * Web: the Reticulum destination count matches the table, and `/api/destinations` serves only destinations of nodes inside the node window (SPEC RA3/RA8)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
 * Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
+* Web: a federation peer whose newest node is up to 7 days old is accepted and refreshed again, not only within 24 hours (ACCEPTANCE FS-A5)
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
 * Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
 * Web: the map legend lists only protocols in view: a protocol toggled off, or with no node matching the filter, leaves it; Clear filters also clears the filter text (SPEC LP1)
