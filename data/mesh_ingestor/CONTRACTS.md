@@ -568,6 +568,10 @@ only, from the operator's own RNS config.
 
 `GET /api/nodes` and `GET /api/nodes/:id` emit `synthetic: true` on a name-derived MeshCore placeholder row - a channel sender not yet matched to a keyed contact - and omit the key on every other row (no `synthetic: false`). Placeholders come only from ingested chat senders (see the `POST /api/nodes` placeholder note), never from mentions, and the reconciliation merge folds them into the real node once its contact is stored and the name is unambiguous (SPEC MR2).
 
+### GET /api/messages sender flag (SPEC SV1/SV2)
+
+`GET /api/messages` and `GET /api/messages/:id` emit `sender_verified: false` on a MeshCore channel message (`protocol` `"meshcore"`, `to_id` `"^all"`) that has a `from_id`, and omit the key on every other row (no `sender_verified: true`). Such a message carries no sender key, only its `SenderName:` text prefix: its `from_id` is the ingestor's roster match of that name or the name-derived id, and the web app may re-map it by name (SPEC GN3, the placeholder merges above). `node_id` and `from_id` still name the matched node. The flag is computed when the row is read and is not stored. Meshtastic and Reticulum messages and MeshCore direct messages never carry it; the ingestor drops MeshCore direct messages before posting (`skipped-direct-message`). The Matrix bridge posts a flagged message as its appservice user, not as the node's puppet (SPEC SV4).
+
 ### GET /api/destinations response shape
 
 One row per announced destination, newest `last_heard` first.

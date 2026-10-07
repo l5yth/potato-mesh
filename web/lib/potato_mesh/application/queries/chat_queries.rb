@@ -25,7 +25,9 @@ module PotatoMesh
       # @param since [Integer] unix timestamp threshold; messages with rx_time older than this are excluded.
       # @param before [Integer, nil] inclusive upper-bound rx_time cursor used for
       #   backward pagination (issue #796); messages newer than this are excluded.
-      # @return [Array<Hash>] compacted message rows safe for API responses.
+      # @return [Array<Hash>] compacted message rows safe for API responses; a
+      #   row whose sender was matched by name carries +sender_verified: false+
+      #   (see {DataProcessing#meshcore_sender_name_attributed?}).
       def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         now = Time.now.to_i
@@ -119,6 +121,10 @@ module PotatoMesh
           end
 
           r["node_id"] = node_id if node_id
+          # A MeshCore channel sender is matched by name, never by an id the
+          # packet carries: flag it, and leave the key off every other row as
+          # the node API does with +synthetic+ (SPEC SV2).
+          r["sender_verified"] = false if meshcore_sender_name_attributed?(r)
 
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             debug_log(

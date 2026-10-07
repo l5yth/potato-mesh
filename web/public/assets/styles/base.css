@@ -3254,6 +3254,22 @@ button.legend-item[aria-pressed="true"] {
   font-size: 0.85em;
 }
 
+/* Unverified-sender marker (SPEC SV3): an "unverified" chip after the sender
+   badge of a line whose sender is named only by its text, outside the 19ch
+   prefix (FU9). It resets the inherited hanging indent like the route chip,
+   and has no nowrap, so the line still wraps on a narrow panel (LC3). The
+   dashed border sets it apart from the route chip. */
+.chat-sender-unverified {
+  display: inline-block;
+  text-indent: 0;
+  padding: 0 4px;
+  border: 1px dashed var(--muted);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.85em;
+  cursor: help;
+}
+
 /* Chat date dividers separate days spatially (UX11, D-040). */
 .chat-entry-date {
   border-top: 1px solid var(--line);

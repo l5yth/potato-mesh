@@ -29,6 +29,7 @@ import {
   formatChatPresetTag,
 } from '../chat-format.js';
 import { formatChatRouteChip } from '../chat-route-chip.js';
+import { formatChatSenderMarker } from '../chat-sender-marker.js';
 import { buildMessageIndex } from '../message-replies.js';
 import { renderChatEntryContent } from '../chat-entry-renderer.js';
 import { formatMessageTimestamp } from '../node-page-charts.js';
@@ -209,8 +210,13 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
             ?? null,
         source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
+      // A sender named only by the text gets a marker right after its badge
+      // (SPEC SV3).
+      const senderMarker = formatChatSenderMarker(message, {
+        senderFromText: senderNode !== null && senderNode === meshcoreSenderNode,
+      });
 
-      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml}${routeChip} ${bodyHtml}</div>`;
+      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml}${senderMarker}${routeChip} ${bodyHtml}</div>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';

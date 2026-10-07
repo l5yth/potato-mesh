@@ -156,16 +156,43 @@ impl MatrixAppserviceClient {
         }
     }
 
+    /// Query string that makes an appservice request act as `user_id`, or an
+    /// empty one, which acts as the appservice user itself (the
+    /// registration's `sender_localpart`).
+    fn user_id_query(user_id: Option<&str>) -> String {
+        user_id
+            .map(|user_id| format!("?user_id={}", urlencoding::encode(user_id)))
+            .unwrap_or_default()
+    }
+
+    /// Who a request acts as, for logs and errors.
+    fn acting_user(user_id: Option<&str>) -> &str {
+        user_id.unwrap_or("the appservice user")
+    }
+
     /// Ensure the puppet user is joined to the configured room.
     pub async fn ensure_user_joined_room(&self, user_id: &str) -> anyhow::Result<()> {
+        self.join_room_as(Some(user_id)).await
+    }
+
+    /// Ensure the appservice user itself is joined to the configured room. It
+    /// posts the messages whose sender is not verified (SPEC SV4).
+    pub async fn ensure_appservice_joined_room(&self) -> anyhow::Result<()> {
+        self.join_room_as(None).await
+    }
+
+    /// Join the configured room as `user_id`, or as the appservice user when
+    /// `None`.
+    async fn join_room_as(&self, user_id: Option<&str>) -> anyhow::Result<()> {
         #[derive(Serialize)]
         struct JoinReq {}
 
         let encoded_room = urlencoding::encode(&self.cfg.room_id);
-        let encoded_user = urlencoding::encode(user_id);
         let url = format!(
-            "{}/_matrix/client/v3/rooms/{}/join?user_id={}",
-            self.cfg.homeserver, encoded_room, encoded_user
+            "{}/_matrix/client/v3/rooms/{}/join{}",
+            self.cfg.homeserver,
+            encoded_room,
+            Self::user_id_query(user_id)
         );
 
         let resp = self
@@ -182,7 +209,7 @@ impl MatrixAppserviceClient {
             let body_snip = resp.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
                 "Matrix join failed for {} in {} with status {} ({})",
-                user_id,
+                Self::acting_user(user_id),
                 self.cfg.room_id,
                 status,
                 body_snip
@@ -197,6 +224,28 @@ impl MatrixAppserviceClient {
         body_text: &str,
         formatted_body: &str,
     ) -> anyhow::Result<()> {
+        self.send_formatted(Some(user_id), body_text, formatted_body)
+            .await
+    }
+
+    /// Send a text message with HTML formatting into the configured room as
+    /// the appservice user itself (SPEC SV4).
+    pub async fn send_formatted_message_as_appservice(
+        &self,
+        body_text: &str,
+        formatted_body: &str,
+    ) -> anyhow::Result<()> {
+        self.send_formatted(None, body_text, formatted_body).await
+    }
+
+    /// Send a formatted text message as `user_id`, or as the appservice user
+    /// when `None`.
+    async fn send_formatted(
+        &self,
+        user_id: Option<&str>,
+        body_text: &str,
+        formatted_body: &str,
+    ) -> anyhow::Result<()> {
         #[derive(Serialize)]
         struct MsgContent<'a> {
             msgtype: &'a str,
@@ -207,11 +256,13 @@ impl MatrixAppserviceClient {
 
         let txn_id = self.txn_counter.fetch_add(1, Ordering::SeqCst);
         let encoded_room = urlencoding::encode(&self.cfg.room_id);
-        let encoded_user = urlencoding::encode(user_id);
 
         let url = format!(
-            "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}?user_id={}",
-            self.cfg.homeserver, encoded_room, txn_id, encoded_user
+            "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}{}",
+            self.cfg.homeserver,
+            encoded_room,
+            txn_id,
+            Self::user_id_query(user_id)
         );
 
         let content = MsgContent {
@@ -232,6 +283,7 @@ impl MatrixAppserviceClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body_snip = resp.text().await.unwrap_or_default();
+            let user_id = Self::acting_user(user_id);
 
             tracing::warn!(
                 "Failed to send formatted message as {}: status {}, body: {}",
@@ -558,5 +610,109 @@ mod tests {
 
         mock.assert();
         assert!(result.is_ok());
+    }
+
+    /// Build a client for `server` with the dummy config.
+    fn client_for(server: &mockito::ServerGuard) -> MatrixAppserviceClient {
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        MatrixAppserviceClient::new(reqwest::Client::new(), cfg)
+    }
+
+    /// The appservice user joins with the `as_token` and no `user_id`, so the
+    /// homeserver acts as the registration's `sender_localpart` (SPEC SV4).
+    #[tokio::test]
+    async fn test_ensure_appservice_joined_room_success() {
+        let mut server = mockito::Server::new_async().await;
+        let path = format!(
+            "/_matrix/client/v3/rooms/{}/join",
+            urlencoding::encode("!roomid:example.org")
+        );
+        let mock = server
+            .mock("POST", path.as_str())
+            .match_query(mockito::Matcher::Missing)
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(200)
+            .create();
+
+        let result = client_for(&server).ensure_appservice_joined_room().await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_appservice_joined_room_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
+            )
+            .match_query(mockito::Matcher::Missing)
+            .with_status(403)
+            .create();
+
+        let result = client_for(&server).ensure_appservice_joined_room().await;
+
+        mock.assert();
+        let err = result.expect_err("a refused join fails");
+        assert!(err.to_string().contains("the appservice user"), "{err}");
+    }
+
+    /// The appservice user posts with the `as_token` and no `user_id`, the
+    /// body unchanged (SPEC SV4).
+    #[tokio::test]
+    async fn test_send_formatted_message_as_appservice_success() {
+        let mut server = mockito::Server::new_async().await;
+        let client = client_for(&server);
+        let path = format!(
+            "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
+            urlencoding::encode("!roomid:example.org"),
+            client.txn_counter.load(Ordering::SeqCst)
+        );
+        let mock = server
+            .mock("PUT", path.as_str())
+            .match_query(mockito::Matcher::Missing)
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "msgtype": "m.text",
+                "body": "`[meta]` Alice: hello",
+                "format": "org.matrix.custom.html",
+                "formatted_body": "<code>[meta]</code> Alice: hello",
+            })))
+            .with_status(200)
+            .create();
+
+        let result = client
+            .send_formatted_message_as_appservice(
+                "`[meta]` Alice: hello",
+                "<code>[meta]</code> Alice: hello",
+            )
+            .await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_formatted_message_as_appservice_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
+            )
+            .match_query(mockito::Matcher::Missing)
+            .with_status(500)
+            .create();
+
+        let result = client_for(&server)
+            .send_formatted_message_as_appservice("`[meta]` hello", "<code>[meta]</code> hello")
+            .await;
+
+        mock.assert();
+        let err = result.expect_err("a refused send fails");
+        assert!(err.to_string().contains("the appservice user"), "{err}");
     }
 }

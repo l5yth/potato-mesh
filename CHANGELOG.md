@@ -16,6 +16,7 @@
 * Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)
 * Web: a live refresh no longer moves the chat: a scrolled-up reader keeps their place, the channel tab strip stops sliding back, and tab focus and text selection survive (#881, SPEC DR1/DR3)
 * Web: a MeshCore channel message stays on its sender's node and no longer moves to, or revives, a same-name node; a sender named by a stale roster is credited to the current key (#883)
+* Web/Matrix: MeshCore channel messages, whose sender is matched by the name in the text, carry `sender_verified: false` in `GET /api/messages`; the chat marks them "unverified" and the Matrix bridge posts them as its appservice user instead of the node's puppet. In an invite-only room, invite the appservice user (SPEC SV1-SV5)
 * Data: the MeshCore ingestor no longer posts placeholder nodes for chat senders or mentions, so hidden-channel names stay hidden; the web app ignores such posts from older ingestors (#883)
 * Data: a MeshCore sender name shared by several roster contacts resolves to the most recently advertised one (#883)
 * Data: the MeshCore ingestor posts an advert from the radio's RX log only when its signature verifies, refusing small-order keys and replayed adverts, so a node's SNR, RSSI and hops now come from the first copy heard; roster contacts are unchanged (SPEC SG1-SG5)

@@ -92,6 +92,7 @@ import {
   formatChatPresetTag
 } from './chat-format.js';
 import { formatChatRouteChip } from './chat-route-chip.js';
+import { formatChatSenderMarker } from './chat-sender-marker.js';
 import { initializeInstanceSelector } from './instance-selector.js';
 import { initializeMobileMenu } from './mobile-menu.js';
 import { MESSAGE_LIMIT, normaliseMessageLimit } from './message-limit.js';
@@ -3619,8 +3620,9 @@ export function initializeApp(config) {
     // Sender badge: prefer the ingestor-hydrated node; fall back to the
     // MeshCore name-based lookup performed inside the shared renderer for
     // channel messages whose sender wasn't yet known to the contacts roster.
+    const senderFromText = !m.node && Boolean(meshcoreSenderNode);
     let short;
-    if (!m.node && meshcoreSenderNode) {
+    if (senderFromText) {
       short = renderShortHtml(
         meshcoreSenderNode.short_name ?? meshcoreSenderNode.shortName,
         meshcoreSenderNode.role,
@@ -3636,11 +3638,13 @@ export function initializeApp(config) {
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
-    // Route chip (hops + flood scope) after the sender badge (SPEC SC7).
+    // A sender named only by the text gets a marker right after its badge
+    // (SPEC SV3), then the route chip (hops + flood scope, SPEC SC7).
+    const senderMarker = formatChatSenderMarker(m, { senderFromText });
     const routeChip = formatChatRouteChip(m);
     return {
       className: 'chat-entry-msg',
-      html: `${prefix}${presetTag} ${nodeProtocolPrefix}${short}${routeChip} ${text}`
+      html: `${prefix}${presetTag} ${nodeProtocolPrefix}${short}${senderMarker}${routeChip} ${text}`
     };
   }
 
