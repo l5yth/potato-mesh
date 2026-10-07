@@ -25,6 +25,10 @@ module PotatoMesh
 
       # Look up the protocol registered by a given ingestor node.
       #
+      # A stored value outside {KNOWN_PROTOCOLS}, registered before
+      # heartbeats were checked, is not passed on to the records that inherit
+      # it (SPEC SL7).
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param ingestor_node_id [String, nil] the node_id of the reporting ingestor.
       # @param cache [Hash, nil] optional per-request memoization hash; pass a shared
@@ -36,18 +40,18 @@ module PotatoMesh
         if cache
           return cache[ingestor_node_id] if cache.key?(ingestor_node_id)
 
-          result = db.get_first_value(
+          result = normalize_protocol_value(db.get_first_value(
             "SELECT protocol FROM ingestors WHERE node_id = ? LIMIT 1",
             [ingestor_node_id],
-          ) || "meshtastic"
+          )) || "meshtastic"
           cache[ingestor_node_id] = result
           return result
         end
 
-        db.get_first_value(
+        normalize_protocol_value(db.get_first_value(
           "SELECT protocol FROM ingestors WHERE node_id = ? LIMIT 1",
           [ingestor_node_id],
-        ) || "meshtastic"
+        )) || "meshtastic"
       end
 
       # Normalise a candidate protocol value, returning the whitelisted string
@@ -95,7 +99,9 @@ module PotatoMesh
           warn_log(
             "Rejected malformed protocol stamp; falling back to ingestor lookup",
             context: "data_processing.resolve_record_protocol",
-            value: raw.to_s,
+            # The first 64 bytes name a bad stamp; the log holds no more of
+            # it (SPEC SL7).
+            value: raw.to_s.byteslice(0, 64),
             ingestor: ingestor_node_id,
           )
         end

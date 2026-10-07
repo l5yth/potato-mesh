@@ -1223,12 +1223,12 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(row["rx_time"]).to eq(now - 30)
     end
 
-    it "falls back to a lowercased bang id when the reference is not canonicalisable" do
+    it "skips a waypoint whose node reference is not a node id (SPEC SL5)" do
       db = open_db
       dp.insert_waypoint(db, { "id" => 9, "node_id" => "!ZZZZ", "rx_time" => now, "name" => "Odd id" })
       row = read_waypoint(db, 9)
       db.close
-      expect(row["node_id"]).to eq("!zzzz")
+      expect(row).to be_nil
     end
 
     it "derives a canonical id from a negative node_num via the fallback path" do
@@ -2318,21 +2318,21 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
     it "keeps the existing attribution when two evidence-fresh reals disagree" do
       db = open_db
-      seed_keyed_node(db, "!duporig1", "Dup Twin A", "1a", now - 40)
-      seed_keyed_node(db, "!dupothr1", "Dup Twin B", "2b", now - 40)
+      seed_keyed_node(db, "!d0000001", "Dup Twin A", "1a", now - 40)
+      seed_keyed_node(db, "!d0000002", "Dup Twin B", "2b", now - 40)
 
-      dp.insert_message(db, duplicate_copy("!duporig1", now - 10))
-      dp.insert_message(db, duplicate_copy("!dupothr1", now))
+      dp.insert_message(db, duplicate_copy("!d0000001", now - 10))
+      dp.insert_message(db, duplicate_copy("!d0000002", now))
 
-      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq("!duporig1")
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq("!d0000001")
     ensure
       db&.close
     end
 
     it "does not let a stale-keyed copy steal attribution or liveness from a fresh real" do
       db = open_db
-      stale_real = "!dupstal2"
-      fresh_real = "!dupfrsh2"
+      stale_real = "!d0000003"
+      fresh_real = "!d0000004"
       seed_keyed_node(db, stale_real, "Dup Old", "3c", now - 60 * 86_400)
       seed_keyed_node(db, fresh_real, "Dup New", "4d", now - 40)
 
@@ -2351,13 +2351,15 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
     it "upgrades a synthetic-attributed row when a keyed real copy arrives" do
       db = open_db
-      synth_id = "!dupsyn3a"
-      real_id = "!dupreal3"
+      synth_id = "!d0000005"
+      real_id = "!d0000006"
+      # Seeded first: the keyed upsert folds a same-name synthetic stored
+      # before it into the real node, which would leave no synthetic row.
+      seed_keyed_node(db, real_id, "Dup Up", "5e", now - 40)
       db.execute(
         "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
         [synth_id, "Dup Up", "meshcore", 1, now - 50, now - 50],
       )
-      seed_keyed_node(db, real_id, "Dup Up", "5e", now - 40)
 
       dp.insert_message(db, duplicate_copy(synth_id, now - 10))
       dp.insert_message(db, duplicate_copy(real_id, now))
@@ -2471,7 +2473,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "channel" => 5,
         "text" => "hello from alice",
         "portnum" => "TEXT_MESSAGE_APP",
-        "ingestor" => "!ingest01",
+        "ingestor" => "!1a9e0001",
       }
     end
 
@@ -2668,12 +2670,12 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_015, "ingestor" => nil))
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_015, "ingestor" => "!ingest99"),
+        base_message.merge("id" => 1_000_015, "ingestor" => "!1a9e0099"),
       )
       expect(message_count(db)).to eq(1)
       expect(
         db.get_first_value("SELECT ingestor FROM messages WHERE id = 1000015"),
-      ).to eq("!ingest99")
+      ).to eq("!1a9e0099")
     ensure
       db&.close
     end
@@ -3224,7 +3226,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     # path runs and trips the constraint deterministically.
     it "applies fallback updates when INSERT trips a constraint violation" do
       db = open_db
-      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "first", "ingestor" => "!a"))
+      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "first", "ingestor" => "!0000000a"))
 
       allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
         if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
@@ -3234,11 +3236,11 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         end
       end
 
-      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "second", "ingestor" => "!b"))
+      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "second", "ingestor" => "!0000000b"))
 
       expect(db.get_first_value("SELECT text FROM messages WHERE id = 9001")).to eq("second")
-      # First-write-wins for ingestor: the existing value (!a) is preserved.
-      expect(db.get_first_value("SELECT ingestor FROM messages WHERE id = 9001")).to eq("!a")
+      # First-write-wins for ingestor: the existing value (!0000000a) is preserved.
+      expect(db.get_first_value("SELECT ingestor FROM messages WHERE id = 9001")).to eq("!0000000a")
     ensure
       db&.close
     end

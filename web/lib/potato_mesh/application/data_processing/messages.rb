@@ -88,6 +88,7 @@ module PotatoMesh
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @return [void]
       def insert_message(db, message, protocol_cache: nil)
+        message = bound_message_payload(message) # SPEC SL3/SL5/SL10: nil skips the message
         return unless message.is_a?(Hash)
 
         msg_id = coerce_integer(message["id"] || message["packet_id"])

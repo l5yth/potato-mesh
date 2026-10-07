@@ -48,11 +48,17 @@ module PotatoMesh
             data.each do |node_id, node|
               next if node_id == "ingestor"
               next if node_id == "protocol"
+              # Any JSON key would otherwise become a node id: only a
+              # canonical +!%08x+ key names a node (SPEC SL5).
+              next unless DataProcessing::FieldLimits.node_id?(node_id)
+              # A node entry is a mapping; a string would answer every field
+              # lookup with a substring of itself (SPEC SL5).
+              next unless node.is_a?(Hash)
               # Name-derived placeholders are minted web-side from the message
               # text that names them (SPEC GN4); a POSTed one records no
               # reception, and older ingestors also posted them for mentions.
-              next if node.is_a?(Hash) && node["user"].is_a?(Hash) && node["user"]["synthetic"]
-              per_node = node.is_a?(Hash) ? normalize_protocol_value(node["protocol"]) : nil
+              next if node["user"].is_a?(Hash) && node["user"]["synthetic"]
+              per_node = normalize_protocol_value(node["protocol"])
               upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
@@ -183,6 +189,24 @@ module PotatoMesh
             meshcore_nodes_count = coerce_integer(payload["meshcore_nodes_count"] || payload["meshcoreNodesCount"])
             meshtastic_nodes_count = coerce_integer(payload["meshtastic_nodes_count"] || payload["meshtasticNodesCount"])
             reticulum_nodes_count = coerce_integer(payload["reticulum_nodes_count"])
+
+            # A signed field is never cut: the signature covers the value as
+            # sent.  One over its cap rejects the announcement before any
+            # signature or network work (SPEC SL6).
+            oversized = DataProcessing::FieldLimits.instance_field_violation(
+              { name: name, version: version, channel: channel, frequency: frequency, contact_link: contact_link },
+              signature,
+              pubkey: pubkey,
+            )
+            if oversized
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: normalized_domain,
+                reason: oversized,
+              )
+              halt 400, { error: oversized }.to_json
+            end
 
             attributes = {
               id: id,

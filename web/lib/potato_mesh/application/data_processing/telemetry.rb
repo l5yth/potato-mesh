@@ -268,9 +268,12 @@ module PotatoMesh
       # @param key_map [Hash{Symbol=>Array<String>}] ordered mapping of source names to candidate keys.
       # @param sources [Hash{Symbol=>Hash}] data structures to search for metric values.
       # @param type [Symbol] coercion strategy: ``:float``, ``:integer``,
-      #   ``:string`` (trimmed text, e.g. ``user_string``), or ``:float_array``
-      #   (list of floats serialised to a JSON string, e.g.
-      #   ``one_wire_temperature``).
+      #   ``:string`` (trimmed text cut to
+      #   {FieldLimits::USER_STRING_BYTES}, the cap of ``user_string``, the
+      #   only text metric), or ``:float_array`` (list of floats serialised
+      #   to a JSON string, e.g. ``one_wire_temperature``).  The caps apply
+      #   here because a metric may come from any of the nested sources, a
+      #   JSON-encoded one included (SPEC SL3).
       # @return [Numeric, String, nil] coerced metric value or nil when no candidates exist.
       def resolve_numeric_metric(key_map, sources, type)
         key_map.each do |source, keys|
@@ -298,7 +301,7 @@ module PotatoMesh
               when :integer
                 coerce_integer(value)
               when :string
-                string_or_nil(value)
+                PotatoMesh::Sanitizer.bounded_text(string_or_nil(value), FieldLimits::USER_STRING_BYTES)
               when :float_array
                 coerce_float_array_json(value)
               else
@@ -317,12 +320,14 @@ module PotatoMesh
       # Coerce a repeated float metric into its JSON storage form.
       #
       # @param value [Object] candidate value; only arrays are accepted.
-      # @return [String, nil] JSON array of finite floats, or nil when nothing
-      #   usable remains (empty arrays are treated as absent, never stored).
+      # @return [String, nil] JSON array of the first
+      #   {FieldLimits::ONE_WIRE_TEMPERATURE_ENTRIES} finite floats (SPEC
+      #   SL3), or nil when nothing usable remains (empty arrays are treated
+      #   as absent, never stored).
       def coerce_float_array_json(value)
         return nil unless value.is_a?(Array)
 
-        floats = value.map { |item| coerce_float(item) }.compact
+        floats = value.lazy.filter_map { |item| coerce_float(item) }.first(FieldLimits::ONE_WIRE_TEMPERATURE_ENTRIES)
         return nil if floats.empty?
 
         JSON.generate(floats)
@@ -337,6 +342,7 @@ module PotatoMesh
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @return [void]
       def insert_telemetry(db, payload, protocol_cache: nil)
+        payload = bound_telemetry_payload(payload) # SPEC SL3/SL5: nil skips the packet
         return unless payload.is_a?(Hash)
 
         telemetry_id = coerce_integer(payload["id"] || payload["packet_id"])
@@ -356,7 +362,6 @@ module PotatoMesh
           node_id, node_num, = canonical_parts
         else
           node_id = string_or_nil(raw_node_id)
-          node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
 
           payload_for_num = payload.dup
           payload_for_num["num"] ||= raw_node_num if raw_node_num

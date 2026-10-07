@@ -39,6 +39,84 @@ module PotatoMesh
       trimmed.empty? ? nil : trimmed
     end
 
+    # Bytes read past a byte budget so the cut sees whether the grapheme
+    # cluster at the boundary goes on.  One code point (four bytes) is
+    # enough; 64 is the margin the ingestor's loose cut leaves, so a value it
+    # trimmed is cut here exactly as the untrimmed value would be.
+    TEXT_LOOKAHEAD_BYTES = 64
+
+    # Bound ingested free text to a UTF-8 byte budget (SPEC SL2, policy T).
+    #
+    # Ingest-only, unlike {.string_or_nil}, which also serves query
+    # parameters and federation: a value within the budget is returned as it
+    # is, unstripped and of its own type, so the write functions store what
+    # they stored before.  Only a value over the budget changes.  A non-string
+    # is measured by its +to_s+; one over the budget is no text to cut (a
+    # mapping's +to_s+ is Ruby's inspect output), so it becomes nil.
+    #
+    # @param value [Object, nil] ingested value.
+    # @param max_bytes [Integer] UTF-8 byte budget.
+    # @return [Object, String, nil] +value+ when nil or within the budget; a
+    #   string over the budget cut by {.truncate_utf8}; nil for any other
+    #   value over the budget.
+    def bounded_text(value, max_bytes)
+      return value if value.nil?
+
+      text = value.is_a?(String) ? value : value.to_s
+      return value if text.bytesize <= max_bytes
+      return nil unless value.is_a?(String)
+
+      truncate_utf8(text, max_bytes)
+    end
+
+    # Bound an ingested token to a byte cap (SPEC SL2, policy N).
+    #
+    # A token is an id, a key, an enum label or an encoded payload: cut short,
+    # it would be a different token, so a value over the cap is dropped
+    # whole.  Ingest-only, like {.bounded_text}; a non-string is measured by
+    # its +to_s+.
+    #
+    # @param value [Object, nil] ingested value.
+    # @param max_bytes [Integer] cap in bytes.
+    # @return [Object, nil] +value+ when nil or within the cap, otherwise nil.
+    def bounded_token(value, max_bytes)
+      return value if value.nil?
+
+      text = value.is_a?(String) ? value : value.to_s
+      text.bytesize <= max_bytes ? value : nil
+    end
+
+    # Cut +text+ to the longest prefix of whole extended grapheme clusters
+    # whose UTF-8 size fits +max_bytes+ (SPEC SL2).
+    #
+    # Only the first +max_bytes+ plus {TEXT_LOOKAHEAD_BYTES} bytes are read,
+    # so a megabyte costs what a short string costs.  Invalid UTF-8 in them
+    # is dropped.  When the first cluster alone exceeds the budget (a letter
+    # under thousands of combining marks), the cut falls back to whole code
+    # points, so some text survives.
+    #
+    # @param text [String] value over its budget.
+    # @param max_bytes [Integer] UTF-8 byte budget.
+    # @return [String, nil] valid UTF-8 of at most +max_bytes+ bytes, or nil
+    #   when no valid text is left.
+    def truncate_utf8(text, max_bytes)
+      head = text.byteslice(0, max_bytes + TEXT_LOOKAHEAD_BYTES).scrub("")
+      kept = +""
+      head.each_grapheme_cluster do |cluster|
+        break if kept.bytesize + cluster.bytesize > max_bytes
+
+        kept << cluster
+      end
+      if kept.empty?
+        head.each_char do |char|
+          break if kept.bytesize + char.bytesize > max_bytes
+
+          kept << char
+        end
+      end
+      kept.empty? ? nil : kept
+    end
+
     # Ensure a value is a valid instance domain according to RFC 1035/3986
     # rules.  Hostnames must include at least one dot-separated label and a
     # top-level domain containing an alphabetic character. Literal IP

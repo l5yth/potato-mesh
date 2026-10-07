@@ -27,6 +27,7 @@ module PotatoMesh
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @return [void]
       def insert_position(db, payload, protocol_cache: nil)
+        return unless (payload = bound_position_payload(payload)) # SPEC SL3/SL5
         pos_id = coerce_integer(payload["id"] || payload["packet_id"])
         return unless pos_id
 
@@ -44,7 +45,6 @@ module PotatoMesh
           node_id, node_num, = canonical_parts
         else
           node_id = string_or_nil(raw_node_id)
-          node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
           node_id ||= format("!%08x", raw_node_num & 0xFFFFFFFF) if node_id.nil? && raw_node_num
 
           payload_for_num = payload.is_a?(Hash) ? payload.dup : {}

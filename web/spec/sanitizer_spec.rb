@@ -28,6 +28,81 @@ RSpec.describe PotatoMesh::Sanitizer do
     end
   end
 
+  # Ingest-only byte caps (SPEC SL2).
+  describe ".bounded_text" do
+    # One family emoji: seven code points, 25 bytes, one grapheme cluster.
+    let(:family) { "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}" }
+    # The German flag: two regional indicators, 8 bytes, one cluster.
+    let(:flag) { "\u{1F1E9}\u{1F1EA}" }
+
+    it "returns nil and every value within the budget unchanged" do
+      text = "  Alice  "
+      expect(described_class.bounded_text(nil, 16)).to be_nil
+      expect(described_class.bounded_text(text, 16)).to be(text)
+      expect(described_class.bounded_text("a" * 16, 16)).to eq("a" * 16)
+      expect(described_class.bounded_text(12_345, 16)).to eq(12_345)
+    end
+
+    it "cuts ASCII to the budget" do
+      expect(described_class.bounded_text("a" * 200, 128)).to eq("a" * 128)
+    end
+
+    it "keeps family emoji whole" do
+      cut = described_class.bounded_text(("ab" + family) * 10, 30)
+      # "ab", one family (27 bytes), then "ab"; the next family would cross 30.
+      expect(cut).to eq("ab#{family}ab")
+      expect(cut.bytesize).to eq(29)
+    end
+
+    it "never leaves half a flag" do
+      expect(described_class.bounded_text(flag * 10, 12)).to eq(flag)
+    end
+
+    it "keeps a letter with its combining mark" do
+      decomposed = "e\u0301"
+      expect(described_class.bounded_text(decomposed * 100, 7)).to eq(decomposed * 2)
+    end
+
+    it "falls back to whole code points when one cluster exceeds the budget" do
+      zalgo = "Z" + ("\u0301" * 500_000)
+      cut = described_class.bounded_text(zalgo, 16)
+      expect(cut).to eq("Z" + ("\u0301" * 7))
+      expect(cut).to be_valid_encoding
+    end
+
+    it "drops invalid UTF-8 from a cut value" do
+      broken = ("a\xFF".b * 40).force_encoding(Encoding::UTF_8)
+      expect(broken).not_to be_valid_encoding
+      cut = described_class.bounded_text(broken, 16)
+      expect(cut).to eq("a" * 16)
+      expect(cut).to be_valid_encoding
+    end
+
+    it "returns nil when no valid text survives the cut" do
+      expect(described_class.bounded_text(("\xFF".b * 40).force_encoding(Encoding::UTF_8), 16)).to be_nil
+    end
+
+    it "returns nil for a non-string over the budget, never its cut inspect text" do
+      expect(described_class.bounded_text(10 ** 40, 16)).to be_nil
+      expect(described_class.bounded_text({ "key" => "v" * 40 }, 16)).to be_nil
+    end
+  end
+
+  describe ".bounded_token" do
+    it "returns nil and every value within the cap unchanged" do
+      token = "ab" * 16
+      expect(described_class.bounded_token(nil, 32)).to be_nil
+      expect(described_class.bounded_token(token, 32)).to be(token)
+      expect(described_class.bounded_token(42, 32)).to eq(42)
+    end
+
+    it "returns nil for a value one byte over the cap" do
+      expect(described_class.bounded_token("a" * 33, 32)).to be_nil
+      expect(described_class.bounded_token("\u00FC" * 17, 33)).to be_nil
+      expect(described_class.bounded_token(10 ** 40, 32)).to be_nil
+    end
+  end
+
   describe ".sanitize_instance_domain" do
     it "rejects invalid domains" do
       expect(described_class.sanitize_instance_domain(nil)).to be_nil

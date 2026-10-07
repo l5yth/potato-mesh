@@ -29,6 +29,39 @@ RSpec.describe PotatoMesh::App::Helpers do
   subject(:helper) { harness_class.new }
 
   # ---------------------------------------------------------------------------
+  # coerce_integer / coerce_float range (SPEC SL10)
+  # ---------------------------------------------------------------------------
+  describe "#coerce_integer and #coerce_float" do
+    it "keeps an integer within the signed 64-bit range an SQLite INTEGER holds" do
+      expect(helper.coerce_integer((2 ** 63) - 1)).to eq((2 ** 63) - 1)
+      expect(helper.coerce_integer(-(2 ** 63))).to eq(-(2 ** 63))
+      expect(helper.coerce_integer(2 ** 63)).to be_nil
+      expect(helper.coerce_integer(10 ** 400)).to be_nil
+      expect(helper.coerce_integer("9" * 400)).to be_nil
+      expect(helper.coerce_integer("0x" + ("f" * 40))).to be_nil
+      expect(helper.coerce_integer(1e300)).to be_nil
+      expect(helper.coerce_integer("1e300")).to be_nil
+      expect(helper.coerce_integer("1e400")).to be_nil
+      expect(helper.coerce_integer(Rational(7, 2))).to eq(3)
+      expect(helper.coerce_integer(:symbol)).to be_nil
+    end
+
+    it "keeps a float only when finite, an integer's float included" do
+      expect(helper.coerce_float(7)).to eq(7.0)
+      expect(helper.coerce_float(Rational(1, 2))).to eq(0.5)
+      expect(helper.coerce_float(10 ** 400)).to be_nil
+      expect(helper.coerce_float(Float::INFINITY)).to be_nil
+      expect(helper.coerce_float("1e400")).to be_nil
+    end
+
+    it "keeps a value as an SQL integer only within the range" do
+      expect(helper.sql_integer(nil)).to be_nil
+      expect(helper.sql_integer(5)).to eq(5)
+      expect(helper.sql_integer(2 ** 63)).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # node_long_name_link
   # ---------------------------------------------------------------------------
   describe "#node_long_name_link" do

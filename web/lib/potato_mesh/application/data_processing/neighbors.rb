@@ -24,6 +24,7 @@ module PotatoMesh
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @return [void]
       def insert_neighbors(db, payload, protocol_cache: nil)
+        payload = bound_neighbor_payload(payload) # SPEC SL5: nil skips the snapshot
         return unless payload.is_a?(Hash)
 
         now = Time.now.to_i
@@ -40,15 +41,7 @@ module PotatoMesh
           node_id = string_or_nil(raw_node_id)
           canonical = normalize_node_id(db, node_id || raw_node_num)
           node_id = canonical if canonical
-          if node_id&.start_with?("!") && raw_node_num.nil?
-            begin
-              node_num = Integer(node_id.delete_prefix("!"), 16)
-            rescue ArgumentError
-              node_num = nil
-            end
-          else
-            node_num = raw_node_num
-          end
+          node_num = raw_node_num
         end
 
         return unless node_id
@@ -80,13 +73,6 @@ module PotatoMesh
             neighbor_id = string_or_nil(neighbor_ref)
             canonical_neighbor_id = normalize_node_id(db, neighbor_id || neighbor_num)
             neighbor_id = canonical_neighbor_id if canonical_neighbor_id
-            if neighbor_id&.start_with?("!") && neighbor_num.nil?
-              begin
-                neighbor_num = Integer(neighbor_id.delete_prefix("!"), 16)
-              rescue ArgumentError
-                neighbor_num = nil
-              end
-            end
           end
 
           next unless neighbor_id

@@ -165,46 +165,60 @@ module PotatoMesh
         end
       end
 
+      # The values an SQLite +INTEGER+ holds, signed 64-bit.  SQLite stores a
+      # larger integer as an approximate +REAL+, and one past 1.8e308 as
+      # infinity, which no JSON response can carry (SPEC SL10).
+      SQL_INTEGER_RANGE = (-(2 ** 63))..((2 ** 63) - 1)
+
       # Coerce an arbitrary value into an integer when possible.
       #
       # @param value [Object] user supplied value.
-      # @return [Integer, nil] parsed integer or nil when invalid.
+      # @return [Integer, nil] parsed integer, or nil when invalid or outside
+      #   {SQL_INTEGER_RANGE}.
       def coerce_integer(value)
-        case value
-        when Integer
-          value
-        when Float
-          value.finite? ? value.to_i : nil
-        when Numeric
-          value.to_i
-        when String
-          trimmed = value.strip
-          return nil if trimmed.empty?
-          return trimmed.to_i(16) if trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
-          return trimmed.to_i(10) if trimmed.match?(/\A-?\d+\z/)
-          begin
-            float_val = Float(trimmed)
-            float_val.finite? ? float_val.to_i : nil
-          rescue ArgumentError
-            nil
+        integer = case value
+          when Integer
+            value
+          when Float
+            value.finite? ? value.to_i : nil
+          when Numeric
+            value.to_i
+          when String
+            trimmed = value.strip
+            return nil if trimmed.empty?
+            return sql_integer(trimmed.to_i(16)) if trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
+            return sql_integer(trimmed.to_i(10)) if trimmed.match?(/\A-?\d+\z/)
+            begin
+              float_val = Float(trimmed)
+              float_val.finite? ? float_val.to_i : nil
+            rescue ArgumentError
+              nil
+            end
           end
-        else
-          nil
-        end
+        sql_integer(integer)
+      end
+
+      # Keep an integer only within the range an SQLite +INTEGER+ holds.
+      #
+      # @param integer [Integer, nil] candidate integer.
+      # @return [Integer, nil] +integer+, or nil when it is nil or outside
+      #   {SQL_INTEGER_RANGE}.
+      def sql_integer(integer)
+        integer if integer && SQL_INTEGER_RANGE.cover?(integer)
       end
 
       # Coerce an arbitrary value into a floating point number when possible.
       #
       # @param value [Object] user supplied value.
-      # @return [Float, nil] parsed float or nil when invalid.
+      # @return [Float, nil] parsed float, or nil when invalid or not finite
+      #   (an integer past 1.8e308 included).
       def coerce_float(value)
         case value
         when Float
           value.finite? ? value : nil
-        when Integer
-          value.to_f
         when Numeric
-          value.to_f
+          float_val = value.to_f
+          float_val.finite? ? float_val : nil
         when String
           trimmed = value.strip
           return nil if trimmed.empty?
