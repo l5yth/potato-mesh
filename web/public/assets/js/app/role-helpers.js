@@ -241,10 +241,10 @@ export const meshcoreRoleRenderOrder = Object.freeze({
  * the higher it draws. Mirrors the role ramp's own ordering
  * (`PEER < NODE < TRANSPORT < PROPAGATION`).
  *
- * A **reserved slot**, like the hexagon marker it stacks: Reticulum announces
- * carry no position, so nothing reaches this table yet. Without it every RNS
- * role would fall through to `0` and draw beneath every Meshtastic node —
- * `CLIENT_HIDDEN` included — the moment positions existed.
+ * Reticulum announces carry no position, so only an ingestor's own host,
+ * positioned from its RNS config (SPEC RP7), reaches this table. Without it
+ * every RNS role would fall through to `0` and draw beneath every Meshtastic
+ * node — `CLIENT_HIDDEN` included.
  *
  * @type {Readonly<Record<string, number>>}
  */

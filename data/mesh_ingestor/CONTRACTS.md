@@ -420,8 +420,8 @@ from the operator's own stack.
 
 - Source: the first `RNodeInterface` block of the shared RNS config
   (`frequency`, `bandwidth`, `spreadingfactor`, `codingrate`). Only those four
-  keys are read - the same file holds `rpc_key`, which is
-  never read or logged.
+  keys, and the host position keys below, are read - the same file holds
+  `rpc_key`, which is never read or logged.
 - RNS stores both frequencies in Hz; they are emitted as MHz and kHz.
 - `RETICULUM_FREQ` / `RETICULUM_PRESET` override the parsed values.
 - The preset is a Meshtastic preset name when the BW/SF/CR triple matches
@@ -466,6 +466,50 @@ connection that never recycles.
 - An aspect whose app disconnects, or whose path entry expires (RNS culls one
   7 days after its timestamp unless traffic flows through it), leaves the 0-hop
   table and is no longer refreshed.
+
+### Reticulum host position (SPEC RP1-RP6)
+
+Announces carry no position, so the provider publishes one for its own host
+only, from the operator's own RNS config.
+
+- Source: `latitude`, `longitude` and, if present, `height` (metres) in the
+  first `RNodeInterface` block of the shared RNS config, found by the same
+  block reader as the radio metadata above. Read whether or not `discoverable`
+  is set. `location_cmd` is never run, and no other key leaves the parser.
+- Read once per connect, as RNS's own config parser reads it: a key counts
+  only under its exact name once one pair of quotes is stripped from it
+  (`Latitude` is not read), and one matching pair of single or double quotes
+  is stripped from each value. The radio metadata keeps its own rule:
+  case-insensitive keys, values as written. No coordinates means no position. An
+  invalid coordinate means no position and one warning: one coordinate without
+  the other, a latitude or longitude that is not a finite number, a latitude
+  beyond 90 or a longitude beyond 180 degrees, or `0, 0`. A `height` that is
+  not a finite number drops only the altitude, with one warning that names the
+  key but not the value.
+- Published as written: no rounding and no `precisionBits`.
+- Node records: every record keyed on the registered host id, in the connect
+  snapshot and in every self-node report, carries `position` =
+  `{latitude, longitude, altitude?, time, locationSource: "LOC_MANUAL"}`, with
+  `time` the report time. No other node's record carries one.
+- Bare host record: when no record carries the registered host id, because
+  nothing on the stack announces (Docker's default volume), one record
+  `{nodeId, lastHeard, protocol, user: {shortName, longName, role: "PEER"}}`
+  named with the node's own placeholder carries the position. It has no
+  `destination`, and there is none without a position.
+- Positions rows: each self-node report, the first at connect and then hourly,
+  posts one `POST /api/positions` row for the host: `id` (the first 7 bytes of
+  SHA-256 over `reticulum:<node_id>:<time>`, masked to 53 bits), `rx_time` and
+  `position_time` (the report time), `rx_iso`, `node_id`, `from_id` and
+  `ingestor` (the host id), `node_num`, `latitude`, `longitude`, `altitude`
+  when set, `location_source: "LOC_MANUAL"`, `protocol: "reticulum"`, and the
+  configured `lora_freq` / `modem_preset`. They count in the `telemetry`
+  umbrella of `GET /api/stats`.
+- The row is queued before the report's node records. If it reaches a web app
+  that has no row for the host yet, the unknown-node placeholder it creates is
+  completed by the record that follows.
+- Removal: with the keys deleted, the next connect publishes nothing. A stored
+  node position stays, because the node upsert keeps one when a record omits
+  it, until it is cleared in the database; no API deletes a position.
 
 ### GET /api/nodes placeholder flag (SPEC MR4)
 

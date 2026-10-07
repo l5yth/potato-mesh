@@ -30,12 +30,10 @@
 /**
  * Resolve the marker shape for a protocol.
  *
- * Reticulum returns `hexagon` (SPEC RD6). That branch is a **reserved slot** on
- * the map: a Reticulum announce carries no position, so no RNS node currently
- * reaches {@link createNodeMarker}. It is implemented rather than stubbed so
- * the shape channel is complete the moment positions exist, and because the
- * legend swatch — which *is* live — derives its shape from this same function
- * (SPEC LC1).
+ * Reticulum returns `hexagon` (SPEC RD6). A Reticulum announce carries no
+ * position, so the one RNS node that reaches {@link createNodeMarker} is an
+ * ingestor's own host, positioned from its RNS config (SPEC RP7). The legend
+ * swatch derives its shape from this same function (SPEC LC1).
  *
  * @param {?string} protocol Node protocol identifier.
  * @returns {'square' | 'hexagon' | 'circle'} Marker shape.
