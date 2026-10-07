@@ -108,8 +108,38 @@ def node_num_from_id(node_id: object) -> int | None:
             return None
 
 
+def claims_node(claimed: object, node_id: str | None) -> bool:
+    """Return whether ``claimed`` is exactly the node ``node_id`` (SPEC NI1).
+
+    A record describes the node that sent it, so an id its payload claims
+    counts only when it is the sender's own, written canonically: the
+    canonical id itself (``!`` and eight lowercase hex digits), or, for a
+    numeric field such as ``NeighborInfo.node_id``, the node number.  Another
+    spelling of the id (``!A1A1A1A1``, ``a1a1a1a1``, a decimal string), an id
+    that names no node (``!Decrypted``), a boolean and a number outside 32
+    bits are no claim, so a record carrying one is not filed under its
+    sender.
+
+    Parameters:
+        claimed: Node id or number a payload claims, such as ``user.id``.
+        node_id: Canonical ``!xxxxxxxx`` id of the sender, or ``None`` when
+            it is unknown.
+
+    Returns:
+        ``True`` when ``claimed`` is ``node_id`` or its node number;
+        ``False`` otherwise, and always when ``node_id`` is ``None``.
+    """
+
+    if node_id is None or isinstance(claimed, bool):
+        return False
+    if isinstance(claimed, int):
+        return 0 <= claimed <= 0xFFFFFFFF and f"!{claimed:08x}" == node_id
+    return isinstance(claimed, str) and claimed == node_id
+
+
 __all__ = [
     "CANONICAL_PREFIX",
     "canonical_node_id",
+    "claims_node",
     "node_num_from_id",
 ]

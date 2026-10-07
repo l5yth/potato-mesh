@@ -20,6 +20,7 @@ import time
 from collections.abc import Mapping
 
 from .. import config, queue
+from ..node_identity import claims_node
 from ..serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -30,6 +31,7 @@ from ..serialization import (
 )
 from . import _state
 from .radio import _apply_radio_metadata
+from .sender import _packet_sender
 
 
 def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
@@ -38,6 +40,15 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     Meshtastic nodes periodically broadcast the set of nodes they can hear
     directly along with the observed signal quality.  This handler serialises
     that snapshot so the web dashboard can render a live RF topology graph.
+
+    A NeighborInfo describes the node that sent it (SPEC NI1): it is filed
+    under the packet's sender
+    (:func:`~data.mesh_ingestor.handlers.sender._packet_sender`), and one
+    whose ``node_id`` is not the sender's number or canonical id
+    (:func:`~data.mesh_ingestor.node_identity.claims_node`) is dropped with a
+    warning that names both, so no packet can replace another node's
+    neighbours.  Without a ``node_id``, or with an empty one, it is filed
+    under the sender; without a sender, under its ``node_id``.
 
     Parameters:
         packet: Raw Meshtastic packet metadata.
@@ -53,13 +64,26 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     if not isinstance(neighbor_section, Mapping):
         return
 
-    node_ref = _first(
-        neighbor_section,
-        "nodeId",
-        "node_id",
-        default=_first(packet, "fromId", "from_id", "from", default=None),
-    )
-    node_id = _canonical_node_id(node_ref)
+    sender_id = _canonical_node_id(_packet_sender(packet))
+    claimed = _first(neighbor_section, "nodeId", "node_id", default=None)
+    if (
+        sender_id is not None
+        and claimed not in (None, "")
+        and not claims_node(claimed, sender_id)
+    ):
+        config._debug_log(
+            "Dropped NeighborInfo naming another node",
+            context="handlers.store_neighborinfo",
+            severity="warn",
+            from_id=sender_id,
+            # A node number reads best as the id it names; a string as sent.
+            node_id=(
+                _canonical_node_id(claimed) if isinstance(claimed, int) else claimed
+            ),
+        )
+        return
+
+    node_id = sender_id or _canonical_node_id(claimed)
     if node_id is None:
         return
 

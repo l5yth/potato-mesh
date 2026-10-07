@@ -37,6 +37,7 @@ from ..serialization import (
 from . import _state
 from .ignored import _record_ignored_packet
 from .radio import _apply_radio_metadata
+from .sender import _packet_sender
 
 
 def base64_payload(payload_bytes: bytes | None) -> str | None:
@@ -103,7 +104,7 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
         ``None``. The formatted position payload is added to the HTTP queue.
     """
 
-    node_ref = _first(packet, "fromId", "from_id", "from", default=None)
+    node_ref = _packet_sender(packet)
     if node_ref is None:
         node_ref = _first(decoded, "num", default=None)
     node_id = _canonical_node_id(node_ref)
@@ -342,7 +343,7 @@ def store_traceroute_packet(packet: Mapping, decoded: Mapping) -> None:
             decoded,
             "src",
             "source",
-            default=_first(packet, "fromId", "from_id", "from", default=None),
+            default=_packet_sender(packet, numeric=True),
         )
     )
     dest = _coerce_int(

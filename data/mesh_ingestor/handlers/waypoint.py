@@ -41,6 +41,7 @@ from . import _state
 from .ignored import _record_ignored_packet
 from .position import base64_payload
 from .radio import _apply_radio_metadata
+from .sender import _packet_sender
 
 
 def _canonical_locked_to(value: object) -> str | None:
@@ -94,7 +95,7 @@ def store_waypoint_packet(packet: Mapping, decoded: Mapping) -> None:
         _record_ignored_packet(packet, reason="waypoint-missing-id")
         return
 
-    node_ref = _first(packet, "fromId", "from_id", "from", default=None)
+    node_ref = _packet_sender(packet)
     node_id = _canonical_node_id(node_ref)
     if node_id is None:
         _record_ignored_packet(packet, reason="waypoint-missing-author")

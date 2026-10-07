@@ -18,6 +18,10 @@ This document records the contracts that future protocols must preserve. New pro
   - Python currently normalizes via `data/mesh_ingestor/serialization.py:_canonical_node_id`.
   - Ruby normalizes via `web/lib/potato_mesh/application/data_processing.rb:canonical_node_parts`.
 - Dual addressing: Ruby routes and queries accept either a canonical `!xxxxxxxx` string or a numeric node id; they normalize to `node_id`.
+- Sender (SPEC NI1): a Meshtastic record names its sender by the packet header's numeric `from`, as `!%08x`, not by the meshtastic library's `fromId`. A packet without a numeric `from` falls back to `fromId`, then `from_id`.
+- A Meshtastic NodeInfo is filed under its sender only when its `user.id` is exactly the sender's canonical id. Any other `user.id`, including one that names no node or spells the sender's id another way, drops it with a warning that names both ids, and the meshtastic library does not store it either (`interfaces/patches/nodeinfo.py`). A NodeInfo without `user.id`, or with an empty one, is filed under its sender. A `num` other than its node's own is not posted: the entry carries its own node's number. The node-list snapshot posts each entry under the id the library files it under, and skips an entry whose `num` disagrees with that id.
+- A Meshtastic NeighborInfo is filed under its sender too, and only when its `node_id` is the sender's node number or canonical id. Any other `node_id` drops it with a warning that names both ids. One without `node_id` is filed under its sender.
+- The web app applies the same rule to the NodeInfo and NeighborInfo payloads it decrypts. A decrypted NodeInfo's own `id` and `user.id`, and a decrypted NeighborInfo's `node_id`, must each be absent or the message sender's canonical id or number; any other value drops the payload. A decrypted NodeInfo is filed under the sender's own id and number.
 
 Note: non-Meshtastic protocols need a strategy to map their native node identifiers into this `!%08x` space. MeshCore uses the first 4 bytes of the node public key; Reticulum's mapping is defined below. There is no single standardized mapping in code - each protocol's provider owns its own, subject to the rules these two established: the mapping MUST be deterministic and derived from sender-side identity material, so every ingestor hearing the same node produces the same `node_id`.
 
@@ -73,20 +77,29 @@ loop while it returns `None`, so it must be cheap and must not raise.
 
 Transmit policy. The provider is receive-only and has no transmit site to gate, so `PROTOCOL=reticulum` works with `TX_ENABLED=0` (the default). The underlying RNS stack is not silent at the *interface* layer, though - `AutoInterface` multicasts peer discovery, and `enable_transport` relays other nodes' traffic. That is owned by the Reticulum config the ingestor shares with `rnsd` (above). With no shared instance running, `connect` starts that stack in the ingestor's own process, and the process then transmits whatever the config enables (SPEC RN5, amended by RE3).
 
-Collision trade-off (accepted). Truncating to 4 bytes means two distinct
-16-byte identity hashes sharing a 4-byte prefix collapse onto one
-`node_id` -- the same accepted trade-off MeshCore's pubkey-prefix mapping
-carries (odds negligible at mesh scale). Across protocols, a prefix
-collision is a hijack risk rather than a merge, so the web nodeinfo upsert
-(`upsert_node`) refuses cross-protocol overwrites: when the stored row already
-carries a known protocol and an incoming record resolves to a different one,
-the record is skipped entirely (logged at debug level). The one exception is
-`meshtastic` → `meshcore` self-heal: `meshtastic` is the schema/classification
-default, so a `meshcore` record may still reclaim a default-stamped row. The
-guard covers the nodeinfo upsert only -- position, telemetry, and last-seen
-touch writes key on the bare `node_id` without a protocol check, so a
-cross-protocol collision can still attach position/telemetry or advance
-`last_heard` (extending the guard to those paths is a tracked follow-up).
+Collision trade-off. Truncating to 4 bytes means two distinct 16-byte identity
+hashes sharing a 4-byte prefix map to one `node_id`, as two MeshCore public
+keys sharing a 4-byte prefix do. The web app binds the row to the full key of
+the identity that named it (SPEC NI2, NI3): `identity_hash` for Reticulum,
+`public_key` for Meshtastic and MeshCore. A record under another key, or under
+none, cannot change the row's names, role, hardware model, key, position or
+protocol, add a destination, stamp its keyed evidence, or merge a chat
+placeholder into it; it still refreshes `last_heard`, telemetry and signal
+fields. A MeshCore position row carries its advert's `public_key`, so the same
+holds for the node-row write of `POST /api/positions`. The row keeps the first
+identity's names. A new key takes the row over once the row is positively
+stale, by the merge rule of SPEC MR2. Across protocols, a prefix collision is
+a hijack risk rather than a merge, so every web node-row write refuses
+cross-protocol overwrites: when the stored row already carries a known
+protocol and an incoming record resolves to a different one, the write is
+skipped (logged at debug level). This covers the nodeinfo upsert
+(`upsert_node`) and the node-row writes of positions, telemetry and last-seen
+touches (`update_node_from_position`, `update_node_from_telemetry`,
+`touch_node_last_seen`), whose callers pass the record's protocol. The one
+exception is `meshtastic` → `meshcore` self-heal: `meshtastic` is the
+schema/classification default, so a `meshcore` record may still reclaim a
+default-stamped row that is not bound to another key. The `positions` and
+`telemetry` rows of a colliding record are still stored under its `node_id`.
 
 Deployment ordering. The web whitelist must accept a protocol before any ingestor posts it: if an ingestor ships a protocol the deployed web tier does not yet know, protocol resolution files those records under the `meshtastic` default and the misclassification persists after the web tier is upgraded. Concretely for reticulum: deploy (or merge) the web change before or together with the ingestor change, never after.
 
@@ -123,7 +136,7 @@ Meshtastic-camelCase-only; the existing collector keeps emitting camelCase, whic
 remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
 `false` is never overridden by a snake_case alias. Fields:
 
-- `num` (int node number)
+- `num` (int node number) - the number of the node the entry is keyed on. A `num` naming another node is replaced by that node's own number (SPEC NI1).
 - `lastHeard` (int unix seconds)
 - `snr` (float)
 - `rssi` (int|nil) - per-advert reception RSSI (SPEC RF3). Sourced from MeshCore RX-log adverts; Meshtastic reports no per-node RSSI, so the field stays absent/NULL there. The web upsert keeps the last stored value when an update omits it (`COALESCE`), so contact-roster refreshes never wipe a per-advert reading.
@@ -133,7 +146,7 @@ remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
 - `destination` (mapping | absent) - `{id, aspect, role}` for the destination this record's announce arrived on. Written to the `destinations` table and served by `GET /api/destinations`.
 - `interface` (string | absent) - the interface the announce was heard on, e.g. `RNodeInterface[RNode Reticulum Berlin]`.
 - `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `publicKey`, `isUnmessagable`)
-  - `role` (optional string) - omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`), MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`), and Reticulum role names (`PEER`, `NODE`, `PROPAGATION`; `TRANSPORT` for the ingestor's own host only - see "Reticulum node id mapping" above, which also covers the headline ranking)
+  - `role` (optional string) - omit when unknown. A Meshtastic record that carries `user` without `role` is stored as `CLIENT`: proto3 omits the role at its zero value, `CLIENT` (SPEC NI5). A `user` whose `hwModel` is `UNSET`, the meshtastic library's stand-in for a node it has no NodeInfo for, keeps the stored role. Known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`), MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`), and Reticulum role names (`PEER`, `NODE`, `PROPAGATION`; `TRANSPORT` for the ingestor's own host only - see "Reticulum node id mapping" above, which also covers the headline ranking)
 - `deviceMetrics` (mapping; e.g. `batteryLevel`, `voltage`, `channelUtilization`, `airUtilTx`, `uptimeSeconds`)
 - `position` (mapping; `latitude`, `longitude`, `altitude`, `time`, `locationSource`, `precisionBits`, optional nested `raw`)
 - Optional radio metadata: `lora_freq`, `modem_preset`
@@ -152,11 +165,13 @@ MeshCore advert sourcing (capturing adverts from other nodes). A MeshCore node a
 
 - *Contact roster (rich).* The startup `ensure_contacts()` fetch plus live `NEW_CONTACT` / `NEXT_CONTACT` pushes carry the full advert (name, role, position) and upsert complete node rows. This covers every node the radio has added to its contact book.
 - *Auto-update re-fetch (freshness).* The provider sets `mc.auto_update_contacts = True`, so the meshcore library re-fetches changed contacts (incrementally, by `lastmod`) whenever an `ADVERTISEMENT` / `PATH_UPDATE` push arrives. A re-advert from a known node therefore refreshes its `last_advert` / position without waiting for a reconnect.
-- *Bare advert (reach).* The `ADVERTISEMENT` (pubkey-only) push is also handled directly: for a public key not in the contact roster it upserts a minimal "heard now" node (`lastHeard`, `protocol`, `user.shortName`/`publicKey` only - no name/type/position), so radios running with auto-add off still register the advertiser. Known keys are skipped (the auto-update path keeps them fresh). The Ruby web app preserves an existing long name on conflict, so this placeholder never clobbers a richer record, and a later full contact advertisement reconciles it. Reconciliation does not depend on timestamp ordering: the contact record carries `lastHeard = last_advert` (the sender-stamped advert-creation time), which is always older than the placeholder's wall-clock stamp - the web app's node upsert therefore fills identity fields (name, role, public key, …) that are still NULL even from an older-stamped record, while timestamps/telemetry stay freshness-guarded (ACCEPTANCE GH-A1).
+- *Bare advert (reach).* The `ADVERTISEMENT` (pubkey-only) push is also handled directly: for a public key not in the contact roster it upserts a minimal "heard now" node (`lastHeard`, `protocol`, `user.shortName`/`publicKey` only - no name/type/position), so radios running with auto-add off still register the advertiser. Known keys are skipped (the auto-update path keeps them fresh). The Ruby web app preserves an existing long name on conflict, so this placeholder never clobbers a richer record, and a later full contact advertisement reconciles it. Reconciliation does not depend on timestamp ordering: the contact record carries `lastHeard = last_advert` (the sender-stamped advert-creation time), which is always older than the placeholder's wall-clock stamp - the web app's node upsert therefore fills identity fields (name, role, public key, …) that are still NULL even from an older-stamped record, while timestamps/telemetry stay freshness-guarded (ACCEPTANCE GH-A1). A record under another key than the row's fills nothing (SPEC NI2).
 
 - *RX-log advert (full identity + signal, roster-independent - SPEC RF3).* Companion firmware ≥ 1.16 pushes every received RF frame (`RX_LOG_DATA`) while a client is connected; the library parses `ADVERT` frames completely (full public key, name, type, optional lat/lon). The ingestor converts these to full node upserts carrying per-reception `snr` / `rssi` / `hopsAway`, so node identity and signal metrics no longer depend on the radio's contact roster at all - including when the roster is full. Absent RX-log frames (older/other builds) are never an error; the three paths above still function. Non-`ADVERT` RX-log frames are not ingested: decrypted `GRP_TXT` copies only route channel messages (see `POST /api/messages`), and the DEBUG-only capture drops their decrypted text.
 
   *Position anchoring (SPEC MR5).* One advert reaches the radio several times over different flood paths, each copy carrying its own receiver-side `recv_time`. The position derived from an RX-log advert is therefore keyed on the advert's sender-side `adv_timestamp` - both for the `POST /api/positions` record and for the node row's `position.time` - falling back to `recv_time` only when the parser reported no usable value. `lastHeard` stays receiver-side. Because `_store_meshcore_position` derives its row id from `(node_id, position_time)`, every copy of one advert - across flood paths and across co-operating ingestors - collapses to a single position row. New protocols whose position data rides on rebroadcast beacons SHOULD likewise anchor on a sender-side timestamp.
+
+  *Key binding (SPEC NI3).* An advert, from any of the four paths, whose full public key differs from the key the row is bound to refreshes only `last_heard`, telemetry and the signal fields; the names, role, key and position stay those of the first key (see "Collision trade-off" above).
 
 MeshCore roster-eviction assertion (SPEC RF4). At startup the provider asserts the firmware's `AUTO_ADD_OVERWRITE_OLDEST` bit (`autoadd_config` bit `0x01`): it reads the current config and, only when the bit is unset, writes `config | 0x01` back - preserving the type-filter bits and `autoadd_max_hops`, and skipping the write (and its flash `savePrefs()`) when already set. With the bit set, a full contact roster evicts its oldest non-favourite entry instead of rejecting new contacts, so `NEW_CONTACT` coverage keeps rotating; favourites are never evicted (firmware guarantee) and the resulting `CONTACT_DELETED` pushes are deliberately ignored (the web DB retains evicted nodes; server-side retention remains the only data-expiry authority). Unconditional, no configuration knob; pre-1.16 firmware answers `ERROR`/timeout, which logs a warning and never blocks startup.
 
@@ -213,6 +228,7 @@ Single position payload:
 
 - Required: `id` (int), `rx_time` (int), `rx_iso` (string)
 - Node: `node_id` (canonical string), `node_num` (int|nil), `num` (int|nil), `from_id` (canonical string), `to_id` (string|nil)
+- Key: `public_key` (string|absent) - the full public key of the MeshCore advert or contact the position came from. A position carrying one moves the node row only when it is the key the row is bound to; the position row itself is stored either way (SPEC NI3). Meshtastic and Reticulum positions carry none.
 - Position: `latitude`, `longitude`, `altitude` (floats|nil)
 - Position time: `position_time` (int|nil)
 - Quality: `location_source` (string|nil), `precision_bits` (int|nil), `sats_in_view` (int|nil), `pdop` (float|nil)

@@ -139,7 +139,11 @@ module PotatoMesh
       # @param source [Symbol, nil] originating subsystem (used for debug logs).
       # @param lora_freq [Integer, nil] LoRa frequency; only updated when non-nil.
       # @param modem_preset [String, nil] modem preset name; only updated when non-nil.
-      # @return [Boolean] true when at least one row was updated.
+      # @param protocol [String, nil] resolved protocol of the record; a row
+      #   of another protocol is left alone ({#cross_protocol_write?}), and nil
+      #   skips that check.
+      # @return [Boolean, nil] true when at least one row was updated; nil
+      #   when the write was skipped.
       def touch_node_last_seen(
         db,
         node_ref,
@@ -147,7 +151,8 @@ module PotatoMesh
         rx_time: nil,
         source: nil,
         lora_freq: nil,
-        modem_preset: nil
+        modem_preset: nil,
+        protocol: nil
       )
         timestamp = coerce_integer(rx_time)
         return unless timestamp
@@ -172,6 +177,7 @@ module PotatoMesh
 
         return if broadcast_node_ref?(node_id, fallback_num)
         return unless node_id
+        return if cross_protocol_write?(db, node_id, protocol, context: "data_processing.touch_node_last_seen")
 
         lora_freq = coerce_integer(lora_freq)
         modem_preset = string_or_nil(modem_preset)
@@ -224,15 +230,17 @@ module PotatoMesh
 
       # Decide whether an incoming node record collides with a stored row of a
       # different protocol and must therefore be skipped (the cross-protocol
-      # node-row hijack guard in {#upsert_node}).
+      # node-row hijack guard every node-row writer applies through
+      # {#cross_protocol_write?}).
       #
       # A stored +"meshtastic"+ value doubles as the schema default stamped on
       # rows ingested before their protocol was known, so a +"meshcore"+
       # record may still reclaim such a row — the established bug #747
       # self-heal that the upsert's +NULLIF(nodes.protocol,'meshtastic')+
-      # conflict clause implements.  Every other differing pairing between two
-      # known protocols is a genuine 4-byte id collision across protocols and
-      # is rejected.
+      # conflict clause implements, for a row not bound to another key
+      # ({#record_under_another_key?}).  Every other differing pairing between
+      # two known protocols is a genuine 4-byte id collision across protocols
+      # and is rejected.
       #
       # @param stored_protocol [String, nil] protocol currently on the row, or
       #   nil when no row exists yet.
@@ -361,24 +369,33 @@ module PotatoMesh
       # node's own placeholder ({#reticulum_headline_name}). Ties break on the
       # more recently heard destination.
       #
+      # Only destinations of the identity the row is bound to count (SPEC
+      # NI3): after a new identity takes a stale row over, the earlier
+      # identity's destination rows stay under the same node id until they age
+      # out, and must not name the node.  A row with no identity hash reads
+      # all of its destinations.
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param node_id [String] canonical id of the node to refresh.
       # @return [void]
       def refresh_node_identity_from_destinations(db, node_id)
         rank = DESTINATION_ROLE_RANK_SQL
+        own_destinations = "node_id = ? AND (? IS NULL OR identity_hash = ?)"
         with_busy_retry do
-          destinations = db.execute(<<~SQL, [node_id]).map { |row| row.is_a?(Hash) ? row.values_at("id", "name") : row }
-            SELECT id, name FROM destinations WHERE node_id = ?
+          identity = db.get_first_value("SELECT identity_hash FROM nodes WHERE node_id = ?", [node_id])
+          scope = [node_id, identity, identity]
+          destinations = db.execute(<<~SQL, scope).map { |row| row.is_a?(Hash) ? row.values_at("id", "name") : row }
+            SELECT id, name FROM destinations WHERE #{own_destinations}
             ORDER BY #{rank}, COALESCE(last_heard, 0) DESC
           SQL
           stored = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
           headline = reticulum_headline_name(node_id, destinations, stored)
-          db.execute(<<~SQL, [headline, node_id, node_id])
+          db.execute(<<~SQL, [headline, *scope, node_id])
             UPDATE nodes SET
               long_name = COALESCE(?, long_name),
               role = COALESCE((
                 SELECT role FROM destinations
-                WHERE node_id = ? AND role IS NOT NULL
+                WHERE #{own_destinations} AND role IS NOT NULL
                 ORDER BY #{rank}, COALESCE(last_heard, 0) DESC LIMIT 1
               ), role)
             WHERE node_id = ? AND protocol = 'reticulum'
@@ -401,6 +418,13 @@ module PotatoMesh
       # (ACCEPTANCE GH-A1). Synthetic chat placeholders never touch real rows
       # in either phase.
       #
+      # A stored row is bound to its key (SPEC NI2, NI3,
+      # {#record_under_another_key?}).  A record under another key, or under
+      # none, changes neither phase's identity columns, nor the position,
+      # protocol, destinations, keyed evidence or synthetic merges, so it can
+      # neither rename the node nor add or remove its opt-out marker; it still
+      # refreshes +last_heard+, telemetry and signal fields like any record.
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param node_id [String] canonical node identifier.
       # @param n [Hash] node payload extracted from the ingestor.
@@ -413,6 +437,18 @@ module PotatoMesh
         # nil when user info absent; COALESCE in the conflict clause preserves
         # the stored role rather than overwriting with a default.
         role = user["role"]
+        # Proto3 omits an enum field at its zero value, and Meshtastic's
+        # CLIENT role is 0, so a Meshtastic record that carries a user but no
+        # role names a CLIENT.  It replaces the CLIENT_HIDDEN placeholder
+        # +ensure_unknown_node+ gives a node first heard through other packets
+        # (SPEC NI5, RA9).  The meshtastic library's stand-in for a node whose
+        # NodeInfo it never received is no such user: it writes
+        # +hwModel: "UNSET"+, a zero enum the protobuf JSON mapping omits, and
+        # says nothing about the role, so the stored role stays.
+        if role.nil? && protocol == "meshtastic" && n["user"].is_a?(Hash) &&
+           pick_alias(user, "hwModel", "hw_model") != "UNSET"
+          role = "CLIENT"
+        end
         lh = coerce_integer(pick_alias(n, "lastHeard", "last_heard"))
         now = Time.now.to_i
         # Issue #782: drop Meshtastic "no GPS lock" sentinels at the write
@@ -441,6 +477,10 @@ module PotatoMesh
           loc_source = pick_alias(pos, "locationSource", "location_source")
         end
         node_num = resolve_node_num(node_id, n)
+        # A record's number is its own node's (SPEC NI1): a NodeInfo-format
+        # payload can carry any +num+, and one naming another node would give
+        # two rows that number for the numeric lookups and opt-out filters.
+        node_num = resolve_node_num(node_id, {}) if names_another_node?(node_num, node_id)
 
         # Cross-protocol node-row hijack guard.  +nodes.node_id+ is a global
         # TEXT primary key shared by every protocol's id mapping, and both the
@@ -450,32 +490,23 @@ module PotatoMesh
         # the freshness guard below (Reticulum announces stamp a wall-clock
         # +lastHeard+) and overwrite the stored row's fields wholesale, with
         # the row's protocol either flipped or silently mismatched.  Skip such
-        # records entirely; neither row's data may corrupt the other's.
-        # Same-protocol prefix collisions remain the accepted MeshCore-
-        # inherited merge behaviour (see CONTRACTS.md, "Reticulum node id
-        # mapping"), and a stored default-'meshtastic' row may still be
-        # reclaimed by a meshcore record (the #747 self-heal preserved by
-        # +cross_protocol_conflict?+).
-        stored_protocol = db.get_first_value(
-          "SELECT protocol FROM nodes WHERE node_id = ? LIMIT 1",
-          [node_id],
-        )
-        if cross_protocol_conflict?(stored_protocol, protocol)
-          debug_log(
-            "Skipped cross-protocol node upsert",
-            context: "data_processing.upsert_node",
-            node_id: node_id,
-            stored_protocol: stored_protocol,
-            incoming_protocol: protocol,
-          )
-          return
-        end
+        # records entirely; neither row's data may corrupt the other's.  A
+        # stored default-'meshtastic' row may still be reclaimed by a meshcore
+        # record (the #747 self-heal preserved by +cross_protocol_conflict?+),
+        # unless the row is bound to a key (below).
+        return if cross_protocol_write?(db, node_id, protocol, context: "data_processing.upsert_node")
+
+        # Same-protocol prefix collisions, and a NodeInfo naming a node it did
+        # not come from, are held off by the key binding (SPEC NI2, NI3): a
+        # record under another key leaves the row's identity as stored.
+        key_mismatch = record_under_another_key?(db, node_id, n, protocol)
 
         # The prometheus helper still receives the raw `pos` so that gauges
         # not affected by sentinel handling (e.g. precision_bits) keep
         # updating; the latitude/longitude guards inside +update_prometheus_metrics+
-        # are responsible for skipping sentinel coordinates.
-        update_prometheus_metrics(node_id, user, role, met, pos)
+        # are responsible for skipping sentinel coordinates.  A record under
+        # another key reaches only the telemetry gauges.
+        update_prometheus_metrics(node_id, key_mismatch ? nil : user, role, met, key_mismatch ? nil : pos)
 
         lora_freq = coerce_integer(n["lora_freq"] || n["loraFrequency"])
         modem_preset = string_or_nil(n["modem_preset"] || n["modemPreset"])
@@ -492,8 +523,9 @@ module PotatoMesh
         # its public key, as opposed to being inferred from a chat display
         # name.  Only such records may stamp +last_advert_heard+, which is what
         # lets the merge guards tell a live node from a retired identity that
-        # name-inferred message touches keep superficially "fresh".
-        keyed_evidence_time = (synthetic.zero? && string_or_nil(public_key)) ? lh : nil
+        # name-inferred message touches keep superficially "fresh".  A record
+        # under another key is no evidence for this row's identity.
+        keyed_evidence_time = (synthetic.zero? && !key_mismatch && string_or_nil(public_key)) ? lh : nil
 
         # If the incoming long name is a generic placeholder, prefer any real
         # name already on record so we never stomp known data with fallback
@@ -522,6 +554,33 @@ module PotatoMesh
           end
 
         identity_hash = string_or_nil(pick_alias(n, "identityHash", "identity_hash"))&.downcase
+
+        # The identity and position columns, and the protocol, follow the
+        # record only when it is under the row's key (SPEC NI2).  On a
+        # mismatch the conflict clause leaves them out, and SQLite's DO UPDATE
+        # keeps every column it does not assign.
+        identity_sql = if key_mismatch
+            ""
+          else
+            <<~SQL
+              num=COALESCE(excluded.num, nodes.num),
+              short_name=COALESCE(excluded.short_name, nodes.short_name),
+              long_name=#{long_name_conflict_sql},
+              macaddr=COALESCE(excluded.macaddr, nodes.macaddr),
+              hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
+              role=COALESCE(excluded.role, nodes.role),
+              public_key=COALESCE(excluded.public_key, nodes.public_key),
+              identity_hash=COALESCE(excluded.identity_hash, nodes.identity_hash),
+              is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
+              position_time=COALESCE(excluded.position_time, nodes.position_time),
+              location_source=COALESCE(excluded.location_source, nodes.location_source),
+              precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
+              latitude=COALESCE(excluded.latitude, nodes.latitude),
+              longitude=COALESCE(excluded.longitude, nodes.longitude),
+              altitude=COALESCE(excluded.altitude, nodes.altitude),
+              protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol),
+            SQL
+          end
 
         row = [
           node_id,
@@ -568,28 +627,12 @@ module PotatoMesh
                                 position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic,identity_hash)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(node_id) DO UPDATE SET
-                num=COALESCE(excluded.num, nodes.num),
-                short_name=COALESCE(excluded.short_name, nodes.short_name),
-                long_name=#{long_name_conflict_sql},
-                macaddr=COALESCE(excluded.macaddr, nodes.macaddr),
-                hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
-                role=COALESCE(excluded.role, nodes.role),
-                public_key=COALESCE(excluded.public_key, nodes.public_key),
-                identity_hash=COALESCE(excluded.identity_hash, nodes.identity_hash),
-                is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
-                is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                #{identity_sql}is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
                 rssi=COALESCE(excluded.rssi, nodes.rssi),
                 first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                 battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                 air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
-                position_time=COALESCE(excluded.position_time, nodes.position_time),
-                location_source=COALESCE(excluded.location_source, nodes.location_source),
-                precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
-                latitude=COALESCE(excluded.latitude, nodes.latitude),
-                longitude=COALESCE(excluded.longitude, nodes.longitude),
-                altitude=COALESCE(excluded.altitude, nodes.altitude),
                 lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
-                protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol),
                 synthetic=MIN(COALESCE(excluded.synthetic,1), COALESCE(nodes.synthetic,1))
               WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                 AND NOT (COALESCE(nodes.synthetic,0) = 0 AND excluded.synthetic = 1)
@@ -608,8 +651,9 @@ module PotatoMesh
             # chat placeholders remain barred from real rows. NULLIF keeps
             # empty strings — a MeshCore contact may carry an empty adv_name,
             # and shortName is guarded the same way — from filling
-            # long_name/short_name with blank text.
-            if synthetic.zero?
+            # long_name/short_name with blank text.  A record under another
+            # key fills nothing: the gaps belong to the row's own identity.
+            if synthetic.zero? && !key_mismatch
               db.execute(<<~SQL, [node_num, short_name, long_name, macaddr, hw_model, role, public_key, is_unmessagable, node_id])
                 UPDATE nodes SET
                   num=COALESCE(num, ?),
@@ -628,8 +672,9 @@ module PotatoMesh
             # freshness guard, like the keyed-evidence stamp below: a second
             # ingestor posting an older announce still carries a destination the
             # first never heard, and dropping it would lose the relationship the
-            # table exists to record.
-            if synthetic.zero?
+            # table exists to record.  A record under another identity adds no
+            # destination to this node and leaves its headline alone (SPEC NI3).
+            if synthetic.zero? && !key_mismatch
               upsert_destination(
                 db, node_id, n["destination"],
                 identity_hash: identity_hash,
@@ -649,11 +694,16 @@ module PotatoMesh
             # stored +last_heard+, and a node whose +last_heard+ was pushed to
             # "now" by message touches would therefore never record evidence
             # from its own (sender-side-stamped, hence older) adverts — the
-            # very situation the evidence column exists to resolve.
+            # very situation the evidence column exists to resolve.  It stamps
+            # only a row that holds the record's key once the writes above
+            # ran: a takeover record older than the row's +last_heard+ writes
+            # no identity, and its evidence would keep the earlier key's row
+            # looking live, so the new key could never take over (SPEC NI2).
             if keyed_evidence_time
               db.execute(
-                "UPDATE nodes SET last_advert_heard = ? WHERE node_id = ? AND COALESCE(last_advert_heard, 0) < ?",
-                [keyed_evidence_time, node_id, keyed_evidence_time],
+                "UPDATE nodes SET last_advert_heard = ? " \
+                "WHERE node_id = ? AND COALESCE(last_advert_heard, 0) < ? AND public_key = ?",
+                [keyed_evidence_time, node_id, keyed_evidence_time, public_key],
               )
             end
 
@@ -661,8 +711,9 @@ module PotatoMesh
             # whenever a MeshCore node is upserted.  Both directions must fire —
             # the arrival order of chat messages vs contact advertisements is
             # not guaranteed and may differ across co-operating ingestors that
-            # share this database.  See issue #755.
-            if protocol == "meshcore" && long_name && !long_name.empty?
+            # share this database.  See issue #755.  A record under another
+            # key merges nothing: its name is not this row's (SPEC NI3).
+            if !key_mismatch && protocol == "meshcore" && long_name && !long_name.empty?
               if synthetic == 0
                 merge_synthetic_nodes(db, node_id, long_name)
               else
@@ -830,8 +881,11 @@ module PotatoMesh
       # @param longitude [Float, nil] decoded longitude.
       # @param altitude [Float, nil] decoded altitude.
       # @param snr [Float, nil] signal-to-noise ratio.
+      # @param protocol [String, nil] resolved protocol of the record; a row
+      #   of another protocol is left alone ({#cross_protocol_write?}), and nil
+      #   skips that check.
       # @return [void]
-      def update_node_from_position(db, node_id, node_num, rx_time, position_time, location_source, precision_bits, latitude, longitude, altitude, snr)
+      def update_node_from_position(db, node_id, node_num, rx_time, position_time, location_source, precision_bits, latitude, longitude, altitude, snr, protocol: nil)
         num = coerce_integer(node_num)
         id = string_or_nil(node_id)
         if id&.start_with?("!")
@@ -839,6 +893,7 @@ module PotatoMesh
         end
         id ||= format("!%08x", num & 0xFFFFFFFF) if num
         return unless id
+        return if cross_protocol_write?(db, id, protocol, context: "data_processing.update_node_from_position")
 
         now = Time.now.to_i
         rx = coerce_integer(rx_time) || now
@@ -962,7 +1017,8 @@ module PotatoMesh
       # @param metrics [Hash] decoded telemetry metric map.
       # @param lora_freq [Integer, nil] optional LoRa frequency.
       # @param modem_preset [String, nil] optional modem preset.
-      # @param protocol [String] protocol identifier (default +meshtastic+).
+      # @param protocol [String] protocol identifier (default +meshtastic+);
+      #   a row of another protocol is left alone ({#cross_protocol_write?}).
       # @return [void]
       def update_node_from_telemetry(
         db,
@@ -981,6 +1037,7 @@ module PotatoMesh
         end
         id ||= format("!%08x", num & 0xFFFFFFFF) if num
         return unless id
+        return if cross_protocol_write?(db, id, protocol, context: "data_processing.update_node_from_telemetry")
 
         ensure_unknown_node(db, id, num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(

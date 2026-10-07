@@ -33,6 +33,7 @@ import data.mesh_ingestor.handlers._state as _state_mod
 import data.mesh_ingestor.handlers.generic as generic_mod
 import data.mesh_ingestor.handlers.ignored as ignored_mod
 import data.mesh_ingestor.handlers.telemetry as telemetry_mod
+from data.mesh_ingestor.handlers.sender import _packet_sender
 
 
 @pytest.fixture(autouse=True)
@@ -1269,6 +1270,31 @@ class TestStoreNeighborinfoPacket:
             q._queue_post_json = original
         assert any(p == "/api/neighbors" for p, _ in sent)
 
+    def test_drops_a_neighborinfo_whose_node_id_is_not_the_senders(self, monkeypatch):
+        """Only the sender's canonical id or number files a NeighborInfo (SPEC NI1).
+
+        An empty ``nodeId`` names no node, so the sender files it.
+        """
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        monkeypatch.setattr(
+            q,
+            "_queue_post_json",
+            lambda path, payload, *, priority, **kw: sent.append(payload["node_id"]),
+        )
+        for claimed in ("!Decrypted", "!AABBCCDD", 0x11223344, -1, True):
+            handlers.store_neighborinfo_packet(
+                {"id": 1, "rxTime": 100, "from": 0xAABBCCDD},
+                {"neighborinfo": {"nodeId": claimed, "neighbors": []}},
+            )
+        for claimed in ("!aabbccdd", 0xAABBCCDD, ""):
+            handlers.store_neighborinfo_packet(
+                {"id": 1, "rxTime": 100, "from": 0xAABBCCDD},
+                {"neighborinfo": {"nodeId": claimed, "neighbors": []}},
+            )
+        assert sent == ["!aabbccdd", "!aabbccdd", "!aabbccdd"]
+
     def test_skips_when_no_neighborinfo_section(self):
         """Missing neighborinfo section is silently dropped."""
         import data.mesh_ingestor.queue as q
@@ -1324,6 +1350,48 @@ class TestStoreRouterHeartbeatPacket:
         finally:
             q._queue_post_json = original
         assert sent == []
+
+
+# ---------------------------------------------------------------------------
+# sender: which node sent a packet (SPEC NI1)
+# ---------------------------------------------------------------------------
+
+
+class TestPacketSender:
+    """Tests for :func:`handlers.sender._packet_sender`."""
+
+    def test_numeric_from_wins_over_from_id(self):
+        """The header ``from`` names the sender, whatever ``fromId`` says."""
+        packet = {"from": 0xA1A1A1A1, "fromId": "!b2b2b2b2"}
+        assert _packet_sender(packet) == "!a1a1a1a1"
+        assert _packet_sender(packet, numeric=True) == 0xA1A1A1A1
+
+    def test_falls_back_to_the_named_fields_without_a_numeric_from(self):
+        """Without a numeric ``from``: ``fromId``, ``from_id``, then ``from``."""
+        assert _packet_sender({"fromId": "!b2b2b2b2", "from": "!c3c3c3c3"}) == (
+            "!b2b2b2b2"
+        )
+        assert _packet_sender({"from_id": "3664074452"}, numeric=True) == ("3664074452")
+        assert _packet_sender({"from": "!sender"}) == "!sender"
+        assert _packet_sender({"from": True, "fromId": "!b2b2b2b2"}) == "!b2b2b2b2"
+        assert _packet_sender({"from": -1, "fromId": "!b2b2b2b2"}) == "!b2b2b2b2"
+        assert _packet_sender({}) is None
+
+    def test_traceroute_src_is_the_numeric_from(self, monkeypatch):
+        """A traceroute without a decoded source takes ``src`` from the header."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        monkeypatch.setattr(
+            q,
+            "_queue_post_json",
+            lambda path, payload, *, priority, **kw: sent.append(payload),
+        )
+        handlers.store_traceroute_packet(
+            {"id": 7, "rxTime": 100, "from": 0xA1A1A1A1, "fromId": "!b2b2b2b2"},
+            {"traceroute": {"route": [0x11111111]}},
+        )
+        assert [payload["src"] for payload in sent] == [0xA1A1A1A1]
 
 
 # ---------------------------------------------------------------------------

@@ -513,9 +513,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # so nodes on *different* protocols can collide on one node_id.  A colliding
   # record must be skipped wholesale: reticulum announces stamp a wall-clock
   # lastHeard, so the freshness guard alone would let them flip the stored
-  # row's protocol and overwrite its fields.  Same-protocol collisions remain
-  # the accepted MeshCore-inherited merge behaviour (CONTRACTS.md, "Reticulum
-  # node id mapping").
+  # row's protocol and overwrite its fields.  Same-protocol collisions keep
+  # the first identity's names: the row is bound to its full key or identity
+  # hash (SPEC NI3; spec/node_identity_binding_spec.rb).
   # ---------------------------------------------------------------------------
   describe "#upsert_destination (SPEC RE-A5)" do
     include_context "with isolated db"
@@ -684,6 +684,116 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.close
       expect(row["protocol"]).to eq("meshcore")
       expect(row["long_name"]).to eq("MeshCore Contact")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Cross-protocol guard on the other node-row writers (SPEC NI4).  The
+  # position, telemetry and last-seen writes that ride on every record key on
+  # the bare node_id too, so a colliding record of another protocol must leave
+  # the stored row alone there as well, with the same #747 exception.
+  # ---------------------------------------------------------------------------
+  describe "cross-protocol guard on position, telemetry and touch writes" do
+    include_context "with isolated db"
+
+    let(:id) { "!aabbccdd" }
+    let(:columns) do
+      %w[protocol long_name last_heard latitude longitude position_time snr
+         battery_level voltage lora_freq modem_preset]
+    end
+
+    # Store a Reticulum node row for +id+.
+    #
+    # @param db [SQLite3::Database] open database handle.
+    # @return [void]
+    def seed_reticulum(db)
+      dp.upsert_node(db, id, {
+        "lastHeard" => now - 600,
+        "identityHash" => "aabbccdd" + "11" * 12,
+        "destination" => { "id" => "aabbccdd" + "33" * 12, "aspect" => "lxmf.delivery", "role" => "PEER" },
+        "user" => { "longName" => "RNS Peer", "shortName" => "aabb", "publicKey" => "11" * 64, "role" => "PEER" },
+        "lora_freq" => 869,
+        "modem_preset" => "SF8/BW125/CR5",
+      }, protocol: "reticulum")
+    end
+
+    # Read the columns the guarded writers touch.
+    #
+    # @param db [SQLite3::Database] open database handle.
+    # @return [Hash] the row's guarded columns.
+    def guarded_columns(db)
+      db.execute("SELECT * FROM nodes WHERE node_id = ?", [id]).first.slice(*columns)
+    end
+
+    # A position record for +id+ stamped with +protocol+.
+    #
+    # @param protocol [String] protocol the record carries.
+    # @return [Hash] position payload.
+    def position_record(protocol)
+      {
+        "id" => 4242, "rx_time" => now, "node_id" => id, "latitude" => 52.52, "longitude" => 13.405,
+        "position_time" => now, "snr" => 7.5, "lora_freq" => 868, "modem_preset" => "LongFast",
+        "protocol" => protocol,
+      }
+    end
+
+    it "leaves a reticulum row unchanged by a meshtastic position for its id" do
+      db = open_db
+      seed_reticulum(db)
+      before = guarded_columns(db)
+      dp.insert_position(db, position_record("meshtastic"))
+      after = guarded_columns(db)
+      db.close
+      expect(after).to eq(before)
+    end
+
+    it "leaves a reticulum row unchanged by meshtastic telemetry for its id" do
+      db = open_db
+      seed_reticulum(db)
+      before = guarded_columns(db)
+      dp.insert_telemetry(db, {
+        "id" => 4343, "rx_time" => now, "node_id" => id, "battery_level" => 42, "voltage" => 3.71,
+        "lora_freq" => 868, "modem_preset" => "LongFast", "protocol" => "meshtastic",
+      })
+      after = guarded_columns(db)
+      db.close
+      expect(after).to eq(before)
+    end
+
+    it "leaves a reticulum row unchanged by a meshtastic message from its id" do
+      db = open_db
+      seed_reticulum(db)
+      before = guarded_columns(db)
+      dp.insert_message(db, {
+        "id" => 4444, "rx_time" => now, "from_id" => id, "to_id" => "^all", "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP", "text" => "hello", "lora_freq" => 868, "modem_preset" => "LongFast",
+        "protocol" => "meshtastic",
+      })
+      after = guarded_columns(db)
+      db.close
+      expect(after).to eq(before)
+    end
+
+    it "still applies a position of the row's own protocol" do
+      db = open_db
+      seed_reticulum(db)
+      dp.insert_position(db, position_record("reticulum"))
+      row = guarded_columns(db)
+      db.close
+      expect(row.slice("protocol", "last_heard", "latitude", "lora_freq")).to eq(
+        "protocol" => "reticulum", "last_heard" => now, "latitude" => 52.52, "lora_freq" => 868,
+      )
+    end
+
+    it "still lets a meshcore position reach a default-meshtastic row (#747)" do
+      db = open_db
+      dp.upsert_node(db, id, { "lastHeard" => now - 600, "num" => 0xaabbccdd })
+      dp.insert_position(db, position_record("meshcore"))
+      row = guarded_columns(db)
+      db.close
+      expect(row.slice("last_heard", "latitude", "lora_freq")).to eq(
+        "last_heard" => now, "latitude" => 52.52, "lora_freq" => 868,
+      )
     end
   end
 
@@ -1173,7 +1283,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now,
         "num" => 0xaabbccdd,
-        "user" => { "role" => "CLIENT", "longName" => "Real Long Name", "shortName" => "RLN" },
+        # The stored key: a record under another key, or none, keeps the
+        # stored role (SPEC NI2).
+        "user" => { "role" => "CLIENT", "longName" => "Real Long Name", "shortName" => "RLN", "publicKey" => "abc123" },
       })
       expect(read_node(db)["role"]).to eq("CLIENT")
       db.close
@@ -1213,7 +1325,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now,
         "num" => 0xaabbccdd,
-        "user" => { "shortName" => "NEW", "longName" => "New Long Name" },
+        # The stored key: a record under another key, or none, keeps the
+        # stored names (SPEC NI2).
+        "user" => { "shortName" => "NEW", "longName" => "New Long Name", "publicKey" => "abc123" },
       })
       expect(read_node(db)["short_name"]).to eq("NEW")
       db.close

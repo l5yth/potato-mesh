@@ -66,7 +66,7 @@ module PotatoMesh
         protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
-        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :waypoint)
+        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :waypoint, protocol: protocol)
 
         name = string_or_nil(payload["name"])
         description = string_or_nil(payload["description"])

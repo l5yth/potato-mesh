@@ -93,7 +93,7 @@ module PotatoMesh
         all_nodes = [src, dest, *hops].compact.uniq
         all_nodes.each do |node|
           ensure_unknown_node(db, node, node, heard_time: rx_time, protocol: protocol)
-          touch_node_last_seen(db, node, node, rx_time: rx_time, source: :trace)
+          touch_node_last_seen(db, node, node, rx_time: rx_time, source: :trace, protocol: protocol)
         end
 
         with_busy_retry do

@@ -29,6 +29,7 @@ from .. import (
     interfaces,
     tx_policy,
 )
+from ..node_identity import canonical_node_id
 from ..serialization import _coerce_int
 from ..utils import _retry_dict_snapshot
 
@@ -108,29 +109,41 @@ class MeshtasticProvider:
         return result
 
     def snapshot_filter_reason(self, node_id: str, node: object) -> str | None:
-        """Return why the node-list snapshot must not publish ``node`` (SPEC CF3).
+        """Return why the node-list snapshot must not publish ``node`` (SPEC CF3, NI1).
 
         An **optional**, duck-typed provider hook (like ``self_node_item``):
         :func:`~data.mesh_ingestor.daemon._try_send_snapshot` asks it about
-        each entry and skips the ones it names.  A nodeDB entry records in
-        ``channel`` the local channel index the radio last heard the node's
-        NodeInfo on; proto3 omits it when it is ``0``, so an entry without one
-        belongs to the primary channel.  ``viaMqtt`` drives ``DROP_VIA_MQTT``.
-        Only that channel decides: a published entry still carries the
-        nodeDB's latest position and metrics, which the radio stores whatever
-        channel they were heard on (a documented limit, SPEC CF3).
+        each entry and skips the ones it names.
+
+        An entry whose ``num`` disagrees with the id it is filed under is not
+        that node's entry: the meshtastic library files a node under the
+        ``user.id`` of its last NodeInfo, so one naming another node would
+        post the sender's entry under the other node's id (SPEC NI1).  An
+        entry without a ``num`` is not checked.
+
+        A nodeDB entry records in ``channel`` the local channel index the
+        radio last heard the node's NodeInfo on; proto3 omits it when it is
+        ``0``, so an entry without one belongs to the primary channel.
+        ``viaMqtt`` drives ``DROP_VIA_MQTT``.  Only that channel decides: a
+        published entry still carries the nodeDB's latest position and
+        metrics, which the radio stores whatever channel they were heard on
+        (a documented limit, SPEC CF3).
 
         Parameters:
-            node_id: Canonical id of the entry (unused; part of the hook shape).
+            node_id: Id the entry is filed under in ``iface.nodes``.
             node: The nodeDB entry.
 
         Returns:
-            The :func:`~data.mesh_ingestor.channels.ingest_filter_reason`
-            verdict, or ``None`` for an entry that is not a mapping.
+            ``"num-mismatch"`` for an entry filed under another node's id,
+            else the :func:`~data.mesh_ingestor.channels.ingest_filter_reason`
+            verdict; ``None`` for an entry that is not a mapping.
         """
 
         if not isinstance(node, Mapping):
             return None
+        num = _coerce_int(node.get("num"))
+        if num is not None and canonical_node_id(num) != canonical_node_id(node_id):
+            return "num-mismatch"
         return channels.ingest_filter_reason(
             _coerce_int(node.get("channel")) or 0,
             via_mqtt=bool(node.get("viaMqtt")),

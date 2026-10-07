@@ -18,7 +18,9 @@ module PotatoMesh
   module App
     module DataProcessing
       # Persist a position payload, populate the +nodes+ table for newly seen
-      # senders, and update node rows with the freshest GPS fields.
+      # senders, and update node rows with the freshest GPS fields.  A payload
+      # carrying +public_key+ updates the node row only under the key the row
+      # is bound to (SPEC NI3).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param payload [Hash] inbound position payload.
@@ -67,6 +69,7 @@ module PotatoMesh
           source: :position,
           lora_freq: lora_freq,
           modem_preset: modem_preset,
+          protocol: protocol,
         )
 
         to_id = string_or_nil(payload["to_id"] || payload["to"])
@@ -220,6 +223,14 @@ module PotatoMesh
                      SQL
         end
 
+        # A MeshCore advert's position carries the advert's full key: under
+        # another key than the one the node row is bound to, it is another
+        # identity sharing the 4-byte id, and the row stays where it is
+        # (SPEC NI3).  A position without a key, as every Meshtastic one is,
+        # is not checked.
+        position_key = string_or_nil(payload["public_key"])
+        return if position_key && bound_to_another_key?(db, node_id, position_key, protocol, context: "data_processing.insert_position")
+
         update_node_from_position(
           db,
           node_id,
@@ -232,6 +243,7 @@ module PotatoMesh
           lon,
           alt,
           snr,
+          protocol: protocol,
         )
       end
     end

@@ -35,6 +35,7 @@ def _store_meshcore_position(
     lon: float,
     position_time: int | None,
     ingestor: str | None,
+    public_key: str | None = None,
     *,
     rx_time: int | None = None,
 ) -> None:
@@ -57,6 +58,11 @@ def _store_meshcore_position(
         position_time: Unix timestamp from the contact's ``last_advert`` field,
             or ``None`` to fall back to the current wall-clock time.
         ingestor: Canonical node ID of the host ingestor, or ``None``.
+        public_key: Full public key (hex) of the advert or contact the
+            position came from, posted as ``public_key``.  The node id is
+            only its first four bytes, so the web app moves the node row
+            only when the key is the one the row is bound to (SPEC NI3).
+            ``None`` posts no key.
         rx_time: Reception time to stamp on the position, or ``None`` for the
             current wall clock.  The web app folds ``rx_time`` into the node's
             ``last_heard`` via ``MAX(rx_time, position_time)``, so a **roster
@@ -96,6 +102,8 @@ def _store_meshcore_position(
         # ingestor heartbeat having been registered first.  See CONTRACTS.md.
         "protocol": "meshcore",
     }
+    if public_key:
+        payload["public_key"] = public_key
     # This builder posts directly instead of routing through the generic
     # position handler, so enrich it with the captured LoRa radio metadata
     # (lora_freq / modem_preset) here — otherwise every MeshCore position row

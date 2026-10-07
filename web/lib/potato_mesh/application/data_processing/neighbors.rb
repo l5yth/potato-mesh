@@ -59,7 +59,7 @@ module PotatoMesh
         protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
-        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo)
+        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo, protocol: protocol)
 
         neighbor_entries = []
         neighbors_payload = payload["neighbors"]
