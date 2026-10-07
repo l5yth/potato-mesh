@@ -17,7 +17,7 @@
 /**
  * Display-only formatters used by the node detail page outside the chart
  * SVG rendering path (hardware model, coordinates, message timestamps,
- * uptimes, batteries, etc.).  Sibling to ``format-utils.js`` so chart code
+ * uptimes, etc.).  Sibling to ``format-utils.js`` so chart code
  * only carries chart concerns.
  *
  * @module node-page-charts/display-formatters
@@ -47,18 +47,6 @@ export function formatFrequency(value) {
     return `${(numeric / 1_000).toFixed(3)} MHz`;
   }
   return `${numeric.toFixed(3)} MHz`;
-}
-
-/**
- * Format a battery reading as a percentage with one decimal place.
- *
- * @param {*} value Raw battery value.
- * @returns {string|null} Formatted percentage or ``null``.
- */
-export function formatBattery(value) {
-  const numeric = numberOrNull(value);
-  if (numeric == null) return null;
-  return `${numeric.toFixed(1)}%`;
 }
 
 /**

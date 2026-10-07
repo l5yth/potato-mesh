@@ -35,7 +35,6 @@ const {
   stringOrNull,
   numberOrNull,
   formatFrequency,
-  formatBattery,
   formatVoltage,
   formatUptime,
   formatTimestamp,
@@ -111,7 +110,6 @@ test('format helpers normalise values as expected', () => {
   assert.equal(formatFrequency(915), '915.000 MHz');
   assert.equal(formatFrequency('2400000'), '2.400 MHz');
   assert.equal(formatFrequency('custom'), 'custom');
-  assert.equal(formatBattery(87.135), '87.1%');
   assert.equal(formatVoltage(4.105), '4.11 V');
   assert.equal(formatUptime(3661), '1h 1m 1s');
   assert.match(formatTimestamp(1_700_000_000), /T/);
@@ -385,7 +383,8 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     assert.ok(html.includes(`>${group}</h3>`), `group ${group} present`);
   }
   assert.ok(html.includes('<dt>Battery</dt>'), 'fields render as dt/dd rows');
-  assert.equal(html.includes('66.0%'), true);
+  // The nodes table's battery format (fmtBattery, SPEC UX10).
+  assert.ok(html.includes('<dt>Battery</dt><dd>66%</dd>'), 'battery renders as in the nodes table');
   assert.equal(html.includes('1.230%'), true);
   assert.equal(html.includes('52.52000'), true);
   assert.equal(html.includes('1m 40s'), true);

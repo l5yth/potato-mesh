@@ -23,13 +23,13 @@
 import { escapeHtml } from '../utils.js';
 import {
   fmtAlt,
+  fmtBattery,
   fmtHumidity,
   fmtPressure,
   fmtTemperature,
   fmtTx,
 } from '../short-info-telemetry.js';
 import {
-  formatBattery,
   formatCoordinate,
   formatDurationSeconds,
   formatHardwareModel,
@@ -100,7 +100,9 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
   // "No telemetry reported." line could never render.
   const role = stringOrNull(node.role);
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
-  const battery = formatBattery(node.battery ?? node.battery_level);
+  // The nodes table's formatter, so a level above 100 (the powered sentinel)
+  // reads `100% ⚡` here too (SPEC UX10).
+  const battery = fmtBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
   const uptime = formatDurationSeconds(node.uptime ?? node.uptime_seconds ?? node.uptimeSeconds);
   const channel = fmtTx(node.channel_utilization ?? node.channelUtilization ?? null, 3);
