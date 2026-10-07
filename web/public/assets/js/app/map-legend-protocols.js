@@ -17,8 +17,10 @@
 /**
  * Which protocols the map legend lists (SPEC LP1).
  *
- * The legend has one column per protocol. A column keys the markers of its
- * protocol, so it is listed only while that protocol is in view.
+ * Each protocol has its own part of the legend: the Meshtastic column, or a
+ * group in the first column for MeshCore and Reticulum (SPEC LS1). That part
+ * keys the markers of its protocol, so it is listed only while that protocol
+ * is in view.
  *
  * @module app/map-legend-protocols
  */
@@ -26,7 +28,7 @@
 import { normalizeFilterProtocol } from './main/filter-helpers.js';
 
 /**
- * Protocols that own a map-legend column, in column order.
+ * Protocols that own a part of the map legend.
  *
  * @type {ReadonlyArray<string>}
  */
@@ -51,7 +53,7 @@ function protocolsWithPassingNodes(nodes, passes) {
 }
 
 /**
- * Decide which protocols the map legend lists, one column each (SPEC LP1).
+ * Decide which protocols the map legend lists (SPEC LP1).
  *
  * A protocol is listed while all three hold:
  *
@@ -61,7 +63,7 @@ function protocolsWithPassingNodes(nodes, passes) {
  *    passes the text and protocol filters.
  *
  * Role filters are not part of the third condition: a protocol whose roles
- * are all switched off keeps its column, so its role chips stay reachable.
+ * are all switched off stays listed, so its role chips stay reachable.
  * With no text filter set, the third condition does not apply.
  *
  * @param {Object} params Inputs.
@@ -75,10 +77,11 @@ function protocolsWithPassingNodes(nodes, passes) {
  *   whether a node matches the query.
  * @param {function(Object): boolean} [params.matchesProtocol] Protocol filter:
  *   whether a node's protocol is shown.
- * @returns {Set<string>} Protocols whose legend column shows.
+ * @returns {Set<string>} Protocols whose legend column or group shows.
  */
 export function legendProtocolsInView({ stats, hiddenProtocols, nodes, query, matchesText, matchesProtocol }) {
-  // Only a set text filter can empty a column of nodes; skip the scan otherwise.
+  // Only a set text filter can leave a protocol without a matching node; skip
+  // the scan otherwise.
   const matched = query
     ? protocolsWithPassingNodes(nodes, node => matchesText(node, query) && matchesProtocol(node))
     : null;

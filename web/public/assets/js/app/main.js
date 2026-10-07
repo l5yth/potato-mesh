@@ -268,6 +268,7 @@ import {
   rowActivationHref,
 } from './main/nodes-table-ia.js';
 import { legendLineSampleSvg, legendWaypointSampleHtml } from './main/legend-line-samples.js';
+import { buildLegendColumns, legendStackInView } from './main/legend-columns.js';
 import {
   buildWaypointOverlayLines,
   renderWaypointsLayer,
@@ -1851,10 +1852,12 @@ export function initializeApp(config) {
   let legendToggleControl = null;
   let meshcoreCountEl = null;
   let meshtasticCountEl = null;
-  let meshcoreColEl = null;
+  let meshcoreGroupEl = null;
   let meshtasticColEl = null;
   let reticulumCountEl = null;
-  let reticulumColEl = null;
+  let reticulumGroupEl = null;
+  /** First legend column: the MeshCore group above the Reticulum group (SPEC LS1). */
+  let legendStackColEl = null;
   let meshActivityCard = null;
   let legendToggleButton = null;
   let legendVisible = true;
@@ -2098,7 +2101,7 @@ export function initializeApp(config) {
    * that roles sharing a name across protocols (e.g. ``SENSOR``, ``REPEATER``)
    * produce independent buttons without colliding in {@link legendRoleButtons}.
    *
-   * @param {HTMLElement} colEl Column container element.
+   * @param {HTMLElement} colEl Column or legend group container element.
    * @param {Record<string,string>} palette Role→colour map to render.
    * @param {'meshtastic'|'meshcore'|'reticulum'} protocol Protocol token for this column.
    * @returns {void}
@@ -2180,49 +2183,24 @@ export function initializeApp(config) {
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      // --- MeshCore column (left) ---
-      // Every column top-aligns (audit follow-up d): bottom-aligning the
-      // shorter MeshCore column dropped its header below Meshtastic's, reading
-      // as a layout bug. Top baselines put the protocol titles on one line.
-      const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
-      meshcoreColEl = meshcoreCol;
-      const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
-      meshcoreColHeader.appendChild(buildMeshcoreIconImg());
-      const meshcoreColTitle = document.createElement('span');
-      meshcoreColTitle.textContent = 'Meshcore';
-      meshcoreColHeader.appendChild(meshcoreColTitle);
-      meshcoreCountEl = document.createElement('span');
-      meshcoreCountEl.className = 'legend-protocol-count';
-      meshcoreColHeader.appendChild(meshcoreCountEl);
-
-      // --- Meshtastic column (middle) ---
-      const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      // --- Two columns (SPEC LS1): MeshCore over Reticulum, then Meshtastic ---
+      // Every column top-aligns (audit follow-up d, FU12): bottom-aligning the
+      // shorter column dropped its header below Meshtastic's, reading as a
+      // layout bug. Top baselines put the protocol titles on one line.
+      const legendColumns = buildLegendColumns(itemsContainer);
+      const meshtasticCol = legendColumns.meshtasticColumn;
+      legendStackColEl = legendColumns.stack;
+      meshcoreGroupEl = legendColumns.meshcoreGroup;
       meshtasticColEl = meshtasticCol;
-      const meshtasticColHeader = L.DomUtil.create('div', 'legend-column-header', meshtasticCol);
-      meshtasticColHeader.appendChild(buildMeshtasticIconImg());
-      const meshtasticColTitle = document.createElement('span');
-      meshtasticColTitle.textContent = 'Meshtastic';
-      meshtasticColHeader.appendChild(meshtasticColTitle);
-      meshtasticCountEl = document.createElement('span');
-      meshtasticCountEl.className = 'legend-protocol-count';
-      meshtasticColHeader.appendChild(meshtasticCountEl);
-
-      // --- Reticulum column (rightmost) ---
-      const reticulumCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
-      reticulumColEl = reticulumCol;
-      const reticulumColHeader = L.DomUtil.create('div', 'legend-column-header', reticulumCol);
-      reticulumColHeader.appendChild(buildReticulumIconImg());
-      const reticulumColTitle = document.createElement('span');
-      reticulumColTitle.textContent = 'Reticulum';
-      reticulumColHeader.appendChild(reticulumColTitle);
-      reticulumCountEl = document.createElement('span');
-      reticulumCountEl.className = 'legend-protocol-count';
-      reticulumColHeader.appendChild(reticulumCountEl);
+      reticulumGroupEl = legendColumns.reticulumGroup;
+      meshcoreCountEl = legendColumns.counts.meshcore;
+      meshtasticCountEl = legendColumns.counts.meshtastic;
+      reticulumCountEl = legendColumns.counts.reticulum;
 
       legendRoleButtons.clear();
-      buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
+      buildRoleButtons(meshcoreGroupEl, meshcoreRoleColors, 'meshcore');
       buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
-      buildRoleButtons(reticulumCol, reticulumRoleColors, 'reticulum');
+      buildRoleButtons(reticulumGroupEl, reticulumRoleColors, 'reticulum');
 
       // --- Meshtastic column: line toggles at bottom ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
@@ -6169,7 +6147,7 @@ export function initializeApp(config) {
     // List in the legend only the protocols in view (SPEC LP1): 7-day
     // activity, not toggled off, and, while a text filter is set, a node
     // passing the text and protocol filters. After the un-strand pass, so a
-    // protocol it brought back regains its column in the same pass.
+    // protocol it brought back regains its group or column in the same pass.
     const legendProtocols = legendProtocolsInView({
       stats,
       hiddenProtocols,
@@ -6178,13 +6156,16 @@ export function initializeApp(config) {
       matchesText: matchesTextFilter,
       matchesProtocol: matchesProtocolFilter,
     });
-    for (const [col, protocol] of [
-      [meshcoreColEl, 'meshcore'],
+    for (const [element, protocol] of [
+      [meshcoreGroupEl, 'meshcore'],
       [meshtasticColEl, 'meshtastic'],
-      [reticulumColEl, 'reticulum'],
+      [reticulumGroupEl, 'reticulum'],
     ]) {
-      if (col) col.style.display = legendProtocols.has(protocol) ? '' : 'none';
+      if (element) element.style.display = legendProtocols.has(protocol) ? '' : 'none';
     }
+    // The first column leaves the row with both of its groups (SPEC LS1):
+    // kept empty, it would leave the gap between the columns behind.
+    if (legendStackColEl) legendStackColEl.style.display = legendStackInView(legendProtocols) ? '' : 'none';
     if (unstranded) {
       // Re-run the same sync path a chip click uses so the nodes reappear.
       // Bounded: the dropped protocols are no longer in the set, so the
@@ -6324,11 +6305,14 @@ export function initializeApp(config) {
         meshtasticCountEl = mt;
         reticulumCountEl = rt;
       },
-      /** Inject mock column elements for protocol visibility tests. */
+      /**
+       * Inject mock legend elements for protocol visibility tests: the
+       * MeshCore group, the Meshtastic column and the Reticulum group (SPEC LS1).
+       */
       _setProtocolColElements(mc, mt, rt = null) {
-        meshcoreColEl = mc;
+        meshcoreGroupEl = mc;
         meshtasticColEl = mt;
-        reticulumColEl = rt;
+        reticulumGroupEl = rt;
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,

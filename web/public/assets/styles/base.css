@@ -2080,6 +2080,23 @@ input[type="radio"] {
   min-width: 0;
 }
 
+/* First legend column (SPEC LS1): the MeshCore group above the Reticulum
+   group, 8px apart, the gap between the columns. A flex gap sits only between
+   laid-out items, so a hidden group leaves no gap and a lone group top-aligns
+   with the Meshtastic column (FU12). */
+.legend-column--stack {
+  gap: 8px;
+}
+
+/* One protocol in the first column: its header and role filters, spaced as a
+   column spaces them. No margin or padding: the stack's gap is the only space
+   between groups. */
+.legend-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .legend-protocol-count {
   font-weight: 400;
   opacity: 0.7;
