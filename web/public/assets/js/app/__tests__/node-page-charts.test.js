@@ -25,7 +25,6 @@ import {
   formatGasResistance,
   formatSeriesPointValue,
   formatFrequency,
-  formatBattery,
   formatVoltage,
   formatUptime,
   formatTimestamp,
@@ -218,19 +217,6 @@ test('formatFrequency passes through non-numeric strings', () => {
 test('formatFrequency returns null for null/empty', () => {
   assert.equal(formatFrequency(null), null);
   assert.equal(formatFrequency(''), null);
-});
-
-// ---------------------------------------------------------------------------
-// formatBattery
-// ---------------------------------------------------------------------------
-
-test('formatBattery formats numeric battery level', () => {
-  assert.equal(formatBattery(87.135), '87.1%');
-  assert.equal(formatBattery(100), '100.0%');
-});
-
-test('formatBattery returns null for null', () => {
-  assert.equal(formatBattery(null), null);
 });
 
 // ---------------------------------------------------------------------------

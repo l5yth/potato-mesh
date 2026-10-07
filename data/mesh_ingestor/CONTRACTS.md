@@ -105,6 +105,8 @@ Deployment ordering. The web whitelist must accept a protocol before any ingesto
 
 Future providers should emit payloads that match these shapes (keys + types), which are validated by existing tests (notably `tests/test_mesh.py`).
 
+Receive time (SPEC RK1-RK3). `rx_time` is the ingestor's receive time, in Unix seconds. A Meshtastic packet's `rxTime` comes from a radio's clock, not the ingestor's. `handlers.on_receive`, which both Meshtastic transports feed, keeps it only within 1 hour of the ingestor's clock, in either direction (`RX_TIME_TOLERANCE_SECS` in `handlers/receive_time.py`); otherwise it posts the ingestor's clock and logs a warning that names the sender and the offset, at most once per 10 minutes. MeshCore and Reticulum records keep the times their providers assign: a MeshCore roster position carries the contact's `last_advert` (SPEC RS1). The node-list snapshot's `lastHeard` comes from the radio's node database and is not checked (SPEC RK3). The web app stores `rx_time` as posted and clamps only future values, and the GET time windows below filter messages, positions and telemetry on it, so a record stamped before the window is stored but never served.
+
 #### `POST /api/nodes`
 
 Payload is a mapping keyed by canonical node id, with optional top-level `”ingestor”` and `”protocol”` keys:

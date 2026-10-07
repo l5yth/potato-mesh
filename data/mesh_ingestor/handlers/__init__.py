@@ -24,6 +24,7 @@ This package is organised into focused submodules:
 - :mod:`.nodeinfo` — node information update handler
 - :mod:`.neighborinfo` — neighbour topology snapshot handler
 - :mod:`.generic` — packet dispatcher, node upsert, and the main receive callback
+- :mod:`.receive_time` — Meshtastic ``rxTime`` check against the host clock
 
 All public names from the original flat ``handlers`` module are re-exported
 here so existing callers (e.g. ``daemon.py``, ``protocols/``) require no

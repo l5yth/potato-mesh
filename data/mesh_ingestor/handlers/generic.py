@@ -38,6 +38,7 @@ from .neighborinfo import store_neighborinfo_packet
 from .nodeinfo import store_nodeinfo_packet
 from .position import store_position_packet
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
+from .receive_time import replace_skewed_rx_time
 from .telemetry import store_router_heartbeat_packet, store_telemetry_packet
 from .position import store_traceroute_packet
 from .waypoint import store_waypoint_packet
@@ -680,9 +681,12 @@ def store_packet_dict(packet: Mapping) -> None:
 def on_receive(packet: object, interface: object) -> None:
     """Callback registered with Meshtastic to capture incoming packets.
 
-    Subscribed to all ``meshtastic.receive.*`` pubsub topics.  The packet is
-    deduplicated via a ``_potatomesh_seen`` flag before being normalised and
-    dispatched to :func:`store_packet_dict`.
+    Subscribed to all ``meshtastic.receive.*`` pubsub topics, and called by
+    the UDP transport for every packet it decodes.  The packet is
+    deduplicated via a ``_potatomesh_seen`` flag before being normalised, its
+    radio ``rxTime`` is checked against the host clock
+    (:func:`~data.mesh_ingestor.handlers.receive_time.replace_skewed_rx_time`,
+    SPEC RK2), and it is dispatched to :func:`store_packet_dict`.
 
     Parameters:
         packet: Packet payload supplied by the Meshtastic pubsub topic.
@@ -703,6 +707,9 @@ def on_receive(packet: object, interface: object) -> None:
     packet_dict = None
     try:
         packet_dict = _pkt_to_dict(packet)
+        # The radio stamps rxTime with its own clock; one off the host clock
+        # by more than the tolerance gives way to the host clock (SPEC RK2).
+        packet_dict = replace_skewed_rx_time(packet_dict)
         store_packet_dict(packet_dict)
     except Exception as exc:
         info = (

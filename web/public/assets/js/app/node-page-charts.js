@@ -49,7 +49,6 @@ export {
 
 export {
   formatFrequency,
-  formatBattery,
   formatVoltage,
   formatUptime,
   formatMessageTimestamp,

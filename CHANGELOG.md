@@ -43,6 +43,7 @@
 * Web: a federation record relayed by another instance is stored only when its domain's well-known document names its key, except a refresh under the key already stored; relayed records and `POST /api/instances` announcements need an id equal to the SHA-256 of their public key (SPEC FS8/FS9)
 * Data: `PROTOCOL=reticulum` needs `INGESTOR_NODE_ID` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the node id is derived once a local app announces (SPEC RE5/RE8)
 * Data: a set `CONNECTION` is no longer silently ignored under `PROTOCOL=reticulum` - the ingestor now logs that it is dropping the value (SPEC RN10)
+* Data/Web: Meshtastic records whose radio clock is off by more than an hour get the ingestor's receive time, so they show in charts and tables again; the node page shows a battery above 100% as the nodes table does (SPEC RK1-RK3, UX10)
 * Data: `RETICULUM_INTERFACES` now resolves interface names through the shared RNS instance, fixing an allowlist that matched nothing on a shared stack (SPEC RE3)
 * Data: a Reticulum announce with no display name no longer overwrites a stored name
 * Docs: document the Reticulum config directory, its Docker volume, and how to add interfaces to it

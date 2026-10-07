@@ -30,7 +30,6 @@ import { numberOrNull, stringOrNull } from './value-helpers.js';
 import { fetchMessages, fetchTracesForNode, fetchWaypointsForNode } from './node-page-data.js';
 import {
   classifySnapshot,
-  formatBattery,
   formatCoordinate,
   formatDurationSeconds,
   formatFrequency,
@@ -99,7 +98,6 @@ export const __testUtils = {
   numberOrNull,
   escapeHtml,
   formatFrequency,
-  formatBattery,
   formatVoltage,
   formatUptime,
   formatTimestamp,
