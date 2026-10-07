@@ -793,6 +793,30 @@ test('federation page suppresses spammy site names and truncates long names in v
   }
 });
 
+test('federation cells and popups render a numeric frequency and version', async () => {
+  // The page escaped through a private copy that returned '' for a non-string,
+  // so a number left the cell and the popup line empty. The shared escapeHtml
+  // stringifies first.
+  const { cleanup, tbodyEl } = createBasicFederationPageHarness();
+  const markerPopups = [];
+  const instance = {
+    domain: 'num.mesh', name: 'Numeric Mesh', frequency: 868, version: 7,
+    latitude: 1, longitude: 1, lastUpdateTime: Math.floor(Date.now() / 1000) - 30,
+  };
+  const fetchImpl = async () => ({ ok: true, json: async () => [instance] });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: createBasicLeafletStub({ markerPopups }) });
+
+    const rowHtml = tbodyEl.childNodes[0].innerHTML;
+    assert.match(rowHtml, /instances-col--frequency">868</);
+    assert.match(rowHtml, /instances-col--version mono">7</);
+    assert.match(markerPopups[0], /Frequency: 868<br>Version: 7/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('federation page sorts by full site names before truncating visible labels', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
   const { document, createElement, registerElement, cleanup } = env;

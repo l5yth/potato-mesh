@@ -900,6 +900,21 @@ module PotatoMesh
       fetch_string("OG_IMAGE_URL", nil)
     end
 
+    # Determine whether the +/og-image.png+ capture launches Chromium
+    # without its sandbox (+--no-sandbox+).
+    #
+    # Off unless +OG_IMAGE_NO_SANDBOX=1+: the capture renders the dashboard,
+    # which loads third-party map tiles and shows mesh-supplied text, so
+    # Chromium keeps its sandbox wherever it can start one. Set it where
+    # Chromium cannot, such as a container with neither unprivileged user
+    # namespaces nor a setuid +chrome-sandbox+ helper; the Docker images set
+    # +1+ (see {PotatoMesh::OgImage.chromium_flags}).
+    #
+    # @return [Boolean] true when OG_IMAGE_NO_SANDBOX=1 in the environment.
+    def og_image_no_sandbox?
+      fetch_string("OG_IMAGE_NO_SANDBOX", "0") == "1"
+    end
+
     # Cache lifetime for runtime-generated +/og-image.png+ responses, in
     # seconds. Successful captures are stored on disk and reused until the
     # TTL elapses; the next request after expiry refreshes the cache

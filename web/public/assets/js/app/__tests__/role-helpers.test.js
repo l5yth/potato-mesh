@@ -209,6 +209,21 @@ test('an unknown role falls back within its own protocol palette (SPEC RA9)', ()
   assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshtastic'), roleColors.CLIENT);
 });
 
+test('a role named after an Object.prototype member takes its protocol base colour (SPEC RA9)', () => {
+  // The palettes are plain objects, so a bare `palette[role]` lookup found
+  // inherited members and returned a function or an object where a colour
+  // belongs. No palette defines these roles, so each takes its protocol's
+  // base colour like any other unknown role.
+  assert.equal(getRoleColor('__proto__'), roleColors.CLIENT);
+  assert.equal(getRoleColor('constructor'), roleColors.CLIENT);
+  assert.equal(getRoleColor('hasOwnProperty', 'meshtastic'), roleColors.CLIENT);
+  assert.equal(getRoleColor('toString', 'meshcore'), meshcoreRoleColors.COMPANION);
+  assert.equal(getRoleColor('constructor', 'reticulum'), reticulumRoleColors.PEER);
+  // The badge text and the live-update fade follow the base colour.
+  assert.equal(getRoleTextColor('constructor'), getRoleTextColor('CLIENT'));
+  assert.equal(getRoleFlashColor('constructor'), 'rgba(243, 239, 116, 0.55)');
+});
+
 test('defaultRoleFor names each protocol base role (SPEC RA9)', () => {
   assert.equal(defaultRoleFor('meshtastic'), 'CLIENT');
   assert.equal(defaultRoleFor('meshcore'), 'COMPANION');

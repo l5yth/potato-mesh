@@ -25,6 +25,7 @@ import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
 import { meshcoreIconHtml, meshtasticIconHtml, reticulumIconHtml } from './protocol-helpers.js';
 import { createBasemapLayer } from './basemap-config.js';
+import { escapeHtml } from './utils.js';
 import { timeAgoSuffixed } from './main/format-utils.js';
 import {
   startRelativeTimeTicker,
@@ -72,22 +73,6 @@ export function renderProtocolCountCell(value, iconHtml) {
  */
 export function getFederationRelativeTimeTicker() {
   return relativeTimeTicker;
-}
-
-/**
- * Escape HTML special characters to prevent XSS.
- *
- * @param {string} str Raw string to escape.
- * @returns {string} Escaped string safe for HTML insertion.
- */
-function escapeHtml(str) {
-  if (typeof str !== 'string') return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

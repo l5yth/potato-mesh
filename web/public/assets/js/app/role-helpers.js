@@ -321,14 +321,19 @@ export function normalizeRole(role, protocol = null) {
 /**
  * Resolve the canonical role key used for colour lookup tables.
  *
+ * Only the palette's own keys count: a role named after an `Object.prototype`
+ * member (`constructor`, `toString`) is not a palette key (SPEC RA9).
+ *
  * @param {*} role Raw role value from the API.
+ * @param {string|null|undefined} [protocol] Protocol whose base role applies
+ *   when the value is absent.
  * @returns {string} Canonical role identifier.
  */
 export function getRoleKey(role, protocol = null) {
   const normalized = normalizeRole(role, protocol);
-  if (roleColors[normalized]) return normalized;
+  if (Object.hasOwn(roleColors, normalized)) return normalized;
   const upper = normalized.toUpperCase();
-  if (roleColors[upper]) return upper;
+  if (Object.hasOwn(roleColors, upper)) return upper;
   return normalized;
 }
 
@@ -347,10 +352,13 @@ export function getRoleKey(role, protocol = null) {
 export function getRoleColor(role, protocol = null) {
   const colors = getRoleColors(protocol);
   const key = getRoleKey(role, protocol);
+  // Only the palette's own keys are colours: a bare `colors[key]` also finds
+  // inherited `Object.prototype` members (a function for `constructor`).
+  const own = Object.hasOwn(colors, key) ? colors[key] : null;
   // Fall back within the node's own palette before the Meshtastic one, so a
   // role-less Meshcore or Reticulum node takes its protocol's base colour
   // rather than Meshtastic blue.
-  return colors[key] || colors[defaultRoleFor(protocol)] || roleColors.CLIENT || '#3388ff';
+  return own || colors[defaultRoleFor(protocol)] || roleColors.CLIENT || '#3388ff';
 }
 
 /**

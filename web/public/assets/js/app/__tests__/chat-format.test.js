@@ -187,6 +187,15 @@ test('abbreviatePreset maps known presets to codes', () => {
   assert.equal(abbreviatePreset('X'), 'X?');
 });
 
+test('abbreviatePreset ignores inherited Object.prototype keys', () => {
+  // `constructor` is a member of every plain object, so the bare lookup in the
+  // preset table returned the Object constructor instead of falling through
+  // to the derived initials, and the chat tag read `[FU]` ("function").
+  assert.equal(abbreviatePreset('constructor'), 'CO');
+  assert.equal(abbreviatePreset('Constructor'), 'CO');
+  assert.equal(formatChatPresetTag(extractChatMessageMetadata({ modem_preset: 'constructor' })), '[CO]');
+});
+
 test('derivePresetInitials falls back to segmented tokens', () => {
   assert.equal(derivePresetInitials('Long Moderate'), 'LM');
   assert.equal(derivePresetInitials('ShortTurbo'), 'ST');

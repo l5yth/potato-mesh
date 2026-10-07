@@ -301,7 +301,8 @@ function abbreviatePreset(preset, freqMHz = null) {
     return resolved.shortCode;
   }
   const token = preset.replace(/[^A-Za-z]/g, '').toLowerCase();
-  if (token && PRESET_ABBREVIATIONS[token]) {
+  // Own keys only: `constructor` is inherited by every plain object.
+  if (token && Object.hasOwn(PRESET_ABBREVIATIONS, token)) {
     return PRESET_ABBREVIATIONS[token];
   }
   return derivePresetInitials(preset);

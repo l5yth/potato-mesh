@@ -942,6 +942,26 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".og_image_no_sandbox?" do
+    it "returns false when OG_IMAGE_NO_SANDBOX is unset" do
+      within_env("OG_IMAGE_NO_SANDBOX" => nil) do
+        expect(described_class.og_image_no_sandbox?).to be(false)
+      end
+    end
+
+    it "returns false when OG_IMAGE_NO_SANDBOX=0" do
+      within_env("OG_IMAGE_NO_SANDBOX" => "0") do
+        expect(described_class.og_image_no_sandbox?).to be(false)
+      end
+    end
+
+    it "returns true when OG_IMAGE_NO_SANDBOX=1, ignoring surrounding whitespace" do
+      within_env("OG_IMAGE_NO_SANDBOX" => " 1 ") do
+        expect(described_class.og_image_no_sandbox?).to be(true)
+      end
+    end
+  end
+
   def within_env(values)
     original = {}
     values.each do |key, value|

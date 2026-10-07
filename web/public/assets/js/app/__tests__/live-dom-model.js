@@ -36,7 +36,9 @@
  *
  * Only the selector forms the dashboard and these tests use are supported:
  * `tag`, `#id`, `.class`, `[attr]`, `[attr="value"]`, compounds of those, the
- * descendant combinator and comma lists.
+ * descendant combinator and comma lists. A quoted value may carry the CSS
+ * escapes `cssEscape` emits without `CSS.escape` (see {@link decodeCssEscapes});
+ * hex escapes, and whitespace or a comma inside a value, are not supported.
  *
  * @module app/__tests__/live-dom-model
  */
@@ -94,7 +96,24 @@ function datasetAttribute(prop) {
 }
 
 /**
- * Parse one compound selector (`tr.nodes-subrow[data-x="y"]`).
+ * Decode the CSS escapes of one quoted selector value, as a browser reads it:
+ * a backslash before a character that is neither a hex digit nor whitespace
+ * stands for that character (`\"` is `"`, `\!` is `!`). That is the only form
+ * `cssEscape` (`main/format-utils.js`) emits without `CSS.escape`; the
+ * selector grammar in {@link parseCompound} admits no other.
+ *
+ * @param {string} value Quoted value without its quotes.
+ * @returns {string} The value the selector compares attributes against.
+ */
+function decodeCssEscapes(value) {
+  return value.replace(/\\([\s\S])/g, '$1');
+}
+
+/**
+ * Parse one compound selector (`tr.nodes-subrow[data-x="y"]`). A quoted
+ * attribute value is compared with its CSS escapes decoded
+ * ({@link decodeCssEscapes}); a raw `"` inside it ends the value, so the rest
+ * of the selector fails to parse, as in a browser.
  *
  * @param {string} source Compound selector text.
  * @returns {{tag: ?string, id: ?string, classes: Array<string>, attrs: Array<{name: string, value: ?string}>}}
@@ -109,13 +128,15 @@ function parseCompound(source) {
     parts.tag = tag[1] === '*' ? null : tag[1].toUpperCase();
     rest = rest.slice(tag[0].length);
   }
-  const simple = /^(?:\.([a-zA-Z0-9_-]+)|#([a-zA-Z0-9_-]+)|\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\])/;
+  // A quoted value runs to the first unescaped `"`; each backslash escapes
+  // the next character, which must not be a hex digit or whitespace.
+  const simple = /^(?:\.([a-zA-Z0-9_-]+)|#([a-zA-Z0-9_-]+)|\[([a-zA-Z0-9_-]+)(?:="((?:[^"\\]|\\[^0-9a-fA-F\s])*)")?\])/;
   while (rest.length) {
     const match = simple.exec(rest);
     if (!match) throw new Error(`live-dom-model: unsupported selector "${source}"`);
     if (match[1]) parts.classes.push(match[1]);
     else if (match[2]) parts.id = match[2];
-    else parts.attrs.push({ name: match[3], value: match[4] === undefined ? null : match[4] });
+    else parts.attrs.push({ name: match[3], value: match[4] === undefined ? null : decodeCssEscapes(match[4]) });
     rest = rest.slice(match[0].length);
   }
   return parts;

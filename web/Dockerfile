@@ -144,6 +144,7 @@ ENV RACK_ENV=production \
     ANNOUNCEMENT="" \
     EVENTS=1 \
     OG_IMAGE_URL="" \
+    OG_IMAGE_NO_SANDBOX=1 \
     PAGES_DIR=/app/pages \
     PROM_REPORT_IDS="" \
     FEDERATION=1 \

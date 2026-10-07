@@ -207,6 +207,18 @@ RSpec.describe PotatoMesh::OgImage do
   end
 
   describe ".browser_options" do
+    # The command-line flags Chromium would receive for
+    # +described_class.browser_options+, composed by Ferrum's own command
+    # builder. No browser starts: the builder only needs a browser path, and
+    # this one does not exist.
+    #
+    # @return [Array<String>] Chromium flags, without the binary path.
+    def launched_flags
+      require "ferrum"
+      options = described_class.browser_options.merge(browser_path: "/nonexistent/chromium")
+      Ferrum::Browser::Command.build(Ferrum::Browser::Options.new(options), SPEC_TMPDIR).to_a.drop(1)
+    end
+
     it "honors the configured viewport dimensions" do
       options = described_class.browser_options
 
@@ -217,20 +229,44 @@ RSpec.describe PotatoMesh::OgImage do
       expect(options[:headless]).to be true
     end
 
-    # `--no-sandbox` is required for non-root Alpine containers; removing
-    # it would silently break Chromium launches in production. The
-    # corresponding assertion lives in security review (see comment in
-    # OgImage.browser_options).
-    it "passes the --no-sandbox flag" do
-      options = described_class.browser_options
-
-      expect(options[:browser_options]).to have_key(:"no-sandbox")
+    # Chromium keeps its sandbox unless the operator opts out; the Docker
+    # images opt out with OG_IMAGE_NO_SANDBOX=1 (see OgImage.chromium_flags).
+    it "omits --no-sandbox while OG_IMAGE_NO_SANDBOX is unset" do
+      original = ENV["OG_IMAGE_NO_SANDBOX"]
+      ENV.delete("OG_IMAGE_NO_SANDBOX")
+      begin
+        expect(launched_flags).not_to include("--no-sandbox")
+      ensure
+        ENV["OG_IMAGE_NO_SANDBOX"] = original if original
+      end
     end
 
-    it "passes the --disable-dev-shm-usage flag" do
-      options = described_class.browser_options
+    it "passes --no-sandbox when OG_IMAGE_NO_SANDBOX=1" do
+      original = ENV["OG_IMAGE_NO_SANDBOX"]
+      ENV["OG_IMAGE_NO_SANDBOX"] = "1"
+      begin
+        expect(launched_flags).to include("--no-sandbox")
+      ensure
+        if original
+          ENV["OG_IMAGE_NO_SANDBOX"] = original
+        else
+          ENV.delete("OG_IMAGE_NO_SANDBOX")
+        end
+      end
+    end
 
-      expect(options[:browser_options]).to have_key(:"disable-dev-shm-usage")
+    it "keeps the same-origin policy and site isolation on, and Ferrum's other defaults" do
+      flags = launched_flags
+      disabled_features = flags.find { |flag| flag.start_with?("--disable-features=") }.split("=", 2).last.split(",")
+
+      expect(flags).not_to include("--disable-web-security", "--disable-site-isolation-trials")
+      expect(disabled_features).not_to include("site-per-process", "IsolateOrigins")
+      expect(disabled_features).to include("Translate", "MediaRouter")
+      expect(flags).to include("--headless", "--disable-background-networking", "--remote-allow-origins=*")
+    end
+
+    it "passes the --disable-dev-shm-usage and --disable-gpu flags" do
+      expect(launched_flags).to include("--disable-dev-shm-usage", "--disable-gpu")
     end
 
     it "passes the FERRUM_BROWSER_PATH env when present" do
