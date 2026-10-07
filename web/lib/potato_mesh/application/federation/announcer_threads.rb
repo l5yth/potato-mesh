@@ -18,7 +18,12 @@ module PotatoMesh
   module App
     module Federation
       # Spawn the long-running announcer thread that drives periodic federation
-      # broadcasts.
+      # broadcasts and crawls.
+      #
+      # Every {PotatoMesh::Config.federation_announcement_interval} the thread
+      # announces this instance to its peers, waits a random part of
+      # {PotatoMesh::Config.federation_crawl_max_jitter_seconds}, then runs
+      # one crawl from the seeds and known peers (SPEC FL3).
       #
       # @return [Thread, nil] the announcer thread, or nil when federation is disabled.
       def start_federation_announcer!
@@ -44,6 +49,19 @@ module PotatoMesh
                 error_message: e.message,
               )
             end
+
+            break unless federation_sleep_with_shutdown(rand * PotatoMesh::Config.federation_crawl_max_jitter_seconds)
+
+            begin
+              run_federation_crawl_cycle
+            rescue StandardError => e
+              warn_log(
+                "Federation crawl loop error",
+                context: "federation.instances",
+                error_class: e.class.name,
+                error_message: e.message,
+              )
+            end
           end
         end
         thread.name = "potato-mesh-federation" if thread.respond_to?(:name=)
@@ -53,7 +71,13 @@ module PotatoMesh
         thread
       end
 
-      # Launch a background thread responsible for the first federation broadcast.
+      # Launch a background thread responsible for the first federation
+      # broadcast and the first crawl.
+      #
+      # After {PotatoMesh::Config.initial_federation_delay_seconds} the thread
+      # announces this instance to its peers, then runs the first crawl from
+      # the seeds and known peers; the announcer thread crawls every interval
+      # after it (SPEC FL3).
       #
       # @return [Thread, nil] the thread handling the initial announcement.
       def start_initial_federation_announcement!
@@ -74,7 +98,27 @@ module PotatoMesh
             end
             next if federation_shutdown_requested?
 
-            announce_instance_to_all_domains
+            begin
+              announce_instance_to_all_domains
+            rescue StandardError => e
+              warn_log(
+                "Initial federation announcement failed",
+                context: "federation.announce",
+                error_class: e.class.name,
+                error_message: e.message,
+              )
+            end
+
+            begin
+              run_federation_crawl_cycle
+            rescue StandardError => e
+              warn_log(
+                "Initial federation crawl failed",
+                context: "federation.instances",
+                error_class: e.class.name,
+                error_message: e.message,
+              )
+            end
           rescue StandardError => e
             warn_log(
               "Initial federation announcement failed",

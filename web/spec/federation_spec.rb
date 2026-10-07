@@ -24,6 +24,8 @@ require "socket"
 
 RSpec.describe PotatoMesh::App::Federation do
   NODES_API_PATH = "/api/nodes".freeze
+  # The one node list a crawled peer is judged on (SPEC FL2).
+  ACCEPTANCE_NODES_PATH = "/api/nodes?limit=10".freeze
   STATS_API_PATH = "/api/stats".freeze
   FULL_DATA_UNAVAILABLE_REASON = "full data unavailable".freeze
   HTTP_CONNECTION_DOUBLE = "Net::HTTPConnection".freeze
@@ -410,7 +412,7 @@ RSpec.describe PotatoMesh::App::Federation do
   end
 
   describe ".ingest_known_instances_from!" do
-    let(:db) { double(:db) }
+    let(:db) { double(:db, get_first_row: nil) }
     let(:seed_domain) { "seed.mesh" }
     let(:payload_entries) do
       Array.new(3) do |index|
@@ -447,7 +449,7 @@ RSpec.describe PotatoMesh::App::Federation do
     let(:response_map) do
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each do |attributes|
-        mapping[[attributes[:domain], NODES_API_PATH]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], ACCEPTANCE_NODES_PATH]] = [node_payload, :nodes]
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
       end
       mapping
@@ -471,27 +473,21 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
     end
 
-    # The 7-day request the crawl sends when a peer's /api/nodes fails.
-    def active_nodes_path(now)
-      since = now.to_i - PotatoMesh::Config.remote_instance_max_inactivity
-      "/api/nodes?since=#{since}&limit=#{PotatoMesh::Config.remote_instance_min_node_count}"
-    end
-
-    # The peer's answer to that request, distinct from +node_payload+.
+    # A peer's answer to the acceptance request, its newest nodes inside the
+    # 7-day floor, distinct from +node_payload+.
     def active_nodes_payload(now)
       Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
         { "node_id" => "active-node-#{index}", "last_heard" => now.to_i - index }
       end
     end
 
-    def stats_mapping(now:, stats_response:, full_nodes_response:, window_nodes_response: nil, active_nodes_response: nil)
+    def stats_mapping(now:, stats_response:, acceptance_nodes_response:, window_nodes_response: nil)
       recent_cutoff = now.to_i - 900
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each do |attributes|
         mapping[[attributes[:domain], STATS_API_PATH]] = stats_response
-        mapping[[attributes[:domain], NODES_API_PATH]] = full_nodes_response
+        mapping[[attributes[:domain], ACCEPTANCE_NODES_PATH]] = acceptance_nodes_response
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
-        mapping[[attributes[:domain], active_nodes_path(now)]] = active_nodes_response if active_nodes_response
         next unless window_nodes_response
 
         mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = window_nodes_response
@@ -519,18 +515,18 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(PotatoMesh::Config).to receive(:federation_max_instances_per_response).and_return(2)
       allow(PotatoMesh::Config).to receive(:federation_max_domains_per_crawl).and_return(10)
 
-      visited = federation_helpers.ingest_known_instances_from!(db, seed_domain)
+      crawl = federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(processed_domains).to eq([
         attributes_list[0][:domain],
         attributes_list[1][:domain],
       ])
-      expect(visited).to include(seed_domain, attributes_list[0][:domain], attributes_list[1][:domain])
-      expect(visited).not_to include(attributes_list[2][:domain])
+      expect(crawl.walked).to include(seed_domain, attributes_list[0][:domain], attributes_list[1][:domain])
+      expect(crawl.walked).not_to include(attributes_list[2][:domain])
       expect(federation_helpers.debug_messages).to include(a_string_including("response limit"))
     end
 
-    it "halts recursion once the crawl limit would be exceeded" do
+    it "stops the crawl once it would fetch more domains than the crawl limit" do
       processed_domains = []
       allow(federation_helpers).to receive(:upsert_instance_record) do |_db, attrs, _signature|
         processed_domains << attrs[:domain]
@@ -538,12 +534,12 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(PotatoMesh::Config).to receive(:federation_max_instances_per_response).and_return(5)
       allow(PotatoMesh::Config).to receive(:federation_max_domains_per_crawl).and_return(2)
 
-      visited = federation_helpers.ingest_known_instances_from!(db, seed_domain)
+      crawl = federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(processed_domains).to eq([attributes_list.first[:domain]])
-      expect(visited).to include(seed_domain, attributes_list.first[:domain])
-      expect(visited).not_to include(attributes_list[1][:domain], attributes_list[2][:domain])
-      expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
+      expect(crawl.fetched_domains.to_a).to eq([seed_domain, attributes_list.first[:domain]])
+      expect(crawl.stop_reason).to eq("domain limit reached")
+      expect(federation_helpers.debug_messages).to include("Stopped federation crawl")
     end
 
     it "prefers /api/stats when counting remote activity" do
@@ -553,7 +549,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 5, "day" => 7, "week" => 9, "month" => 11 }, "sampled" => false }, :stats],
-        full_nodes_response: [node_payload, :nodes],
+        acceptance_nodes_response: [node_payload, :nodes],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
 
@@ -565,9 +561,9 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[2][:domain], STATS_API_PATH],
       )
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], NODES_API_PATH],
-        [attributes_list[1][:domain], NODES_API_PATH],
-        [attributes_list[2][:domain], NODES_API_PATH],
+        [attributes_list[0][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[1][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[2][:domain], ACCEPTANCE_NODES_PATH],
       )
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(5))
     end
@@ -586,7 +582,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [new_shape, :stats],
-        full_nodes_response: [node_payload, :nodes],
+        acceptance_nodes_response: [node_payload, :nodes],
       )
       stub_ingest_fetches(mapping)
 
@@ -602,14 +598,14 @@ RSpec.describe PotatoMesh::App::Federation do
     it "prefers recent node window counts when /api/stats is unavailable" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
-      full_nodes_payload = node_payload.take(2)
+      acceptance_payload = node_payload.take(2)
       recent_window_payload = node_payload
       recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
 
       mapping = stats_mapping(
         now:,
         stats_response: [nil, ["stats unavailable"]],
-        full_nodes_response: [full_nodes_payload, :nodes],
+        acceptance_nodes_response: [acceptance_payload, :nodes],
         window_nodes_response: [recent_window_payload, :nodes],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
@@ -622,9 +618,9 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[2][:domain], STATS_API_PATH],
       )
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], NODES_API_PATH],
-        [attributes_list[1][:domain], NODES_API_PATH],
-        [attributes_list[2][:domain], NODES_API_PATH],
+        [attributes_list[0][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[1][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[2][:domain], ACCEPTANCE_NODES_PATH],
       )
       expect(captured_paths).to include(
         [attributes_list[0][:domain], recent_path],
@@ -634,7 +630,7 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(recent_window_payload.length))
     end
 
-    it "falls back to recent node window when full node data is unavailable" do
+    it "judges a peer on its acceptance list and counts its 24-hour window" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
       active_payload = active_nodes_payload(now)
@@ -642,9 +638,8 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [nil, ["stats unavailable"]],
-        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
+        acceptance_nodes_response: [active_payload, :nodes],
         window_nodes_response: [node_payload, :nodes],
-        active_nodes_response: [active_payload, :nodes],
       )
       stub_ingest_fetches(mapping)
 
@@ -656,7 +651,7 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers).to have_received(:upsert_instance_record).exactly(3).times
     end
 
-    it "uses recent node window fallback when stats succeed but full node data is unavailable" do
+    it "skips the 24-hour window when /api/stats gives the count" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
       recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
@@ -665,9 +660,8 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 9, "day" => 10, "week" => 11, "month" => 12 }, "sampled" => false }, :stats],
-        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
+        acceptance_nodes_response: [active_payload, :nodes],
         window_nodes_response: [node_payload, :nodes],
-        active_nodes_response: [active_payload, :nodes],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
 
@@ -679,15 +673,11 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[2][:domain], STATS_API_PATH],
       )
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], recent_path],
-        [attributes_list[1][:domain], recent_path],
-        [attributes_list[2][:domain], recent_path],
+        [attributes_list[0][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[1][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[2][:domain], ACCEPTANCE_NODES_PATH],
       )
-      expect(captured_paths).to include(
-        [attributes_list[0][:domain], active_nodes_path(now)],
-        [attributes_list[1][:domain], active_nodes_path(now)],
-        [attributes_list[2][:domain], active_nodes_path(now)],
-      )
+      expect(captured_paths.map(&:last)).not_to include(recent_path)
       # /api/stats feeds the count; the 7-day list decides acceptance.
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(9))
       expect(federation_helpers).to have_received(:validate_remote_nodes).with(active_payload).exactly(3).times
@@ -701,7 +691,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "unexpected" => "shape" }, URI.parse("https://ally-0.mesh/api/stats")],
-        full_nodes_response: [node_payload.take(2), :nodes],
+        acceptance_nodes_response: [node_payload.take(2), :nodes],
         window_nodes_response: [node_payload, :nodes],
       )
       stub_ingest_fetches(mapping)
@@ -712,7 +702,7 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
     end
 
-    it "skips remote entries when both full and window node feeds are unavailable" do
+    it "skips remote entries whose acceptance list is unavailable, asking for no counts" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
       recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
@@ -720,7 +710,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 3, "day" => 3, "week" => 3, "month" => 3 }, "sampled" => false }, :stats],
-        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
+        acceptance_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [nil, ["window unavailable"]],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
@@ -732,18 +722,14 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], NODES_API_PATH],
-        [attributes_list[1][:domain], NODES_API_PATH],
-        [attributes_list[2][:domain], NODES_API_PATH],
+        [attributes_list[0][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[1][:domain], ACCEPTANCE_NODES_PATH],
+        [attributes_list[2][:domain], ACCEPTANCE_NODES_PATH],
       )
-      expect(captured_paths).to include(
-        [attributes_list[0][:domain], recent_path],
-        [attributes_list[1][:domain], recent_path],
-        [attributes_list[2][:domain], recent_path],
-      )
+      expect(captured_paths.map(&:last)).not_to include(recent_path, STATS_API_PATH)
       expect(upserted).to be_empty
       expect(federation_helpers.warn_messages).to include("Failed to load remote node data")
-      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(3))
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(be_nil)
     end
   end
 
@@ -1574,255 +1560,74 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
-  describe ".enqueue_federation_crawl" do
+  describe ".run_federation_crawl_cycle" do
     let(:pool) { instance_double(PotatoMesh::App::WorkerPool) }
-
-    before do
-      allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
-    end
+    let(:task) { instance_double(PotatoMesh::App::WorkerPool::Task) }
 
     it "returns false and logs when the pool is unavailable" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(nil)
 
-      result = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-
-      expect(result).to be(false)
-      expect(federation_helpers.debug_messages.last).to include("Skipped remote instance crawl")
+      expect(federation_helpers.run_federation_crawl_cycle).to be(false)
+      expect(federation_helpers.debug_messages.last).to eq("Skipped federation crawl")
     end
 
-    it "returns false and logs when the domain is invalid" do
-      result = federation_helpers.enqueue_federation_crawl(
-        "https://bad domain",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
+    it "schedules nothing once shutdown has been requested" do
+      federation_helpers.request_federation_shutdown!
+      allow(federation_helpers).to receive(:federation_worker_pool)
 
-      expect(result).to be(false)
-      expect(federation_helpers.warn_messages.last).to include("Skipped remote instance crawl")
+      expect(federation_helpers.run_federation_crawl_cycle).to be(false)
+      expect(federation_helpers).not_to have_received(:federation_worker_pool)
+    ensure
+      federation_helpers.clear_federation_shutdown_request!
     end
 
-    it "schedules ingestion work on the pool" do
+    it "runs one crawl on the pool and waits for it within the task timeout" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
-      db = instance_double(SQLite3::Database)
-      allow(db).to receive(:close)
-
-      expect(federation_helpers).to receive(:open_database).and_return(db)
-      expect(federation_helpers).to receive(:ingest_known_instances_from!).with(
-        db,
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-
-      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(7)
+      allow(federation_helpers).to receive(:crawl_federation!)
       expect(pool).to receive(:schedule) do |&block|
         block.call
         task
       end
+      expect(task).to receive(:wait).with(timeout: 7)
 
-      result = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-
-      expect(result).to be(true)
-      expect(db).to have_received(:close)
+      expect(federation_helpers.run_federation_crawl_cycle).to be(true)
+      expect(federation_helpers).to have_received(:crawl_federation!).once
     end
 
     it "logs when the worker queue is saturated" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
       allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
       expect(federation_helpers).to receive(:warn_log).with(
-        "Skipped remote instance crawl",
-        hash_including(
-          context: "federation.instances",
-          domain: "remote.mesh",
-          reason: "worker queue saturated",
-        ),
+        "Skipped federation crawl",
+        hash_including(context: "federation.instances", reason: "worker queue saturated"),
       ).and_call_original
 
-      result = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-
-      expect(result).to be(false)
-    end
-
-    it "does not apply cooldown when scheduling fails due to queue saturation" do
-      allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
-      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
-      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
-
-      first = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-      second = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-
-      expect(first).to be(false)
-      expect(second).to be(false)
-      expect(federation_helpers.debug_messages).not_to include(
-        a_string_including("recent crawl completed"),
-      )
+      expect(federation_helpers.run_federation_crawl_cycle).to be(false)
     end
 
     it "logs when the worker pool is shutting down" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
       allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::ShutdownError, "closed")
       expect(federation_helpers).to receive(:warn_log).with(
-        "Skipped remote instance crawl",
-        hash_including(
-          context: "federation.instances",
-          domain: "remote.mesh",
-          reason: "worker pool shut down",
-        ),
+        "Skipped federation crawl",
+        hash_including(context: "federation.instances", reason: "worker pool shut down"),
       ).and_call_original
 
-      result = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-
-      expect(result).to be(false)
+      expect(federation_helpers.run_federation_crawl_cycle).to be(false)
     end
 
-    it "deduplicates crawls while a domain crawl is already in flight" do
-      db = instance_double(SQLite3::Database)
-      allow(db).to receive(:close)
-      captured_job = nil
-
+    it "logs a crawl that outlives the task timeout" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
-      allow(pool).to receive(:schedule) do |&block|
-        captured_job = block
-        instance_double(PotatoMesh::App::WorkerPool::Task)
-      end
-      allow(federation_helpers).to receive(:open_database).and_return(db)
-      allow(federation_helpers).to receive(:ingest_known_instances_from!)
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(7)
+      allow(pool).to receive(:schedule).and_return(task)
+      allow(task).to receive(:wait).and_raise(PotatoMesh::App::WorkerPool::TaskTimeoutError, "task exceeded timeout")
+      expect(federation_helpers).to receive(:warn_log).with(
+        "Federation crawl timed out",
+        hash_including(context: "federation.instances", timeout: 7, error_message: "task exceeded timeout"),
+      ).and_call_original
 
-      first = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-      second = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-
-      expect(first).to be(true)
-      expect(second).to be(false)
-      expect(captured_job).not_to be_nil
-      captured_job.call
-      expect(db).to have_received(:close)
-    end
-
-    it "releases the crawl slot when opening the database fails" do
-      allow(federation_helpers).to receive(:federation_crawl_cooldown_seconds).and_return(0)
-      captured_job = nil
-      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
-      allow(pool).to receive(:schedule) do |&block|
-        captured_job = block
-        instance_double(PotatoMesh::App::WorkerPool::Task)
-      end
-      allow(federation_helpers).to receive(:open_database).and_raise(SQLite3::Exception, "db unavailable")
-      allow(federation_helpers).to receive(:ingest_known_instances_from!)
-
-      first = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-      expect(first).to be(true)
-      expect(captured_job).not_to be_nil
-
-      expect { captured_job.call }.to raise_error(SQLite3::Exception, "db unavailable")
-
-      second = federation_helpers.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 5,
-        overall_limit: 9,
-      )
-      expect(second).to be(true)
-    end
-
-    it "deduplicates crawls across instance receivers using shared class state" do
-      helper_class = Class.new do
-        include PotatoMesh::App::Federation
-
-        class << self
-          attr_accessor :pool
-
-          def settings
-            @settings ||= Struct.new(:federation_shutdown_requested).new(false)
-          end
-
-          def set(key, value)
-            settings.public_send("#{key}=", value)
-          end
-
-          def federation_worker_pool
-            pool
-          end
-
-          # No-op to keep the test helper minimal while satisfying federation logging calls.
-          def debug_log(*); end
-
-          # No-op to keep the test helper minimal while satisfying federation logging calls.
-          def warn_log(*); end
-        end
-
-        def settings
-          self.class.settings
-        end
-
-        def set(key, value)
-          self.class.set(key, value)
-        end
-
-        def debug_log(...)
-          self.class.debug_log(...)
-        end
-
-        def warn_log(...)
-          self.class.warn_log(...)
-        end
-      end
-
-      pool_double = instance_double(PotatoMesh::App::WorkerPool)
-      allow(pool_double).to receive(:schedule).and_return(instance_double(PotatoMesh::App::WorkerPool::Task))
-      helper_class.pool = pool_double
-
-      first_receiver = helper_class.new
-      second_receiver = helper_class.new
-
-      first = first_receiver.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-      second = second_receiver.enqueue_federation_crawl(
-        "remote.mesh",
-        per_response_limit: 1,
-        overall_limit: 2,
-      )
-
-      expect(first).to be(true)
-      expect(second).to be(false)
-      expect(pool_double).to have_received(:schedule).once
+      expect(federation_helpers.run_federation_crawl_cycle).to be(false)
     end
   end
 
@@ -1906,42 +1711,6 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(payload).to eq({ "ok" => true })
       expect(calls).to eq(["https", "http"])
-    end
-  end
-
-  describe ".claim_federation_crawl_slot" do
-    it "initializes crawl dedupe state safely under concurrent access" do
-      federation_helpers.instance_variable_set(:@federation_crawl_mutex, nil)
-      federation_helpers.instance_variable_set(:@federation_crawl_in_flight, nil)
-      federation_helpers.instance_variable_set(:@federation_crawl_last_completed_at, nil)
-      federation_helpers.instance_variable_set(:@federation_crawl_init_mutex, nil)
-
-      threads = Array.new(12) do
-        Thread.new do
-          federation_helpers.initialize_federation_crawl_state!
-        end
-      end
-      threads.each(&:join)
-
-      mutex = federation_helpers.instance_variable_get(:@federation_crawl_mutex)
-      in_flight = federation_helpers.instance_variable_get(:@federation_crawl_in_flight)
-      last_completed = federation_helpers.instance_variable_get(:@federation_crawl_last_completed_at)
-
-      expect(mutex).to be_a(Mutex)
-      expect(in_flight).to be_a(Set)
-      expect(last_completed).to be_a(Hash)
-      expect(in_flight).to be_empty
-      expect(last_completed).to be_empty
-    end
-
-    it "returns cooldown when the domain completed recently" do
-      allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
-      federation_helpers.clear_federation_crawl_state!
-      federation_helpers.release_federation_crawl_slot("remote.mesh")
-
-      result = federation_helpers.claim_federation_crawl_slot("remote.mesh")
-
-      expect(result).to eq(:cooldown)
     end
   end
 
@@ -2180,6 +1949,35 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers).to have_received(:announce_instance_to_all_domains).once
       expect(federation_helpers.warn_messages.last).to include("Federation announcement loop error")
     end
+
+    it "crawls after each announcement cycle and logs a crawl that raises" do
+      thread_double = instance_double(Thread)
+      captured = nil
+      sleep_results = [true, true, false]
+
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
+      allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
+      allow(federation_helpers).to receive(:federation_sleep_with_shutdown) { sleep_results.shift }
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains)
+      allow(federation_helpers).to receive(:run_federation_crawl_cycle).and_raise(RuntimeError, "boom")
+      allow(Thread).to receive(:new) do |&block|
+        captured = block
+        thread_double
+      end
+      allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
+      allow(federation_helpers).to receive(:set)
+
+      federation_helpers.start_federation_announcer!
+      captured.call
+
+      expect(federation_helpers).to have_received(:run_federation_crawl_cycle).once
+      expect(federation_helpers).to have_received(:federation_sleep_with_shutdown).with(
+        a_value_between(0, PotatoMesh::Config.federation_crawl_max_jitter_seconds),
+      )
+      expect(federation_helpers.warn_messages.last).to include("Federation crawl loop error")
+    end
   end
 
   describe ".start_initial_federation_announcement!" do
@@ -2199,15 +1997,17 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers.start_initial_federation_announcement!).to equal(existing)
     end
 
-    it "logs and clears the slot when the announcement raises" do
+    # Capture the block of the initial announcement thread without starting
+    # it, with federation on and no boot delay.
+    #
+    # @return [Proc] the thread's block.
+    def capture_initial_announcement_thread
       thread_double = instance_double(Thread)
       captured = nil
-
       allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
       allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
       allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
       allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_return(0)
-      allow(federation_helpers).to receive(:announce_instance_to_all_domains).and_raise(RuntimeError, "boom")
       allow(Thread).to receive(:new) do |&block|
         captured = block
         thread_double
@@ -2215,12 +2015,50 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
       allow(thread_double).to receive(:respond_to?).with(:report_on_exception=).and_return(false)
       allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
-
       federation_helpers.start_initial_federation_announcement!
-      captured.call
+      captured
+    end
+
+    it "logs and clears the slot when the announcement raises, and still crawls" do
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains).and_raise(RuntimeError, "boom")
+      allow(federation_helpers).to receive(:run_federation_crawl_cycle)
+
+      capture_initial_announcement_thread.call
 
       expect(federation_helpers.warn_messages.last).to include("Initial federation announcement failed")
+      expect(federation_helpers).to have_received(:run_federation_crawl_cycle).once
       expect(federation_helpers.send(:settings).initial_federation_thread).to be_nil
+    end
+
+    it "runs the first crawl right after the first announcement" do
+      steps = []
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains) { steps << :announce }
+      allow(federation_helpers).to receive(:run_federation_crawl_cycle) { steps << :crawl }
+
+      capture_initial_announcement_thread.call
+
+      expect(steps).to eq(%i[announce crawl])
+    end
+
+    it "logs a first crawl that raises" do
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains)
+      allow(federation_helpers).to receive(:run_federation_crawl_cycle).and_raise(RuntimeError, "boom")
+
+      capture_initial_announcement_thread.call
+
+      expect(federation_helpers.warn_messages.last).to include("Initial federation crawl failed")
+      expect(federation_helpers.send(:settings).initial_federation_thread).to be_nil
+    end
+
+    it "logs an error raised before the first announcement" do
+      block = capture_initial_announcement_thread
+      allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_raise(RuntimeError, "bad delay")
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains)
+
+      block.call
+
+      expect(federation_helpers.warn_messages.last).to include("Initial federation announcement failed")
+      expect(federation_helpers).not_to have_received(:announce_instance_to_all_domains)
     end
 
     it "skips the announcement when shutdown is requested during the initial delay" do
@@ -2448,19 +2286,19 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
-  describe ".ingest_known_instances_from! (overall_limit short-circuit)" do
-    it "returns immediately when visited already meets the overall limit" do
-      visited = Set.new(%w[seed.mesh other.mesh])
-      result = federation_helpers.ingest_known_instances_from!(
-        :db,
-        "seed.mesh",
-        visited: visited,
-        per_response_limit: 5,
-        overall_limit: 2,
+  describe ".ingest_known_instances_from! (stopped crawl short-circuit)" do
+    it "returns the crawl at once when it already spent its budget" do
+      crawl = PotatoMesh::App::Federation::CrawlState.new(
+        own_domain: nil, max_domains: 2, max_requests: 0, deadline_seconds: 60,
       )
+      crawl.request_allowed?("seed.mesh")
+      allow(federation_helpers).to receive(:fetch_instance_json)
 
-      expect(result).to equal(visited)
-      expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
+      result = federation_helpers.ingest_known_instances_from!(:db, "seed.mesh", crawl: crawl, per_response_limit: 5)
+
+      expect(result).to equal(crawl)
+      expect(crawl.walked).to be_empty
+      expect(federation_helpers).not_to have_received(:fetch_instance_json)
     end
   end
 
@@ -2903,6 +2741,43 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(ok).to be(false)
       expect(reason).to include("signed payload JSON error")
+    end
+
+    # A document whose signed payload names +payload_domain+, served as the
+    # well-known of +document_domain+.
+    #
+    # @param document_domain [String] the document's +domain+.
+    # @param payload_domain [String] the signed payload's +domain+.
+    # @return [Hash] the document.
+    def well_known_document(document_domain, payload_domain)
+      signed_b64, signature_b64 = signed_payload_for(payload_domain, pubkey_pem)
+      {
+        "publicKey" => pubkey_pem,
+        "domain" => document_domain,
+        "signatureAlgorithm" => PotatoMesh::Config.instance_signature_algorithm,
+        "signedPayload" => signed_b64,
+        "signature" => signature_b64,
+      }
+    end
+
+    it "compares the document's and the signed payload's domain ignoring case and a default port (SPEC FL1)" do
+      results = [["remote.mesh", "Remote.Mesh", "remote.mesh:443"], ["remote.mesh:80", "remote.mesh", "remote.mesh"]].map do |document_domain, payload_domain, expected|
+        application_class.validate_well_known_document(well_known_document(document_domain, payload_domain), expected, pubkey_pem)
+      end
+
+      expect(results).to eq([[true, nil], [true, nil]])
+    end
+
+    it "rejects a document for another port of the domain" do
+      result = application_class.validate_well_known_document(well_known_document("remote.mesh:8443", domain), domain, pubkey_pem)
+
+      expect(result).to eq([false, "domain mismatch"])
+    end
+
+    it "rejects a document whose signed payload names another domain" do
+      result = application_class.validate_well_known_document(well_known_document(domain, "other.mesh"), domain, pubkey_pem)
+
+      expect(result).to eq([false, "signed payload domain mismatch"])
     end
   end
 

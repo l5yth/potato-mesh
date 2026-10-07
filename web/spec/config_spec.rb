@@ -415,27 +415,60 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
-  describe ".federation_crawl_cooldown_seconds" do
-    it "returns the default crawl cooldown when unset" do
-      within_env("FEDERATION_CRAWL_COOLDOWN" => nil) do
-        expect(described_class.federation_crawl_cooldown_seconds).to eq(
-          PotatoMesh::Config::DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
-        )
+  describe ".federation_peer_fetch_cooldown_seconds" do
+    it "returns the 900-second default when unset" do
+      within_env("FEDERATION_PEER_FETCH_COOLDOWN" => nil) do
+        expect(described_class.federation_peer_fetch_cooldown_seconds).to eq(900)
       end
     end
 
     it "accepts positive overrides" do
-      within_env("FEDERATION_CRAWL_COOLDOWN" => "17") do
-        expect(described_class.federation_crawl_cooldown_seconds).to eq(17)
+      within_env("FEDERATION_PEER_FETCH_COOLDOWN" => "17") do
+        expect(described_class.federation_peer_fetch_cooldown_seconds).to eq(17)
       end
     end
 
     it "rejects invalid overrides" do
-      within_env("FEDERATION_CRAWL_COOLDOWN" => "0") do
-        expect(described_class.federation_crawl_cooldown_seconds).to eq(
-          PotatoMesh::Config::DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
+      within_env("FEDERATION_PEER_FETCH_COOLDOWN" => "0") do
+        expect(described_class.federation_peer_fetch_cooldown_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_PEER_FETCH_COOLDOWN_SECONDS,
         )
       end
+    end
+  end
+
+  describe ".federation_max_requests_per_crawl" do
+    it "defaults to a full crawl of the domain limit at four requests per domain" do
+      within_env("FEDERATION_MAX_REQUESTS_PER_CRAWL" => nil, "FEDERATION_MAX_DOMAINS_PER_CRAWL" => nil) do
+        expect(described_class.federation_max_requests_per_crawl).to eq(1024)
+        expect(described_class.federation_max_requests_per_crawl).to eq(4 * described_class.federation_max_domains_per_crawl)
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_MAX_REQUESTS_PER_CRAWL" => "33") do
+        expect(described_class.federation_max_requests_per_crawl).to eq(33)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_MAX_REQUESTS_PER_CRAWL" => "-2") do
+        expect(described_class.federation_max_requests_per_crawl).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_MAX_REQUESTS_PER_CRAWL,
+        )
+      end
+    end
+  end
+
+  describe ".federation_max_registrations_in_flight" do
+    it "allows four verifications at once" do
+      expect(described_class.federation_max_registrations_in_flight).to eq(4)
+    end
+  end
+
+  describe ".federation_crawl_max_jitter_seconds" do
+    it "is a tenth of the announcement interval" do
+      expect(described_class.federation_crawl_max_jitter_seconds).to eq(2880.0)
     end
   end
 

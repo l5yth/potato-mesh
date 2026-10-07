@@ -1879,13 +1879,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     # Stub fetch_instance_json on both the instance and class to return the
-    # supplied nodes array for /api/nodes requests.
+    # supplied nodes array for every /api/nodes request: the one list a peer
+    # is judged on and the 24-hour list an announcement without counts is
+    # counted from (SPEC FL2).
     def stub_remote_nodes(nodes)
       fetch_stub = lambda do |host, path|
         case path
         when "/.well-known/potato-mesh"
           [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
+        when %r{\A/api/nodes\?}
           [nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]
@@ -1903,21 +1905,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     before do
       stub_remote_nodes(remote_nodes)
+    end
 
-      allow_any_instance_of(Sinatra::Application).to receive(:enqueue_federation_crawl) do |instance, domain, per_response_limit:, overall_limit:|
-        db = instance.open_database
-        begin
-          instance.ingest_known_instances_from!(
-            db,
-            domain,
-            per_response_limit: per_response_limit,
-            overall_limit: overall_limit,
-          )
-        ensure
-          db&.close
-        end
-        true
-      end
+    # Run the crawl the announcer thread starts one cooldown after an
+    # announcement: an announcement itself schedules none (SPEC FL3).
+    #
+    # @param root [String] domain whose instance list the crawl walks.
+    # @return [void]
+    def crawl_after_cooldown(root)
+      PotatoMesh::Application.clear_federation_crawl_state!
+      with_db { |db| PotatoMesh::Application.ingest_known_instances_from!(db, root) }
     end
 
     it "accepts snake_case optional fields on POST /api/instances" do
@@ -2239,7 +2236,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         case path
         when "/.well-known/potato-mesh"
           [mixed_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
+        when %r{\A/api/nodes\?}
           [remote_nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]
@@ -2404,7 +2401,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         case path
         when "/.well-known/potato-mesh"
           [ipv6_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
+        when %r{\A/api/nodes\?}
           [remote_nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]
@@ -2505,8 +2502,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "ally-node-#{index}", "last_heard" => Time.now.to_i - index }
       end
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case [host, path]
+      # Every /api/nodes request, whatever its query, answers the same list.
+      fetch_stub = lambda do |host, path|
+        case [host, path.sub(/\?.*\z/, "")]
         when [domain, "/.well-known/potato-mesh"]
           [well_known_document, URI("https://#{host}#{path}")]
         when [domain, "/api/nodes"]
@@ -2523,10 +2521,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [nil, []]
         end
       end
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) { |_instance, host, path| fetch_stub.call(host, path) }
+      allow(PotatoMesh::Application).to receive(:fetch_instance_json) { |host, path| fetch_stub.call(host, path) }
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
       expect(last_response.status).to eq(201)
+      crawl_after_cooldown(domain)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -2737,8 +2738,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "stale-node-#{index}", "last_heard" => (Time.now.to_i - PotatoMesh::Config.remote_instance_max_inactivity) - index - 1 }
       end
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case [host, path]
+      # Every /api/nodes request, whatever its query, answers the same list.
+      fetch_stub = lambda do |host, path|
+        case [host, path.sub(/\?.*\z/, "")]
         when [domain, "/.well-known/potato-mesh"]
           [well_known_document, URI("https://#{host}#{path}")]
         when [domain, "/api/nodes"]
@@ -2780,9 +2782,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [nil, []]
         end
       end
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) { |_instance, host, path| fetch_stub.call(host, path) }
+      allow(PotatoMesh::Application).to receive(:fetch_instance_json) { |host, path| fetch_stub.call(host, path) }
 
       warning_calls = []
       allow_any_instance_of(Sinatra::Application).to receive(:warn_log).and_wrap_original do |method, *args, **kwargs|
+        warning_calls << [args, kwargs]
+        method.call(*args, **kwargs)
+      end
+      allow(PotatoMesh::Application).to receive(:warn_log).and_wrap_original do |method, *args, **kwargs|
         warning_calls << [args, kwargs]
         method.call(*args, **kwargs)
       end
@@ -2790,6 +2798,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
       expect(last_response.status).to eq(201)
+      crawl_after_cooldown(domain)
 
       with_db(readonly: true) do |db|
         domains = db.execute("SELECT domain FROM instances ORDER BY domain").flatten
@@ -2921,7 +2930,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         case path
         when "/.well-known/potato-mesh"
           [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
+        when %r{\A/api/nodes\?}
           [missing_nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]

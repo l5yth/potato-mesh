@@ -61,6 +61,13 @@ RSpec.configure do |config|
 
   config.include Rack::Test::Methods
 
+  # Federation keeps process-wide peer state: the fetch cooldown, backoff and
+  # revalidation store per host, and the registrations in flight. Every
+  # example starts without it.
+  config.before do
+    PotatoMesh::Application.clear_federation_crawl_state!
+  end
+
   config.after(:suite) do
     FileUtils.remove_entry(SPEC_TMPDIR) if File.directory?(SPEC_TMPDIR)
   end

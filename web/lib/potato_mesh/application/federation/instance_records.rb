@@ -17,6 +17,53 @@
 module PotatoMesh
   module App
     module Federation
+      # The key and signed +last_update+ of the row stored for +domain+.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param domain [String] domain, normalized as {#upsert_instance_record}
+      #   stores it.
+      # @return [Array(String, Integer)] public key and last update, both nil
+      #   without a row.
+      def stored_instance_key_and_update(db, domain)
+        with_busy_retry do
+          db.get_first_row(
+            "SELECT pubkey, last_update_time FROM instances WHERE domain = ?",
+            sanitize_instance_domain(domain),
+          )
+        end || [nil, nil]
+      end
+
+      # The key and signed +last_update+ of the row stored under a copy's
+      # instance id, which FS9 binds to its key: the copy's own row, under
+      # whichever domain form it was stored (SPEC FL1).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param attributes [Hash] the copy's attributes.
+      # @return [Array(String, Integer)] public key and last update, both nil
+      #   without a row.
+      def stored_instance_copy(db, attributes)
+        with_busy_retry do
+          db.get_first_row("SELECT pubkey, last_update_time FROM instances WHERE id = ?", attributes[:id])
+        end || [nil, nil]
+      end
+
+      # Whether a copy of a record is outdated by its stored row: the row
+      # holds the same key at a signed +last_update+ at least as new, so
+      # storing the copy would change nothing or roll the row back. The crawl
+      # and +POST /api/instances+ skip such a copy (SPEC FL1, FL7). The keys
+      # are compared in Ruby: a key bound as a blob never equals the same PEM
+      # bound as text in SQL.
+      #
+      # @param stored [Array(String, Integer)] {#stored_instance_copy} or
+      #   {#stored_instance_key_and_update}.
+      # @param attributes [Hash] the copy's attributes.
+      # @return [Boolean] true when the copy must not be stored.
+      def instance_copy_outdated?(stored, attributes)
+        stored_pubkey, stored_update = stored
+        stored_pubkey == attributes[:pubkey] && !stored_update.nil? &&
+          stored_update.to_i >= attributes[:last_update_time].to_i
+      end
+
       # Persist or refresh a remote instance row, evicting any conflicting
       # entry that already claimed the same domain.
       #

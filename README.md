@@ -169,9 +169,10 @@ slug sets the URL and nav label:
 
 ### Federation
 
-- `FEDERATION=1` (default): announce this instance, respond to crawlers, and crawl peers every 8 hours.
+- `FEDERATION=1` (default): announce this instance and crawl peers after boot and every 8 hours, and respond to crawlers.
 - `FEDERATION=0`: fully isolated, no federation.
 - `PRIVATE=1` disables federation regardless of `FEDERATION`.
+- Federation requests send the User-Agent `PotatoMesh/<version> (+https://<domain>)`; `deploy/nginx.example.conf` has an optional rate limit for them.
 
 ### API
 
@@ -232,12 +233,13 @@ directly in the web process's environment.
 | `SSE_THREAD_RESERVE` | `32` | Threads held back from SSE so ordinary requests keep being served. |
 | `FEDERATION_WORKERS` | `4` | Federation crawl worker-pool size. |
 | `FEDERATION_WORK_QUEUE` | `128` | Queued federation tasks before new ones are dropped. |
-| `FEDERATION_TASK_TIMEOUT` | `120` | Seconds before one federation task is abandoned. |
+| `FEDERATION_TASK_TIMEOUT` | `120` | Seconds before one federation task, such as a crawl, is abandoned. |
 | `FEDERATION_SHUTDOWN_TIMEOUT` | `3` | Seconds to drain federation workers on shutdown. |
-| `FEDERATION_CRAWL_COOLDOWN` | `300` | Minimum seconds between crawls of the same domain. |
-| `FEDERATION_MAX_DOMAINS_PER_CRAWL` | `256` | Domain ceiling for one crawl pass. |
-| `FEDERATION_MAX_INSTANCES_PER_RESPONSE` | `64` | Instances accepted from one peer's response. |
-| `INITIAL_FEDERATION_DELAY_SECONDS` | `2` | Delay before the first crawl after boot. |
+| `FEDERATION_PEER_FETCH_COOLDOWN` | `900` | Minimum seconds between two fetches of one peer host. |
+| `FEDERATION_MAX_DOMAINS_PER_CRAWL` | `256` | Most peer domains one crawl fetches. |
+| `FEDERATION_MAX_REQUESTS_PER_CRAWL` | `1024` | Most requests one crawl sends. |
+| `FEDERATION_MAX_INSTANCES_PER_RESPONSE` | `64` | Entries read from one peer's instance list. |
+| `INITIAL_FEDERATION_DELAY_SECONDS` | `2` | Seconds before the first announcement and crawl after boot. |
 | `REMOTE_INSTANCE_CONNECT_TIMEOUT` | `15` | Connect timeout when fetching a peer. |
 | `REMOTE_INSTANCE_READ_TIMEOUT` | `60` | Read timeout when fetching a peer. |
 | `REMOTE_INSTANCE_REQUEST_TIMEOUT` | `30` | Overall request timeout when fetching a peer. |
