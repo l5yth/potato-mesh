@@ -285,7 +285,9 @@ module PotatoMesh
         db&.close
       end
 
-      # Fetch ingestor heartbeats with optional freshness filtering.
+      # Fetch ingestor heartbeats with optional freshness filtering.  An
+      # ingestor whose host node is opted out is never served, nor, in private
+      # mode, one whose host node is +CLIENT_HIDDEN+ (SPEC HC7).
       #
       # @param limit [Integer] maximum number of ingestors to return.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
@@ -308,6 +310,7 @@ module PotatoMesh
         # bounds the +last_seen_time+ sort column.
         append_before_filter(where_clauses, params, before, column: "last_seen_time")
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
+        where_clauses << hidden_client_node_id_filter("node_id") if private_mode?
         append_protocol_filter(where_clauses, params, protocol)
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol
@@ -355,7 +358,9 @@ module PotatoMesh
       # names an opted-out node are never returned, so +node_id:+ set to such a
       # node yields an empty list. The opt-out is node-level, decided on the
       # +nodes+ row: a marker only in a non-headline destination's own name
-      # hides nothing.
+      # hides nothing. In private mode the destinations of a +CLIENT_HIDDEN+
+      # node, a role older releases gave Reticulum placeholders, are left out
+      # the same way (SPEC HC1).
       #
       # Serves a destination only while its node is inside the window the node
       # read applies ({#node_window_floor}, SPEC RA8): seven days on the bulk
@@ -401,6 +406,7 @@ module PotatoMesh
         # +LIMIT+ counting visible rows only, so a short page still means the
         # window is exhausted for a backward pager (SPEC RA8).
         append_opt_out_filter(clauses, params, opt_out_node_id_filter("node_id"))
+        clauses << hidden_client_node_id_filter("node_id") if private_mode?
         sql = +"SELECT id, node_id, identity_hash, name, aspect, role, interface, " \
                "first_heard, last_heard, protocol FROM destinations"
         sql << " WHERE #{clauses.join(" AND ")}" if clauses.any?
@@ -429,7 +435,9 @@ module PotatoMesh
       # +total ≥ Σ named protocols+. Counts are resolved directly in SQL with
       # COUNT(*) thresholds (no sampling bias from list-endpoint limits) and honor
       # the node opt-out marker on every metric. +messages+ counts are forced to
-      # zero in private mode (SPEC S5 / Invariant II).
+      # zero in private mode (SPEC S5 / Invariant II), where the +nodes+ and
+      # +telemetry+ counts leave out +CLIENT_HIDDEN+ nodes and their rows
+      # (SPEC HC3).
       #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
@@ -509,19 +517,26 @@ module PotatoMesh
       # every non-message packet record — positions + telemetry + neighbors +
       # traces + waypoints — unioned on +(rx_time, protocol)+, each table
       # honoring the same opt-out filter its list endpoint applies (SPEC S3,
-      # explicitly amended by W9 to include the waypoints table).
+      # explicitly amended by W9 to include the waypoints table). In private
+      # mode every branch, waypoints included, also leaves out the rows of a
+      # +CLIENT_HIDDEN+ node on the same columns (SPEC HC3).
       #
       # @param handle [SQLite3::Database] open database handle.
       # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
       # @return [Hash{String => Hash}] scope => window counts.
       def telemetry_activity_counts(handle, cutoffs)
+        # Each branch: table, its opt-out fragments, and the CLIENT_HIDDEN
+        # fragments on the same columns, which bind no parameter.
         sources = [
-          ["positions", [opt_out_node_id_filter("node_id")]],
-          ["telemetry", [opt_out_node_id_filter("node_id")]],
-          ["neighbors", [opt_out_node_id_filter("node_id"), opt_out_node_id_filter("neighbor_id")]],
-          ["traces", [opt_out_node_num_filter("src"), opt_out_node_num_filter("dest")]],
-          ["waypoints", [opt_out_node_id_filter("node_id")]],
+          ["positions", [opt_out_node_id_filter("node_id")], [hidden_client_node_id_filter("node_id")]],
+          ["telemetry", [opt_out_node_id_filter("node_id")], [hidden_client_node_id_filter("node_id")]],
+          ["neighbors", [opt_out_node_id_filter("node_id"), opt_out_node_id_filter("neighbor_id")],
+           [hidden_client_node_id_filter("node_id"), hidden_client_node_id_filter("neighbor_id")]],
+          ["traces", [opt_out_node_num_filter("src"), opt_out_node_num_filter("dest")],
+           [hidden_client_node_num_filter("src"), hidden_client_node_num_filter("dest")]],
+          ["waypoints", [opt_out_node_id_filter("node_id")], [hidden_client_node_id_filter("node_id")]],
         ]
+        hide_clients = private_mode?
         # Bound each branch's raw +rx_time+ by the widest ("month") cutoff so every
         # source seeks its +idx_<table>_rx_time+ index while building +visible+,
         # instead of the whole umbrella being materialised and scanned once per
@@ -530,8 +545,9 @@ module PotatoMesh
         month_cutoff = cutoffs.fetch("month")
         projections = []
         params = []
-        sources.each do |table, fragments|
-          projections << "SELECT rx_time AS t, protocol AS p FROM #{table} WHERE rx_time >= ? AND #{fragments.join(" AND ")}"
+        sources.each do |table, fragments, hidden_fragments|
+          clauses = hide_clients ? fragments + hidden_fragments : fragments
+          projections << "SELECT rx_time AS t, protocol AS p FROM #{table} WHERE rx_time >= ? AND #{clauses.join(" AND ")}"
           params.concat([month_cutoff] + opt_out_marker_params * fragments.length)
         end
         windowed_protocol_counts(

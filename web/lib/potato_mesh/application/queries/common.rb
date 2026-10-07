@@ -305,7 +305,9 @@ module PotatoMesh
       # SQL fragment that excludes +CLIENT_HIDDEN+ nodes.  Private mode
       # (+PRIVATE=1+) keeps them out of public node reads, so callers append
       # it only when +private_mode?+ is true.  Intended for queries that read
-      # directly from the +nodes+ table; a +NULL+ role stays visible.
+      # directly from the +nodes+ table; a +NULL+ role stays visible.  Tables
+      # that reference a node use {#hidden_client_node_id_filter} and
+      # {#hidden_client_node_num_filter} (SPEC HC1).
       #
       # @return [String] SQL predicate suitable for AND-composition.
       def hidden_client_filter
@@ -365,6 +367,47 @@ module PotatoMesh
         assert_safe_column_identifier!(column)
         "(#{column} IS NULL OR #{column} NOT IN (" \
         "SELECT num FROM nodes WHERE num IS NOT NULL AND #{OPT_OUT_NAME_PREDICATE}))"
+      end
+
+      # Role predicate of the +hidden_client_node_*_filter+ subqueries.  A
+      # literal, so those fragments bind no parameter.
+      HIDDEN_CLIENT_ROLE_PREDICATE = "role = 'CLIENT_HIDDEN'".freeze
+
+      # SQL fragment that excludes rows whose textual node reference column
+      # points at a +CLIENT_HIDDEN+ node: the private-mode twin of
+      # {#opt_out_node_id_filter}.  Under +PRIVATE=1+ such a node has no row
+      # on the read surfaces SPEC HC1 lists, so a read appends this fragment,
+      # on each column its opt-out fragments check, only when +private_mode?+
+      # is true; a public instance serves every row.
+      #
+      # NULL references stay visible and the subquery skips NULL ids, for the
+      # reasons given at {#opt_out_node_id_filter}.  The fragment binds no
+      # parameter, so callers add it to the WHERE clauses directly rather than
+      # through {#append_opt_out_filter}.
+      #
+      # @param column [String] qualified SQL column name (e.g. ``"neighbor_id"``).
+      #   Must match {SAFE_COLUMN_IDENTIFIER}; arbitrary user input is not
+      #   accepted.
+      # @return [String] SQL predicate suitable for AND-composition.
+      def hidden_client_node_id_filter(column)
+        assert_safe_column_identifier!(column)
+        "(#{column} IS NULL OR #{column} NOT IN (" \
+        "SELECT node_id FROM nodes WHERE node_id IS NOT NULL AND #{HIDDEN_CLIENT_ROLE_PREDICATE}))"
+      end
+
+      # SQL fragment that excludes rows whose numeric node reference column
+      # (+src+, +dest+, +trace_hops.node_id+) points at a +CLIENT_HIDDEN+ node:
+      # the private-mode twin of {#opt_out_node_num_filter}.  Appended only
+      # when +private_mode?+ is true, and binds no parameter, as
+      # {#hidden_client_node_id_filter}.
+      #
+      # @param column [String] qualified SQL column name.  Must match
+      #   {SAFE_COLUMN_IDENTIFIER}.
+      # @return [String] SQL predicate suitable for AND-composition.
+      def hidden_client_node_num_filter(column)
+        assert_safe_column_identifier!(column)
+        "(#{column} IS NULL OR #{column} NOT IN (" \
+        "SELECT num FROM nodes WHERE num IS NOT NULL AND #{HIDDEN_CLIENT_ROLE_PREDICATE}))"
       end
 
       # Append an opt-out filter to an in-flight WHERE clause builder.

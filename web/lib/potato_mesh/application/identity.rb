@@ -320,7 +320,8 @@ module PotatoMesh
       #
       # Opted-out nodes are excluded so the +/version+ cache hint and the
       # federation self-record do not leak the freshness of nodes that have
-      # asked to stay hidden.
+      # asked to stay hidden; in private mode +CLIENT_HIDDEN+ nodes are
+      # excluded too (SPEC HC7).
       #
       # @return [Integer, nil] Unix timestamp or nil when unavailable.
       def latest_node_update_timestamp
@@ -328,6 +329,7 @@ module PotatoMesh
 
         db = open_database(readonly: true)
         sql = "SELECT MAX(last_heard) FROM nodes WHERE #{opt_out_self_filter}"
+        sql += " AND #{hidden_client_filter}" if private_mode?
         value = db.get_first_value(sql, opt_out_marker_params)
         value&.to_i
       rescue SQLite3::Exception

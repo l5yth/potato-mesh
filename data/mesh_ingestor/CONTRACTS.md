@@ -400,6 +400,8 @@ A signed instance field is never cut, since a cut value no longer matches its si
 
 All collection GET endpoints (`/api/nodes`, `/api/messages`, `/api/positions`, `/api/telemetry`, `/api/traces`, `/api/neighbors`, `/api/ingestors`, `/api/waypoints`) accept an optional `?protocol=<value>` query parameter. When present, only records whose `protocol` column matches the given value are returned. The `protocol` field is included in all GET responses.
 
+Privacy (SPEC HC1, HC7). Under `PRIVATE=1` the read routes leave out a node whose role is `CLIENT_HIDDEN`, bulk and per id. `GET /api/nodes` omits it and `/api/nodes/:id` returns 404. `/api/positions`, `/api/telemetry`, `/api/telemetry/aggregated`, `/api/destinations` and `/api/ingestors` drop the rows whose `node_id` is that node, `/api/neighbors` a link with it at either end, and `/api/traces` a trace from or to it; a trace between other nodes keeps its row, with the hidden node removed from `hops`, and `/api/traces/:id` for the hidden node returns `[]`. The `/api/stats` counts leave its rows out, `GET /version` `last_node_update` and the well-known document's `last_update` ignore it, and `/nodes/:id` returns 404. `/api/messages` and `/api/waypoints` already return 404 under `PRIVATE=1`. The ingest `POST` routes still store its rows; with `PRIVATE` unset they are served. In either mode `/api/traces/:id` for an opted-out node returns `[]` too.
+
 ### GET endpoint time windows
 
 Every read endpoint enforces a server-side rolling-window floor on the data it returns. The window is fixed per route and cannot be widened by the caller - explicit `?since=<unix_seconds>` is treated as `MAX(since, floor)`, so a `since` older than the floor is silently clamped to the floor. Pass a `since` newer than the floor when you want to be more restrictive (incremental refresh).
@@ -582,7 +584,9 @@ One row per announced destination, newest `last_heard` first.
 - Privacy. Honors the node opt-out marker: rows whose `node_id` names an
   opted-out node are omitted, so `?node_id=` for that node returns `[]`. The
   opt-out is node-level: a marker in a non-headline destination's own name hides
-  nothing, so the operator puts the marker in the node's headline name.
+  nothing, so the operator puts the marker in the node's headline name. Under
+  `PRIVATE=1` the destinations of a `CLIENT_HIDDEN` node are omitted the same
+  way (SPEC HC1).
 - This route holds no response cache, so `since`/`before` have no cached path to
   bypass; the weak ETag varies with the cursor because it is hashed from the
   body the cursor produced.
@@ -637,8 +641,10 @@ One row per announced destination, newest `last_heard` first.
   28-day visibility floor. The `packets` metric carries only `hour` (it is a rate,
   not a windowed count).
 - Privacy. Every metric honors the node opt-out marker. When `PRIVATE=1`, all
-  `messages` counts are forced to `0` (mirroring the disabled message API);
-  `nodes`/`telemetry` counts remain.
+  `messages` counts are forced to `0` (mirroring the disabled message API), and
+  the `nodes` and `telemetry` counts leave out `CLIENT_HIDDEN` nodes and the
+  umbrella rows that reference one by `node_id`, `neighbor_id`, `src` or `dest`,
+  as the GET routes do (SPEC HC3).
 - `<scope>.packets.hour` (additive, SPEC MA4/MA5) carries the 24-hour
   packets/hour moving average as a rounded integer, exposed as a `packets` metric
   under each scope (single `hour` window). It is aggregated MAX-per-protocol:

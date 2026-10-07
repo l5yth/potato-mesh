@@ -17,7 +17,9 @@
 module PotatoMesh
   module App
     module Queries
-      # Fetch telemetry packets optionally scoped by node and timestamp.
+      # Fetch telemetry packets optionally scoped by node and timestamp.  Rows
+      # of an opted-out node are never served, nor, in private mode, rows of a
+      # +CLIENT_HIDDEN+ node (SPEC HC1).
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
@@ -51,6 +53,7 @@ module PotatoMesh
         append_before_filter(where_clauses, params, before, column: "rx_time")
 
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
+        where_clauses << hidden_client_node_id_filter("node_id") if private_mode?
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -115,7 +118,9 @@ module PotatoMesh
         db&.close
       end
 
-      # Aggregate telemetry metrics into time buckets.
+      # Aggregate telemetry metrics into time buckets.  Readings of an
+      # opted-out node are never counted, nor, in private mode, readings of a
+      # +CLIENT_HIDDEN+ node (SPEC HC1).
       #
       # @param window_seconds [Integer] duration expressed in seconds to include in the query.
       # @param bucket_seconds [Integer] size of each aggregation bucket in seconds.
@@ -153,13 +158,18 @@ module PotatoMesh
           select_clauses << "MAX(#{aggregate_source}) AS #{column}_max"
         end
 
+        # Only the opt-out fragment binds parameters; the CLIENT_HIDDEN one
+        # binds none, so +params+ below holds in both modes.
+        node_filters = [opt_out_node_id_filter("node_id")]
+        node_filters << hidden_client_node_id_filter("node_id") if private_mode?
+
         sql = <<~SQL
           SELECT
             #{select_clauses.join(",\n            ")}
           FROM telemetry
           WHERE COALESCE(rx_time, telemetry_time) IS NOT NULL
             AND COALESCE(rx_time, telemetry_time, 0) >= ?
-            AND #{opt_out_node_id_filter("node_id")}
+            AND #{node_filters.join(" AND ")}
           GROUP BY bucket_start
           ORDER BY bucket_start ASC
           LIMIT ?

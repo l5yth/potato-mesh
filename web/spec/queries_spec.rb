@@ -71,6 +71,15 @@ RSpec.describe PotatoMesh::App::Queries do
 
   subject(:queries) { harness_class.new }
 
+  # The same harness on a private instance (+PRIVATE=1+).
+  let(:private_queries) do
+    Class.new(harness_class) do
+      def private_mode?
+        true
+      end
+    end.new
+  end
+
   # ---------------------------------------------------------------------------
   # compact_api_row
   # ---------------------------------------------------------------------------
@@ -1114,6 +1123,36 @@ RSpec.describe PotatoMesh::App::Queries do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # CLIENT_HIDDEN helpers, appended only in private mode (SPEC HC2)
+  # ---------------------------------------------------------------------------
+  describe "#hidden_client_node_id_filter" do
+    it "keeps NULL references and drops the ids of CLIENT_HIDDEN nodes, binding nothing" do
+      expect(queries.hidden_client_node_id_filter("neighbor_id")).to eq(
+        "(neighbor_id IS NULL OR neighbor_id NOT IN (" \
+        "SELECT node_id FROM nodes WHERE node_id IS NOT NULL AND role = 'CLIENT_HIDDEN'))",
+      )
+    end
+
+    it "rejects column identifiers containing unsafe characters" do
+      expect { queries.hidden_client_node_id_filter("node_id; DROP TABLE nodes--") }.to raise_error(ArgumentError, /unsafe column identifier/)
+      expect { queries.hidden_client_node_id_filter(nil) }.to raise_error(ArgumentError, /unsafe column identifier/)
+    end
+  end
+
+  describe "#hidden_client_node_num_filter" do
+    it "keeps NULL references and drops the numbers of CLIENT_HIDDEN nodes, binding nothing" do
+      expect(queries.hidden_client_node_num_filter("th.node_id")).to eq(
+        "(th.node_id IS NULL OR th.node_id NOT IN (" \
+        "SELECT num FROM nodes WHERE num IS NOT NULL AND role = 'CLIENT_HIDDEN'))",
+      )
+    end
+
+    it "rejects column identifiers containing unsafe characters" do
+      expect { queries.hidden_client_node_num_filter("src OR 1=1") }.to raise_error(ArgumentError, /unsafe column identifier/)
+    end
+  end
+
   describe "#assert_safe_column_identifier!" do
     it "accepts bare identifiers and dotted qualifiers" do
       expect(queries.assert_safe_column_identifier!("node_id")).to eq("node_id")
@@ -1315,6 +1354,88 @@ RSpec.describe PotatoMesh::App::Queries do
     end
   end
 
+  describe "CLIENT_HIDDEN filtering in private-mode read queries (SPEC HC1-HC3)" do
+    # A CLIENT_HIDDEN node with a row in every collection, two visible nodes
+    # it links to and relays a trace between, and one destination each for a
+    # visible Reticulum node and one stored with the old placeholder role.
+    before do
+      with_db do |db|
+        rx_iso = Time.at(now).utc.iso8601
+        [
+          ["!hide0001", 0x0c000001, "CLIENT_HIDDEN", "meshtastic"],
+          ["!show0001", 0x0c000002, "CLIENT", "meshtastic"],
+          ["!show0002", 0x0c000003, "CLIENT", "meshtastic"],
+          ["!hide00a1", 0x0c0000a1, "CLIENT_HIDDEN", "reticulum"],
+          ["!show00a1", 0x0c0000a2, "PEER", "reticulum"],
+        ].each do |id, num, role, protocol|
+          db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role, protocol) VALUES (?,?,?,?,?,?)", [id, num, now, now, role, protocol])
+        end
+        [[1, "!hide0001"], [2, "!show0001"]].each do |id, node_id|
+          db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [id, now, rx_iso, node_id])
+          db.execute("INSERT INTO telemetry(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [id, now, rx_iso, node_id])
+        end
+        [["!hide0001", "!show0001"], ["!show0002", "!hide0001"], ["!show0001", "!show0002"]].each do |node_id, neighbor_id|
+          db.execute("INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES (?,?,?)", [node_id, neighbor_id, now])
+        end
+        [[1, 0x0c000001, 0x0c000002], [2, 0x0c000002, 0x0c000001], [3, 0x0c000002, 0x0c000003]].each do |id, src, dest|
+          db.execute("INSERT INTO traces(id, rx_time, rx_iso, src, dest) VALUES (?,?,?,?,?)", [id, now, rx_iso, src, dest])
+        end
+        [0x0c000002, 0x0c000001, 0x0c000003].each_with_index do |hop, index|
+          db.execute("INSERT INTO trace_hops(trace_id, hop_index, node_id) VALUES (?,?,?)", [3, index, hop])
+        end
+        db.execute("INSERT INTO waypoints(id, rx_time, rx_iso, node_id, name) VALUES (?,?,?,?,?)", [1, now, rx_iso, "!hide0001", "Pin"])
+        [["0c0000a1#{"00" * 12}", "!hide00a1"], ["0c0000a2#{"00" * 12}", "!show00a1"]].each do |id, node_id|
+          db.execute("INSERT INTO destinations(id, node_id, aspect, role, first_heard, last_heard) VALUES (?,?,?,?,?,?)", [id, node_id, "lxmf.delivery", "PEER", now, now])
+        end
+      end
+    end
+
+    it "drops the hidden node's positions and readings, bulk and per id" do
+      expect(private_queries.query_positions(50).map { |row| row["id"] }).to eq([2])
+      expect(private_queries.query_positions(50, node_ref: "!hide0001")).to eq([])
+      expect(private_queries.query_telemetry(50).map { |row| row["id"] }).to eq([2])
+      expect(private_queries.query_telemetry(50, node_ref: "!hide0001")).to eq([])
+    end
+
+    it "drops a neighbour link with the hidden node at either end" do
+      links = private_queries.query_neighbors(50).map { |row| [row["node_id"], row["neighbor_id"]] }
+      expect(links).to eq([["!show0001", "!show0002"]])
+    end
+
+    it "drops a trace from or to the hidden node, and its hop from another node's trace" do
+      traces = private_queries.query_traces(50)
+      expect(traces.map { |row| row["id"] }).to eq([3])
+      expect(traces.first["hops"]).to eq([0x0c000002, 0x0c000003])
+    end
+
+    it "drops the hidden node's readings from the telemetry buckets" do
+      buckets = private_queries.query_telemetry_buckets(window_seconds: 3600, bucket_seconds: 3600)
+      expect(buckets.sum { |bucket| bucket["sample_count"] }).to eq(1)
+    end
+
+    it "drops the destinations of a node stored as CLIENT_HIDDEN" do
+      expect(private_queries.query_destinations(50).map { |row| row["node_id"] }).to eq(["!show00a1"])
+    end
+
+    it "drops the hidden node's rows from every branch of the stats telemetry umbrella" do
+      # positions(1) + telemetry(1) + neighbors(1) + traces(1, the relayed
+      # trace) + waypoints(0, the hidden node's only waypoint).
+      expect(private_queries.query_active_node_stats(now: now)["total"]["telemetry"]["day"]).to eq(4)
+    end
+
+    it "keeps every row on a public instance" do
+      expect(queries.query_positions(50).length).to eq(2)
+      expect(queries.query_telemetry(50).length).to eq(2)
+      expect(queries.query_neighbors(50).length).to eq(3)
+      traces = queries.query_traces(50)
+      expect(traces.map { |row| row["id"] }).to contain_exactly(1, 2, 3)
+      expect(traces.find { |row| row["id"] == 3 }["hops"]).to eq([0x0c000002, 0x0c000001, 0x0c000003])
+      expect(queries.query_telemetry_buckets(window_seconds: 3600, bucket_seconds: 3600).sum { |bucket| bucket["sample_count"] }).to eq(2)
+      expect(queries.query_destinations(50).map { |row| row["node_id"] }).to contain_exactly("!hide00a1", "!show00a1")
+      expect(queries.query_active_node_stats(now: now)["total"]["telemetry"]["day"]).to eq(11)
+    end
+  end
+
   describe "#query_active_node_stats" do
     it "returns the full scope × metric × window tree" do
       stats = queries.query_active_node_stats(now: now)
@@ -1412,11 +1533,6 @@ RSpec.describe PotatoMesh::App::Queries do
     end
 
     it "zeroes message counts in private mode but keeps nodes and telemetry" do
-      private_queries = Class.new(harness_class) do
-        def private_mode?
-          true
-        end
-      end.new
       with_db do |db|
         rx_iso = Time.at(now).utc.iso8601
         db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!priv0001", 1, now, now, "CLIENT"])
@@ -1426,7 +1542,7 @@ RSpec.describe PotatoMesh::App::Queries do
       stats = private_queries.query_active_node_stats(now: now)
       expect(stats["total"]["messages"]["day"]).to eq(0)
       expect(stats["meshtastic"]["messages"]["day"]).to eq(0)
-      # Non-message metrics are unaffected by privacy mode.
+      # A CLIENT node's non-message metrics are unaffected by privacy mode.
       expect(stats["total"]["nodes"]["day"]).to eq(1)
       expect(stats["total"]["telemetry"]["day"]).to eq(1)
     end
@@ -1472,7 +1588,10 @@ RSpec.describe PotatoMesh::App::Queries do
     # its bind params, and the live db handle (so the caller can EXPLAIN it).
     # Only +get_first_row+ is exercised by the +*_activity_counts+ builders, so
     # the recorder implements just that method.
-    def with_recorded_statement(builder)
+    #
+    # @param builder [Symbol] stats builder to run.
+    # @param harness [Object] query host; +private_queries+ for +PRIVATE=1+.
+    def with_recorded_statement(builder, harness: queries)
       with_db do |db|
         statements = []
         recorder = Object.new
@@ -1480,20 +1599,39 @@ RSpec.describe PotatoMesh::App::Queries do
           statements << [sql, params]
           db.get_first_row(sql, params)
         end
-        queries.public_send(builder, recorder, stats_cutoffs)
+        harness.public_send(builder, recorder, stats_cutoffs)
         sql, params = statements.last
         yield sql, params, db
       end
     end
 
+    # Expect the umbrella statement to seek every source's +rx_time+ index.
+    #
+    # @param sql [String] recorded umbrella SQL.
+    # @param params [Array] its bind parameters.
+    # @param db [SQLite3::Database] live handle to EXPLAIN it on.
+    # @return [void]
+    def expect_umbrella_index_seeks(sql, params, db)
+      plan = db.execute("EXPLAIN QUERY PLAN #{sql}", params).map { |row| row["detail"] }
+      # Five sources since the W9 umbrella amendment added waypoints.
+      %w[positions telemetry neighbors traces waypoints].each do |table|
+        expect(plan).to include(a_string_matching(/SEARCH #{table} USING INDEX idx_#{table}_rx_time/)),
+          "expected #{table} to be index-seeked; plan was:\n#{plan.join("\n")}"
+      end
+    end
+
     it "seeks each telemetry-umbrella source through its rx_time index" do
       with_recorded_statement(:telemetry_activity_counts) do |sql, params, db|
-        plan = db.execute("EXPLAIN QUERY PLAN #{sql}", params).map { |row| row["detail"] }
-        # Five sources since the W9 umbrella amendment added waypoints.
-        %w[positions telemetry neighbors traces waypoints].each do |table|
-          expect(plan).to include(a_string_matching(/SEARCH #{table} USING INDEX idx_#{table}_rx_time/)),
-            "expected #{table} to be index-seeked; plan was:\n#{plan.join("\n")}"
-        end
+        expect_umbrella_index_seeks(sql, params, db)
+      end
+    end
+
+    it "keeps every umbrella index seek when private mode adds the CLIENT_HIDDEN filters (SPEC HC3)" do
+      with_recorded_statement(:telemetry_activity_counts, harness: private_queries) do |sql, params, db|
+        # One fragment per column the opt-out filters check, binding nothing.
+        expect(sql.scan("role = 'CLIENT_HIDDEN'").size).to eq(7)
+        expect(sql.count("?")).to eq(params.size)
+        expect_umbrella_index_seeks(sql, params, db)
       end
     end
 
