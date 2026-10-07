@@ -22,6 +22,7 @@ require "time"
 require "base64"
 require "uri"
 require "socket"
+require_relative "support/federation_identity"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
@@ -1804,7 +1805,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     let(:last_update_time) { Time.now.to_i }
     let(:instance_attributes) do
       {
-        id: "mesh-instance-1",
+        id: Digest::SHA256.hexdigest(pubkey),
         domain: domain,
         pubkey: pubkey,
         name: "Example Mesh",
@@ -2469,7 +2470,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       ally_key = OpenSSL::PKey::RSA.new(2048)
       ally_domain = "ally.mesh"
       ally_attributes = {
-        id: "ally-instance-1",
+        id: Digest::SHA256.hexdigest(ally_key.public_key.export),
         domain: ally_domain,
         pubkey: ally_key.public_key.export,
         name: "Ally Mesh",
@@ -2514,6 +2515,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [[ally_payload], URI("https://#{host}#{path}")]
         when [ally_domain, "/api/nodes"]
           [ally_nodes, URI("https://#{host}#{path}")]
+        when [ally_domain, "/.well-known/potato-mesh"]
+          [FederationIdentitySupport.well_known_document(ally_key, ally_domain), URI("https://#{host}#{path}")]
         when [ally_domain, "/api/instances"]
           [[instance_payload], URI("https://#{host}#{path}")]
         else
@@ -2547,7 +2550,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       stale_key = OpenSSL::PKey::RSA.new(2048)
       stale_domain = "stale.mesh"
       stale_attributes = {
-        id: "stale-instance",
+        id: Digest::SHA256.hexdigest(stale_key.public_key.export),
         domain: stale_domain,
         pubkey: stale_key.public_key.export,
         name: "Stale Mesh",
@@ -2631,7 +2634,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       unreachable_key = OpenSSL::PKey::RSA.new(2048)
       unreachable_domain = "unreachable.mesh"
       unreachable_attributes = {
-        id: "unreachable-instance",
+        id: Digest::SHA256.hexdigest(unreachable_key.public_key.export),
         domain: unreachable_domain,
         pubkey: unreachable_key.public_key.export,
         name: "Unreachable Mesh",
@@ -2665,7 +2668,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       offline_domain = "offline.mesh"
       offline_key = OpenSSL::PKey::RSA.new(2048)
       offline_attributes = {
-        id: "offline-instance",
+        id: Digest::SHA256.hexdigest(offline_key.public_key.export),
         domain: offline_domain,
         pubkey: offline_key.public_key.export,
         name: "Offline Mesh",
@@ -2699,7 +2702,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       restricted_domain = "127.0.0.1"
       restricted_key = OpenSSL::PKey::RSA.new(2048)
       restricted_attributes = {
-        id: "restricted-instance",
+        id: Digest::SHA256.hexdigest(restricted_key.public_key.export),
         domain: restricted_domain,
         pubkey: restricted_key.public_key.export,
         name: "Restricted Mesh",
@@ -2753,6 +2756,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
             ],
             URI("https://#{host}#{path}"),
           ]
+        when [offline_domain, "/.well-known/potato-mesh"]
+          # Each relayed domain vouches for its own key (SPEC FS8), so every
+          # entry reaches the check it is meant to fail.
+          [FederationIdentitySupport.well_known_document(offline_key, offline_domain), URI("https://#{host}#{path}")]
+        when [stale_domain, "/.well-known/potato-mesh"]
+          [FederationIdentitySupport.well_known_document(stale_key, stale_domain), URI("https://#{host}#{path}")]
+        when [restricted_domain, "/.well-known/potato-mesh"]
+          [FederationIdentitySupport.well_known_document(restricted_key, restricted_domain), URI("https://#{host}#{path}")]
+        when [unreachable_domain, "/.well-known/potato-mesh"]
+          [FederationIdentitySupport.well_known_document(unreachable_key, unreachable_domain), URI("https://#{host}#{path}")]
         when [offline_domain, "/api/nodes"]
           [nil, ["timeout"]]
         when [stale_domain, "/api/nodes"]

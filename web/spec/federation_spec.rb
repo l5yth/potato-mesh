@@ -458,6 +458,8 @@ RSpec.describe PotatoMesh::App::Federation do
         response_map.fetch([host, path]) { [nil, []] }
       end
       allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      # The relayed-record identity rules have their own spec (SPEC FS8, FS9).
+      allow(federation_helpers).to receive(:confirm_relayed_instance_key).and_return([true, nil])
       allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
       payload_entries.each_with_index do |entry, index|
         allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(entry).and_return([attributes_list[index], "signature-#{index}", nil])
