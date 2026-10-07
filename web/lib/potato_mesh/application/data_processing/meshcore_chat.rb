@@ -52,6 +52,26 @@ module PotatoMesh
         name.empty? ? nil : name
       end
 
+      # Whether a stored message row's sender was attributed by name only, so
+      # the API serves it with +sender_verified: false+ (SPEC SV1/SV2).
+      #
+      # A MeshCore channel message (+to_id+ +"^all"+) carries no sender key,
+      # only the typed +"Name:"+ prefix of its text.  Its +from_id+ is
+      # therefore always a name match: the ingestor's roster lookup or the
+      # name-derived id, which {#resolve_meshcore_channel_sender} and the
+      # placeholder merges may re-map by name again.  Every other sender comes
+      # from an id the packet carries: a MeshCore direct message names its
+      # sender by key (and the ingestor drops it before posting), and
+      # Meshtastic and Reticulum senders are set by the sending node.  A row
+      # without a +from_id+ attributes no sender, so it is not flagged.
+      #
+      # @param row [Hash] message row with the stored +"protocol"+, +"to_id"+
+      #   and +"from_id"+ columns.
+      # @return [Boolean] true for a MeshCore channel row with a sender.
+      def meshcore_sender_name_attributed?(row)
+        row["protocol"] == "meshcore" && row["to_id"].to_s == "^all" && !string_or_nil(row["from_id"]).nil?
+      end
+
       # Rank a candidate MeshCore sender id by the strength of its identity
       # evidence (SPEC MR3).
       #

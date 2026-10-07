@@ -316,7 +316,9 @@ async fn main() -> Result<()> {
 /// Whether `poll_once` can bridge this message at all: it needs a resolved
 /// sender (`node_id`, to puppet the Matrix user) and non-blank text (the
 /// Matrix body). Compacted rows lacking either — emoji reactions, unresolved
-/// senders (ACCEPTANCE MB-A1) — are skipped with the watermark advanced.
+/// senders (ACCEPTANCE MB-A1) — are skipped with the watermark advanced. A
+/// row with `sender_verified: false` always has a `node_id` (SPEC SV2), even
+/// though it is posted as the appservice user ([`posts_as_puppet`]).
 fn is_forwardable(msg: &PotatoMessage) -> bool {
     let has_text = msg
         .text
@@ -326,6 +328,19 @@ fn is_forwardable(msg: &PotatoMessage) -> bool {
     has_text && msg.node_id.is_some()
 }
 
+/// Whether a message goes out as the puppet of its `node_id`. A row the web
+/// app serves with `sender_verified: false` names its sender only in its text
+/// (a MeshCore channel message, SPEC SV1), which no key backs: it is posted as
+/// the appservice user instead, its body unchanged, and no puppet speaks for
+/// the named node (SPEC SV4). Every other row keeps its puppet.
+fn posts_as_puppet(msg: &PotatoMessage) -> bool {
+    msg.sender_verified != Some(false)
+}
+
+/// Post one message to Matrix. A row [`posts_as_puppet`] accepts goes out as
+/// the puppet of its `node_id`; a row the web app serves with
+/// `sender_verified: false` goes out as the appservice user, its body
+/// unchanged (SPEC SV4).
 async fn handle_message(
     potato: &PotatoClient,
     matrix: &MatrixAppserviceClient,
@@ -340,15 +355,22 @@ async fn handle_message(
     };
     let text = msg.text.as_deref().unwrap_or("");
 
-    let node = potato.get_node(node_id).await?;
-    let localpart = MatrixAppserviceClient::localpart_from_node_id(node_id);
-    let user_id = matrix.user_id(&localpart);
+    // The puppet that posts the message, or `None` for the appservice user.
+    let puppet = if posts_as_puppet(msg) {
+        let node = potato.get_node(node_id).await?;
+        let localpart = MatrixAppserviceClient::localpart_from_node_id(node_id);
+        let user_id = matrix.user_id(&localpart);
 
-    // Ensure puppet exists & has display name
-    matrix.ensure_user_registered(&localpart).await?;
-    matrix.ensure_user_joined_room(&user_id).await?;
-    let display_name = display_name_for_node(&node);
-    matrix.set_display_name(&user_id, &display_name).await?;
+        // Ensure puppet exists & has display name
+        matrix.ensure_user_registered(&localpart).await?;
+        matrix.ensure_user_joined_room(&user_id).await?;
+        let display_name = display_name_for_node(&node);
+        matrix.set_display_name(&user_id, &display_name).await?;
+        Some(user_id)
+    } else {
+        matrix.ensure_appservice_joined_room().await?;
+        None
+    };
 
     // Format the bridged message. A compacted-away `lora_freq` renders as the
     // existing `0` "unknown" sentinel — collapse that to `None` to match the
@@ -373,9 +395,18 @@ async fn handle_message(
     );
     let (body, formatted_body) = format_message_bodies(&prefix, text);
 
-    matrix
-        .send_formatted_message_as(&user_id, &body, &formatted_body)
-        .await?;
+    match puppet.as_deref() {
+        Some(user_id) => {
+            matrix
+                .send_formatted_message_as(user_id, &body, &formatted_body)
+                .await?
+        }
+        None => {
+            matrix
+                .send_formatted_message_as_appservice(&body, &formatted_body)
+                .await?
+        }
+    }
 
     info!("Bridged message: {:?}", msg);
     state.update_with(msg);
@@ -461,6 +492,7 @@ mod tests {
             reply_id: None,
             node_id: Some("!abcd1234".to_string()),
             protocol: Some("meshtastic".to_string()),
+            sender_verified: None,
         }
     }
 
@@ -500,6 +532,21 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn posts_as_puppet_unless_the_sender_is_not_verified() {
+        // No flag (every Meshtastic row, older web apps): the puppet posts.
+        assert!(posts_as_puppet(&sample_msg(1)));
+        assert!(posts_as_puppet(&PotatoMessage {
+            sender_verified: Some(true),
+            ..sample_msg(1)
+        }));
+        // Named only in its text (SPEC SV2): the appservice user posts.
+        assert!(!posts_as_puppet(&PotatoMessage {
+            sender_verified: Some(false),
+            ..sample_msg(1)
+        }));
+    }
+
     /// The `poll_once` gate makes a sender-less message unreachable from the
     /// poll loop, but `handle_message` stays total: called directly with no
     /// `node_id` it returns `Ok` without touching any endpoint (no mock
@@ -535,6 +582,114 @@ mod tests {
         assert!(result.is_ok());
         // The message was not marked processed — the caller decides that.
         assert_eq!(state.last_message_id, None);
+    }
+
+    /// A line the web app serves with `sender_verified: false` names its
+    /// sender only in its text (SPEC SV1/SV2). `handle_message` posts it as
+    /// the appservice user, after joining that user to the room, with the body
+    /// unchanged; it neither looks the node up nor registers, joins or names a
+    /// puppet (SPEC SV4).
+    #[tokio::test]
+    async fn handle_message_posts_unverified_sender_as_appservice_user() {
+        let mut server = mockito::Server::new_async().await;
+        let join_path = r"/_matrix/client/v3/rooms/.+/join";
+
+        let mock_get_node = server
+            .mock("GET", mockito::Matcher::Regex(r"/api/nodes/.+".to_string()))
+            .expect(0)
+            .create();
+        let mock_register = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query(mockito::Matcher::Any)
+            .expect(0)
+            .create();
+        let mock_display = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/profile/.+/displayname".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .expect(0)
+            .create();
+        let mock_join_puppet = server
+            .mock("POST", mockito::Matcher::Regex(join_path.to_string()))
+            .match_query(mockito::Matcher::Regex("user_id=".to_string()))
+            .expect(0)
+            .create();
+        let mock_join = server
+            .mock("POST", mockito::Matcher::Regex(join_path.to_string()))
+            .match_query(mockito::Matcher::Missing)
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(200)
+            .expect(1)
+            .create();
+        let mock_send = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(
+                    r"/_matrix/client/v3/rooms/.+/send/m.room.message/.+".to_string(),
+                ),
+            )
+            .match_query(mockito::Matcher::Missing)
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "msgtype": "m.text",
+                "body": "`[MC][869][NA][Public]` Alice: Ping",
+                "format": "org.matrix.custom.html",
+                "formatted_body": "<code>[MC][869][NA][Public]</code> Alice: Ping",
+            })))
+            .with_status(200)
+            .expect(1)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potato_client = PotatoClient::new(
+            http_client.clone(),
+            PotatomeshConfig {
+                base_url: server.url(),
+                poll_interval_secs: 1,
+            },
+        );
+        let matrix_client = MatrixAppserviceClient::new(
+            http_client,
+            MatrixConfig {
+                homeserver: server.url(),
+                as_token: "AS_TOKEN".to_string(),
+                hs_token: "HS_TOKEN".to_string(),
+                server_name: "example.org".to_string(),
+                room_id: "!roomid:example.org".to_string(),
+            },
+        );
+        let mut state = BridgeState::default();
+        // The row exactly as `GET /api/messages` serves it.
+        let msg: PotatoMessage = serde_json::from_value(serde_json::json!({
+            "id": 77,
+            "rx_time": 1785090651,
+            "rx_iso": "2026-07-26T18:30:51Z",
+            "from_id": "!a11ce001",
+            "to_id": "^all",
+            "channel": 0,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Alice: Ping",
+            "lora_freq": 869,
+            "modem_preset": "SF8/BW62/CR5",
+            "channel_name": "Public",
+            "protocol": "meshcore",
+            "node_id": "!a11ce001",
+            "sender_verified": false,
+        }))
+        .expect("flagged row parses");
+
+        let result = handle_message(&potato_client, &matrix_client, &mut state, &msg).await;
+
+        assert!(result.is_ok(), "{result:?}");
+        mock_get_node.assert();
+        mock_register.assert();
+        mock_display.assert();
+        mock_join_puppet.assert();
+        mock_join.assert();
+        mock_send.assert();
+        assert_eq!(state.last_message_id, Some(77));
     }
 
     #[test]
@@ -1074,6 +1229,9 @@ mod tests {
 
         let mut server = mockito::Server::new_async().await;
 
+        // The second row is the production row of the outage, as the web app
+        // serves it since SPEC SV2: a MeshCore channel line names its sender
+        // only in its text, so it carries `sender_verified: false`.
         let mock_msgs = server
             .mock("GET", "/api/messages")
             .match_query(mockito::Matcher::Any)
@@ -1082,7 +1240,7 @@ mod tests {
             .with_body(
                 r#"[
                     {"id":1,"rx_time":10,"rx_iso":"2026-07-26T00:00:00Z","from_id":"!aaaaaaaa","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!aaaaaaaa"},
-                    {"id":2,"rx_time":20,"rx_iso":"2026-07-26T18:30:51Z","from_id":"!88e00b48","to_id":"^all","channel":24,"portnum":"TEXT_MESSAGE_APP","text":"lilygo: moin moin","lora_freq":869,"modem_preset":"SF8/BW62/CR5","snr":-5.25,"ingestor":"!930d4a21","protocol":"meshcore","node_id":"!88e00b48"}
+                    {"id":2,"rx_time":20,"rx_iso":"2026-07-26T18:30:51Z","from_id":"!88e00b48","to_id":"^all","channel":24,"portnum":"TEXT_MESSAGE_APP","text":"lilygo: moin moin","lora_freq":869,"modem_preset":"SF8/BW62/CR5","snr":-5.25,"ingestor":"!930d4a21","protocol":"meshcore","node_id":"!88e00b48","sender_verified":false}
                 ]"#,
             )
             .create();
@@ -1094,56 +1252,74 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(r#"{"node_id":"!aaaaaaaa","long_name":"Node A","short_name":"NA"}"#)
             .create();
+        // The flagged row gets no puppet (SPEC SV4): no node lookup, and only
+        // the first row's puppet is registered, joined and named.
         let mock_node_b = server
             .mock("GET", "/api/nodes/%2188e00b48")
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"node_id":"!88e00b48","long_name":"lilygo","short_name":"LG"}"#)
+            .expect(0)
             .create();
-        let _mock_register = server
+        let puppet_a = mockito::Matcher::UrlEncoded(
+            "user_id".to_string(),
+            "@potato_aaaaaaaa:example.org".to_string(),
+        );
+        let mock_register = server
             .mock("POST", "/_matrix/client/v3/register")
             .match_query(mockito::Matcher::Any)
             .with_status(200)
-            .expect(2)
+            .expect(1)
             .create();
-        let _mock_join = server
+        let mock_join_puppet = server
             .mock(
                 "POST",
                 mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
             )
-            .match_query(mockito::Matcher::Any)
+            .match_query(puppet_a.clone())
             .with_status(200)
-            .expect(2)
+            .expect(1)
             .create();
-        let _mock_display = server
+        let mock_join_appservice = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
+            )
+            .match_query(mockito::Matcher::Missing)
+            .with_status(200)
+            .expect(1)
+            .create();
+        let mock_display = server
             .mock(
                 "PUT",
                 mockito::Matcher::Regex(r"/_matrix/client/v3/profile/.+/displayname".to_string()),
             )
             .match_query(mockito::Matcher::Any)
             .with_status(200)
-            .expect(2)
+            .expect(1)
             .create();
         // The compacted row must render EMPTY channel brackets — the trailing
-        // `[]` — exactly like the web frontend renders unknown metadata.
+        // `[]` — exactly like the web frontend renders unknown metadata. Being
+        // flagged, it goes out as the appservice user (no `user_id`), its body
+        // unchanged.
         let mock_send_compacted = server
             .mock(
                 "PUT",
                 mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
             )
-            .match_query(mockito::Matcher::Any)
+            .match_query(mockito::Matcher::Missing)
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "body": "`[MC][869][NA][]` lilygo: moin moin",
             })))
             .with_status(200)
             .create();
-        let _mock_send_rest = server
+        let mock_send_puppet = server
             .mock(
                 "PUT",
                 mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
             )
-            .match_query(mockito::Matcher::Any)
+            .match_query(puppet_a)
             .with_status(200)
             .create();
 
@@ -1169,7 +1345,12 @@ mod tests {
         mock_msgs.assert();
         mock_node_a.assert();
         mock_node_b.assert();
+        mock_register.assert();
+        mock_join_puppet.assert();
+        mock_join_appservice.assert();
+        mock_display.assert();
         mock_send_compacted.assert();
+        mock_send_puppet.assert();
 
         // Both messages forwarded: the watermark reached the compacted row.
         assert_eq!(
@@ -1703,6 +1884,7 @@ mod tests {
             reply_id: None,
             node_id: Some("!abcd1234".to_string()),
             protocol: None,
+            sender_verified: None,
         };
         assert_handle_message_emits_body(msg, "[MT][0][??][]", "Hi").await;
     }

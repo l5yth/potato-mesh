@@ -12,7 +12,7 @@ For each PotatoMesh node, the bridge creates (or uses) a Matrix puppet user:
 - Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
 - Matrix display name: the node’s `long_name` from the PotatoMesh API
 
-Messages from PotatoMesh are periodically fetched and forwarded to a single Matrix room as those puppet users.
+Messages from PotatoMesh are periodically fetched and forwarded to a single Matrix room as those puppet users. MeshCore channel messages, which the API marks `sender_verified: false`, are posted as the appservice user (`sender_localpart`) instead, with the same body.
 
 ---
 
@@ -240,6 +240,8 @@ listener.
 
 In Synapse’s `homeserver.yaml`, add the registration file under `app_service_config_files`, restart, and invite a puppet user to your target room (or use room ID directly).
 
+In an invite-only room, also invite the appservice user (`@potatomesh-bridge:example.org` for the `sender_localpart` above). It posts the MeshCore channel messages.
+
 The bridge validates inbound callbacks by comparing the `access_token` query
 param to `hs_token` - keep them in sync.
 
@@ -323,6 +325,8 @@ The bridge will:
    * Set puppet display name to `long_name`.
    * Send a formatted text message into `room_id` as that puppet.
    * Update and persist `bridge_state.json`.
+
+   For a message marked `sender_verified: false`, the bridge instead joins `room_id` as the appservice user and sends the message as that user, with no node lookup and no puppet.
 
 Delete `bridge_state.json` if you want it to replay all currently available messages.
 

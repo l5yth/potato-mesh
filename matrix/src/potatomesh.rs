@@ -81,6 +81,12 @@ pub struct PotatoMessage {
     /// "meshcore". Optional because historical payloads predate the field.
     #[serde(default)]
     pub protocol: Option<String>,
+    /// `Some(false)` when the web app attributed the sender by the `Name:`
+    /// prefix of `text` rather than by an id the packet carries: a MeshCore
+    /// channel message (SPEC SV1/SV2). Absent on every other row, and from
+    /// web apps that predate the field.
+    #[serde(default)]
+    pub sender_verified: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -305,6 +311,42 @@ mod tests {
         let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].protocol.as_deref(), Some("meshcore"));
+    }
+
+    /// The web app flags a MeshCore channel line whose sender it matched by
+    /// name with `sender_verified: false` and leaves the key off every other
+    /// row (SPEC SV2); both shapes parse in one batch.
+    #[test]
+    fn deserialize_sender_verified_flag() {
+        let json = r#"
+        [
+          {
+            "id": 1,
+            "rx_time": 1785090651,
+            "rx_iso": "2026-07-26T18:30:51Z",
+            "from_id": "!a11ce001",
+            "to_id": "^all",
+            "text": "Alice: Ping",
+            "protocol": "meshcore",
+            "node_id": "!a11ce001",
+            "sender_verified": false
+          },
+          {
+            "id": 2,
+            "rx_time": 1785090652,
+            "rx_iso": "2026-07-26T18:30:52Z",
+            "from_id": "!0badc0de",
+            "to_id": "^all",
+            "text": "Ping",
+            "protocol": "meshtastic",
+            "node_id": "!0badc0de"
+          }
+        ]
+        "#;
+
+        let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("flagged batch parses");
+        assert_eq!(msgs[0].sender_verified, Some(false));
+        assert_eq!(msgs[1].sender_verified, None);
     }
 
     /// Regression (live outage 2026-07-26, ACCEPTANCE MB-A1): the web API
