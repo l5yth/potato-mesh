@@ -39,6 +39,7 @@ from .nodeinfo import store_nodeinfo_packet
 from .position import store_position_packet
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
 from .receive_time import replace_skewed_rx_time
+from .sender import _packet_sender
 from .telemetry import store_router_heartbeat_packet, store_telemetry_packet
 from .position import store_traceroute_packet
 from .waypoint import store_waypoint_packet
@@ -576,7 +577,7 @@ def store_packet_dict(packet: Mapping) -> None:
         _ignored_mod._record_ignored_packet(packet, reason="missing-packet-id")
         return
     rx_time = int(_first(packet, "rxTime", "rx_time", default=time.time()))
-    from_id = _first(packet, "fromId", "from_id", "from", default=None)
+    from_id = _packet_sender(packet)
     to_id = _first(packet, "toId", "to_id", "to", default=None)
 
     if (from_id is None or str(from_id) == "") and config.DEBUG:

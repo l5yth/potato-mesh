@@ -97,11 +97,16 @@ module PotatoMesh
         when "NODEINFO_APP"
           node_payload = normalize_decrypted_nodeinfo_payload(decoded["payload"])
           return false unless valid_decrypted_nodeinfo_payload?(node_payload)
+          # A NodeInfo describes the node that sent it (SPEC NI1): an id it
+          # claims, its own or its user's, other than the sender's canonical
+          # id drops it, and the sender's own id and number file it.
+          claims = [node_payload["id"], node_payload["user"]["id"]]
+          return false if decrypted_payload_not_from_sender?(claims, from_id, "NODEINFO_APP", packet_id)
 
-          node_id = string_or_nil(node_payload["id"]) || from_id
-          node_num = coerce_integer(node_payload["num"]) ||
-                     coerce_integer(message["from_num"]) ||
-                     resolve_node_num(from_id, message)
+          node_id = from_id || string_or_nil(node_payload["id"])
+          node_num = coerce_integer(message["from_num"]) ||
+                     resolve_node_num(from_id, message) ||
+                     coerce_integer(node_payload["num"])
           node_id ||= format("!%08x", node_num & 0xFFFFFFFF) if node_num
           return false unless node_id
 
@@ -133,6 +138,9 @@ module PotatoMesh
           true
         when "NEIGHBORINFO_APP"
           neighbor_payload = decoded["payload"]
+          # A NeighborInfo describes the node that sent it (SPEC NI1).
+          return false if decrypted_payload_not_from_sender?([neighbor_payload["node_id"]], from_id, "NEIGHBORINFO_APP", packet_id)
+
           neighbors = neighbor_payload["neighbors"]
           neighbors = [] unless neighbors.is_a?(Array)
           normalized_neighbors = neighbors.map do |neighbor|
@@ -146,7 +154,7 @@ module PotatoMesh
           return false if normalized_neighbors.empty?
 
           payload = common_payload.merge(
-            "node_id" => neighbor_payload["node_id"] || from_id,
+            "node_id" => from_id || neighbor_payload["node_id"],
             "neighbors" => normalized_neighbors,
             "node_broadcast_interval_secs" => neighbor_payload["node_broadcast_interval_secs"],
             "last_sent_by_id" => neighbor_payload["last_sent_by_id"],
@@ -181,6 +189,42 @@ module PotatoMesh
         else
           false
         end
+      end
+
+      # Decide whether a decrypted payload claims an id other than its
+      # message's sender, and log the drop (SPEC NI1).
+      #
+      # A NodeInfo or NeighborInfo describes the node that sent it, as the
+      # ingestor's handlers enforce for the packets it decodes itself; the
+      # web app holds the same line for the payloads it decrypts.  Every id
+      # the payload claims must be the sender's canonical id or number
+      # ({#claims_node?}); an absent one, nil or empty, claims nothing.  With
+      # no known sender there is nothing to check.
+      #
+      # @param claims [Array<Object>] the ids or numbers the payload claims,
+      #   nil where it names none.
+      # @param from_id [String, nil] sender of the message.
+      # @param type [String] decoded payload type, for the log line.
+      # @param packet_id [Integer] message packet identifier, for the log line.
+      # @return [Boolean] true when the payload must be dropped.
+      def decrypted_payload_not_from_sender?(claims, from_id, type, packet_id)
+        sender_id = canonical_node_parts(from_id)&.first
+        return false unless sender_id
+
+        foreign = claims.find { |claim| !claim.nil? && claim != "" && !claims_node?(claim, sender_id) }
+        return false if foreign.nil?
+
+        warn_log(
+          "Dropped decrypted payload naming another node",
+          context: "data_processing.store_decrypted_payload",
+          message_id: packet_id,
+          type: type,
+          from_id: sender_id,
+          # A node number reads best as the id it names (a negative one names
+          # none); a string as sent.
+          node_id: foreign.is_a?(Integer) ? canonical_node_parts(foreign)&.first || foreign : foreign,
+        )
+        true
       end
 
       # Validate decoded NodeInfo payloads before upserting node records.

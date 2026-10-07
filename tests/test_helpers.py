@@ -14,6 +14,7 @@
 
 """Additional tests that exercise defensive helpers and interfaces."""
 
+import collections
 import importlib
 import sys
 import types
@@ -160,6 +161,83 @@ def test_safe_nodeinfo_wrapper_handles_missing_id():
     assert called["ran"] is True
     assert result is None
     assert getattr(wrapper, "_potato_mesh_safe_wrapper")
+
+
+def test_nodeinfo_dispatch_guard_skips_a_profile_naming_another_node():
+    """The guarded ``NODEINFO_APP`` entry lets the library store only the
+    sender's own profile, never one naming another node or no node, and
+    guarding twice wraps it once (SPEC NI1)."""
+
+    from data.mesh_ingestor.interfaces.patches import nodeinfo as nodeinfo_patch
+
+    stored = []
+
+    def library_callback(_iface, packet):
+        stored.append(packet)
+        return "stored"
+
+    known_protocol = collections.namedtuple(
+        "KnownProtocol", "name protobufFactory onReceive"
+    )
+    module = SimpleNamespace(
+        protocols={4: known_protocol("user", None, library_callback)},
+        portnums_pb2=SimpleNamespace(PortNum=SimpleNamespace(NODEINFO_APP=4)),
+    )
+    nodeinfo_patch._patch_meshtastic_nodeinfo_dispatch(module)
+    guarded = module.protocols[4]
+    nodeinfo_patch._patch_meshtastic_nodeinfo_dispatch(module)
+
+    assert module.protocols[4] is guarded
+    assert guarded.name == "user"
+    foreign = {"from": 0xA1A1A1A1, "decoded": {"user": {"id": "!b2b2b2b2"}}}
+    own = {"from": 0xA1A1A1A1, "decoded": {"user": {"id": "!a1a1a1a1"}}}
+    no_id = {"from": 0xA1A1A1A1, "decoded": {"user": {"longName": "No Id"}}}
+    no_user = {"from": 0xA1A1A1A1, "decoded": {}}
+    assert guarded.onReceive(None, foreign) is None
+    assert guarded.onReceive(None, own) == "stored"
+    # The library's callback raises KeyError('id') on a user without an id.
+    assert guarded.onReceive(None, no_id) is None
+    assert guarded.onReceive(None, no_user) is None
+    assert stored == [own]
+
+
+def test_library_files_a_node_without_nodeinfo_under_a_stand_in_user():
+    """The pinned library gives a nodeDB entry without a user a stand-in user
+    with ``hwModel: "UNSET"``, which the node snapshot posts as it is; the web
+    app keeps a placeholder role against it (SPEC NI5)."""
+
+    from meshtastic import mesh_interface
+    from meshtastic.protobuf import mesh_pb2
+
+    iface = mesh_interface.MeshInterface(noProto=True)
+    iface.nodes = {}
+    iface.nodesByNum = {}
+    info = mesh_pb2.NodeInfo(num=0x0B6F0004)
+    iface._handleFromRadio(mesh_pb2.FromRadio(node_info=info).SerializeToString())
+
+    assert iface.nodes["!0b6f0004"]["user"] == {
+        "id": "!0b6f0004",
+        "longName": "Meshtastic 0004",
+        "shortName": "0004",
+        "hwModel": "UNSET",
+    }
+
+
+def test_nodeinfo_dispatch_guard_needs_a_replaceable_entry():
+    """A package without the dispatch table or its entry is left as it is."""
+
+    from data.mesh_ingestor.interfaces.patches import nodeinfo as nodeinfo_patch
+
+    nodeinfo_patch._patch_meshtastic_nodeinfo_dispatch(SimpleNamespace())
+    port_enum = SimpleNamespace(PortNum=SimpleNamespace(NODEINFO_APP=4))
+    empty = SimpleNamespace(protocols={}, portnums_pb2=port_enum)
+    nodeinfo_patch._patch_meshtastic_nodeinfo_dispatch(empty)
+    plain_entry = SimpleNamespace(onReceive=lambda _iface, _packet: None)
+    plain = SimpleNamespace(protocols={4: plain_entry}, portnums_pb2=port_enum)
+    nodeinfo_patch._patch_meshtastic_nodeinfo_dispatch(plain)
+
+    assert empty.protocols == {}
+    assert plain.protocols[4] is plain_entry
 
 
 def test_patch_nodeinfo_handler_class(monkeypatch):

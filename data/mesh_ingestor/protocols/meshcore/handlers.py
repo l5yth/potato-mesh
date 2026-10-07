@@ -85,7 +85,7 @@ def _process_self_info(
         lon = payload.get("adv_lon")
         if lat is not None and lon is not None and (lat or lon):
             _store_meshcore_position(
-                node_id, lat, lon, int(time.time()), handlers.host_node_id()
+                node_id, lat, lon, int(time.time()), handlers.host_node_id(), pub_key
             )
 
     config._debug_log(
@@ -136,6 +136,7 @@ def _process_contacts(
                 lon,
                 last_advert,
                 handlers.host_node_id(),
+                pub_key,
                 rx_time=last_advert,
             )
     # Companion-link roster fetch, not over-air frames: clock only (Model A).
@@ -171,6 +172,7 @@ def _process_contact_update(
             lon,
             last_advert,
             handlers.host_node_id(),
+            pub_key,
             rx_time=last_advert,
         )
     # Contact update follows an advert already counted at RX_LOG_DATA: clock
@@ -405,6 +407,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 # advert collapses to a single position row (SPEC MR5).
                 _rx_advert_position_time(payload),
                 _handlers.host_node_id(),
+                pub_key,
             )
         config._debug_log(
             "MeshCore RX-log advert",

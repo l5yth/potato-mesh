@@ -20,6 +20,7 @@ import time
 from collections.abc import Mapping
 
 from .. import config, queue
+from ..node_identity import claims_node
 from ..serialization import (
     _canonical_node_id,
     _coerce_int,
@@ -37,6 +38,7 @@ from ..serialization import (
 )
 from . import _state
 from .radio import _apply_radio_metadata_to_nodes
+from .sender import _packet_sender
 
 
 def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
@@ -47,6 +49,18 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     snapshots.  When a protobuf payload is present it is decoded first; any
     fields missing from the protobuf are filled in from the ``decoded`` dict
     so both firmware variants are handled.
+
+    A NodeInfo describes the node that sent it (SPEC NI1).  It is filed
+    under the packet's sender, the numeric header ``from``
+    (:func:`~data.mesh_ingestor.handlers.sender._packet_sender`), only when
+    every ``user.id`` it carries is the sender's canonical id
+    (:func:`~data.mesh_ingestor.node_identity.claims_node`).  One carrying any
+    other ``user.id``, another node's, another spelling of the sender's or one
+    that names no node, is dropped with a warning that names both, so no
+    packet can post a profile for a node it did not come from.  Without a
+    ``user.id``, or with an empty one, the profile is filed under the sender;
+    without a sender, under its ``user.id``.  A ``num`` other than the number of the node the record
+    is filed under is ignored, and the record posts that node's own number.
 
     Parameters:
         packet: Raw packet metadata describing the update.
@@ -66,14 +80,23 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     if node_info:
         node_info_fields = {field_desc.name for field_desc, _ in node_info.ListFields()}
 
-    node_id = None
-    if isinstance(user_dict, Mapping):
-        node_id = _canonical_node_id(user_dict.get("id"))
-
-    if node_id is None:
-        node_id = _canonical_node_id(
-            _first(packet, "fromId", "from_id", "from", default=None)
-        )
+    sender_id = _canonical_node_id(_packet_sender(packet))
+    if sender_id is None:
+        node_id = None
+        if isinstance(user_dict, Mapping):
+            node_id = _canonical_node_id(user_dict.get("id"))
+    else:
+        for claimed in _claimed_user_ids(node_info, node_info_fields, decoded_user):
+            if not claims_node(claimed, sender_id):
+                config._debug_log(
+                    "Dropped NodeInfo naming another node",
+                    context="handlers.store_nodeinfo",
+                    severity="warn",
+                    from_id=sender_id,
+                    user_id=claimed,
+                )
+                return
+        node_id = sender_id
 
     if node_id is None:
         return
@@ -115,6 +138,11 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
                     node_num = int(str(decoded_num).strip(), 0)
                 except Exception:
                     node_num = None
+    # The record's number is its own node's (SPEC NI1).  A payload parsed as a
+    # NodeInfo can carry any ``num``, and one naming another node would give
+    # the web app two rows with that number.
+    if node_num is not None and not claims_node(node_num, node_id):
+        node_num = None
     if node_num is None:
         node_num = _node_num_from_id(node_id)
     if node_num is not None:
@@ -263,6 +291,33 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
             short_name=short,
             long_name=long_name,
         )
+
+
+def _claimed_user_ids(node_info, node_info_fields, decoded_user) -> list:
+    """Return each ``user.id`` a NodeInfo packet carries, as it was sent.
+
+    The protobuf payload and the meshtastic library's decoded ``user`` each
+    carry one.  :func:`~data.mesh_ingestor.serialization._nodeinfo_user_dict`
+    rewrites a parseable id canonically when it merges them, so the sender
+    check (SPEC NI1) reads both before that.
+
+    Parameters:
+        node_info: Decoded ``NodeInfo`` message, or ``None``.
+        node_info_fields: Names of the fields ``node_info`` sets.
+        decoded_user: The packet's decoded ``user``: a mapping, a protobuf
+            ``User`` or ``None``.
+
+    Returns:
+        The ids that are present, in that order; empty when neither carries
+        one.
+    """
+
+    claimed = [node_info.user.id] if "user" in node_info_fields else []
+    if isinstance(decoded_user, Mapping):
+        claimed.append(decoded_user.get("id"))
+    else:
+        claimed.append(getattr(decoded_user, "id", None))
+    return [value for value in claimed if value not in (None, "")]
 
 
 __all__ = ["store_nodeinfo_packet"]

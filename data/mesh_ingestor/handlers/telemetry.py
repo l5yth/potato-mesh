@@ -32,6 +32,7 @@ from ..serialization import (
 from . import _state
 from .position import base64_payload
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
+from .sender import _packet_sender
 
 _VALID_TELEMETRY_TYPES: frozenset[str] = frozenset(
     {
@@ -260,7 +261,7 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     if pkt_id is None:
         return
 
-    raw_from = _first(packet, "fromId", "from_id", "from", default=None)
+    raw_from = _packet_sender(packet)
     node_id = _canonical_node_id(raw_from)
     node_num = _coerce_int(_first(decoded, "num", "node_num", default=None))
     if node_num is None:
@@ -753,9 +754,7 @@ def store_router_heartbeat_packet(packet: Mapping) -> None:
         ``None``. A minimal node upsert is enqueued at low priority.
     """
 
-    node_id = _canonical_node_id(
-        _first(packet, "fromId", "from_id", "from", default=None)
-    )
+    node_id = _canonical_node_id(_packet_sender(packet))
     if node_id is None:
         return
 

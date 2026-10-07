@@ -1116,7 +1116,8 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     from meshtastic.protobuf import config_pb2, mesh_pb2
 
     node_info = mesh_pb2.NodeInfo()
-    node_info.num = 321
+    # The sender's own number: one naming another node is not posted (SPEC NI1).
+    node_info.num = 0xABCD1234
     user = node_info.user
     user.id = "!abcd1234"
     user.short_name = "LoRa"
@@ -1160,7 +1161,7 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     assert priority == mesh._NODE_POST_PRIORITY
     assert "!abcd1234" in payload
     node_entry = payload["!abcd1234"]
-    assert node_entry["num"] == 321
+    assert node_entry["num"] == 0xABCD1234
     assert node_entry["lastHeard"] == 1_700_000_200
     assert node_entry["snr"] == pytest.approx(9.5)
     assert node_entry["hopsAway"] == 2
@@ -2364,7 +2365,9 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert path == "/api/messages"
     assert payload["encrypted"] == "abc123=="
     assert payload["text"] is None
-    assert payload["from_id"] == 2988082812
+    # The sender is the numeric header ``from``, posted as its canonical id
+    # (SPEC NI1): 2988082812 is 0xb21a867c.
+    assert payload["from_id"] == "!b21a867c"
     assert payload["to_id"] == "!receiver"
     assert payload["reply_id"] is None
     assert payload["emoji"] is None

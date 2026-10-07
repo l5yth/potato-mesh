@@ -589,6 +589,7 @@ module PotatoMesh
             source: :message,
             lora_freq: lora_freq,
             modem_preset: modem_preset,
+            protocol: protocol,
           )
 
           ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time, protocol: protocol) if to_id || raw_to_id
@@ -601,6 +602,7 @@ module PotatoMesh
               source: :message,
               lora_freq: lora_freq,
               modem_preset: modem_preset,
+              protocol: protocol,
             )
           end
         end

@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runtime patches that harden Meshtastic's nodeinfo handler against missing ``id`` fields."""
+"""Runtime patches that harden Meshtastic's nodeinfo handler.
+
+They guard against a NodeInfo whose ``user.id`` is not its sender's canonical
+id (SPEC NI1), and against missing ``id`` fields.
+"""
 
 from __future__ import annotations
 
@@ -25,11 +29,21 @@ try:  # pragma: no cover - dependency optional in tests
 except Exception:  # pragma: no cover - dependency optional in tests
     meshtastic = None  # type: ignore[assignment]
 
+from ...node_identity import canonical_node_id, claims_node
 from ..nodeinfo_normalize import _normalise_nodeinfo_packet
+
+_SENDER_GUARD_MARKER = "_potato_mesh_sender_guard"
+"""Attribute set on the guarded NodeInfo callback, so it is wrapped only once."""
 
 
 def _patch_meshtastic_nodeinfo_handler() -> None:
-    """Ensure Meshtastic nodeinfo packets always include an ``id`` field."""
+    """Harden the Meshtastic NodeInfo handling the ingestor relies on.
+
+    Guards the ``NODEINFO_APP`` dispatch entry against a ``user.id`` naming
+    another node (:func:`_patch_meshtastic_nodeinfo_dispatch`), and ensures
+    nodeinfo packets passed to the module-level handler always include an
+    ``id`` field.
+    """
 
     module = sys.modules.get("meshtastic", meshtastic)
     if module is None:  # pragma: no cover - re-import fallback for cold caches
@@ -38,6 +52,8 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
     if module is None:  # pragma: no cover - exercised only without meshtastic
         return
     globals()["meshtastic"] = module
+
+    _patch_meshtastic_nodeinfo_dispatch(module)
 
     original = getattr(module, "_onNodeInfoReceive", None)
     if not callable(original):  # pragma: no cover - upstream API regression guard
@@ -55,6 +71,72 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
         module._onNodeInfoReceive = _build_safe_nodeinfo_callback(original)
 
     _patch_nodeinfo_handler_class(mesh_interface_module, module)
+
+
+def _patch_meshtastic_nodeinfo_dispatch(module) -> None:
+    """Guard the library's ``NODEINFO_APP`` dispatch entry (SPEC NI1).
+
+    ``MeshInterface._handlePacketFromRadio`` hands a received NodeInfo to the
+    ``onReceive`` of ``meshtastic.protocols[NODEINFO_APP]``.  That callback,
+    ``_onNodeInfoReceive``, stores the payload's ``User`` as the profile of
+    the packet's sender in ``nodesByNum`` and files the sender's entry in
+    ``iface.nodes`` under the payload's ``user.id``.  A ``user.id`` naming
+    another node therefore remaps the sender: the library reports its later
+    packets with the other node's ``fromId``, and the node-list snapshot
+    carries the sender's entry under the other node's id.  The table holds its
+    own reference to the callback, so replacing the module attribute
+    ``meshtastic._onNodeInfoReceive`` never reaches live packets (checked
+    against meshtastic 2.7.11); the entry itself is replaced here.  The packet
+    is still published, and the ingestor's NodeInfo handler drops it with a
+    warning.
+
+    Parameters:
+        module: The imported ``meshtastic`` package.
+
+    Returns:
+        ``None``.  Nothing changes when the package has no dispatch table or no
+        ``NODEINFO_APP`` entry, or when the entry is already guarded.
+    """
+
+    protocols = getattr(module, "protocols", None)
+    port_enum = getattr(getattr(module, "portnums_pb2", None), "PortNum", None)
+    port = getattr(port_enum, "NODEINFO_APP", None)
+    entry = protocols.get(port) if isinstance(protocols, dict) else None
+    on_receive = getattr(entry, "onReceive", None)
+    replace = getattr(entry, "_replace", None)
+    if not callable(on_receive) or not callable(replace):
+        return
+    if getattr(on_receive, _SENDER_GUARD_MARKER, False):
+        return
+    protocols[port] = replace(onReceive=_build_nodeinfo_sender_guard(on_receive))
+
+
+def _build_nodeinfo_sender_guard(original):
+    """Return a NodeInfo ``onReceive`` that ignores a ``user.id`` not its sender's.
+
+    Parameters:
+        original: The library's NodeInfo callback, ``(iface, packet)``.
+
+    Returns:
+        A callback with the same signature.  It calls ``original`` only when
+        the packet's ``decoded.user.id`` is the canonical id of its numeric
+        ``from`` (:func:`~data.mesh_ingestor.node_identity.claims_node`), and
+        returns ``None`` otherwise, so the library's node database keeps every
+        node under its own profile; when it calls ``original`` it returns what
+        ``original`` returns.  ``original`` would raise ``KeyError('id')`` on
+        a user without an ``id``, which ends ``_handlePacketFromRadio`` before
+        the packet is published; skipped here, the packet reaches the
+        ingestor, which files it under its sender.
+    """
+
+    def _guarded_on_node_info_receive(iface, packet):
+        user = (packet.get("decoded") or {}).get("user") or {}
+        if not claims_node(user.get("id"), canonical_node_id(packet.get("from"))):
+            return None
+        return original(iface, packet)
+
+    setattr(_guarded_on_node_info_receive, _SENDER_GUARD_MARKER, True)
+    return _guarded_on_node_info_receive
 
 
 def _build_safe_nodeinfo_callback(original):

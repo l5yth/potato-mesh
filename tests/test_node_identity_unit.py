@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from data.mesh_ingestor.node_identity import (  # noqa: E402 - path setup
     canonical_node_id,
+    claims_node,
     node_num_from_id,
 )
 
@@ -72,3 +73,22 @@ def test_node_num_from_id_rejects_none_and_empty():
     assert node_num_from_id(None) is None
     assert node_num_from_id("") is None
     assert node_num_from_id("not-hex") is None
+
+
+def test_claims_node_takes_the_canonical_id_or_the_node_number():
+    """A claim names a node only in its canonical forms (SPEC NI1)."""
+
+    assert claims_node("!a1a1a1a1", "!a1a1a1a1") is True
+    assert claims_node(0xA1A1A1A1, "!a1a1a1a1") is True
+    assert claims_node("!b2b2b2b2", "!a1a1a1a1") is False
+    assert claims_node(0xB2B2B2B2, "!a1a1a1a1") is False
+
+
+def test_claims_node_refuses_other_spellings_and_values():
+    """Another spelling of the id, a non-id or a missing node is no claim."""
+
+    for claimed in ("!A1A1A1A1", "a1a1a1a1", "2711724449", "!Decrypted", None, True):
+        assert claims_node(claimed, "!a1a1a1a1") is False
+    assert claims_node(-1, "!ffffffff") is False
+    assert claims_node(0x1_0000_0000, "!00000000") is False
+    assert claims_node("!a1a1a1a1", None) is False
