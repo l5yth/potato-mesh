@@ -26,6 +26,23 @@ if str(REPO_ROOT) not in sys.path:
 
 import data.mesh_ingestor.config as config
 
+_ADVERT_REPLAY_MODULE = "data.mesh_ingestor.protocols.meshcore.advert_replay"
+"""Module holding the per-process MeshCore advert replay memory (SPEC SG5)."""
+
+
+@pytest.fixture(autouse=True)
+def forget_meshcore_advert_timestamps():
+    """Start every test with an empty MeshCore advert replay memory (SPEC SG5).
+
+    The memory lives for the whole process, so an advert one test hears would
+    otherwise refuse the same advert in a later test.  Nothing is imported: a
+    run that never loaded the MeshCore package has no memory to clear.
+    """
+
+    replay = sys.modules.get(_ADVERT_REPLAY_MODULE)
+    if replay is not None:
+        replay._reset_replay_memory()
+
 
 @pytest.fixture
 def permit_tx(monkeypatch):

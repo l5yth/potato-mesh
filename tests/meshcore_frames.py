@@ -23,6 +23,13 @@ flood-scope helpers are an independent oracle of the firmware rules
 (``TransportKey::calcTransportCode`` and ``RegionMap::getTransportKeysFor``),
 deliberately not shared with the code under test.  Seeded from the #765
 scoping probes.
+
+The advert helpers build ``ADVERT`` payloads the way ``Mesh::createAdvert`` and
+``AdvertDataBuilder::encodeTo`` do, signed with Ed25519 keys derived from fixed
+seeds when a test runs, and parse them with the pinned library's packet parser
+as the reader does for an RX-log push (SPEC SG1).  They are a second
+independent oracle: the signed bytes are rebuilt here, not taken from the code
+under test.
 """
 
 from __future__ import annotations
@@ -30,10 +37,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import struct
 import types
 
 import meshcore
 from Crypto.Cipher import AES
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from meshcore.meshcore_parser import MeshcorePacketParser
 
 CHANNEL_NAME = "#test"
 """Hashtag channel the frames are encrypted for (index 0)."""
@@ -229,6 +240,192 @@ def message_hash(sender_ts: int = SENDER_TS, text: str = TEXT) -> int:
     """
     digest = hashlib.sha256(sender_ts.to_bytes(4, "little") + text.encode("utf-8"))
     return int.from_bytes(digest.digest()[:4], "little")
+
+
+ADV_TYPE_NONE = 0
+"""Firmware ``ADV_TYPE_NONE``: an advert that names no node type."""
+
+ADV_TYPE_CHAT = 1
+"""Firmware ``ADV_TYPE_CHAT``: a companion (chat) node."""
+
+ADV_TYPE_REPEATER = 2
+"""Firmware ``ADV_TYPE_REPEATER``: a repeater."""
+
+ADV_LATLON_MASK = 0x10
+"""Firmware ``ADV_LATLON_MASK``: the app data carries a latitude and longitude."""
+
+ADV_NAME_MASK = 0x80
+"""Firmware ``ADV_NAME_MASK``: the app data carries a node name."""
+
+MAX_ADVERT_DATA_SIZE = 32
+"""Firmware ``MAX_ADVERT_DATA_SIZE``: the most app-data bytes an advert signs."""
+
+
+def advert_key(seed: str) -> Ed25519PrivateKey:
+    """Return a deterministic Ed25519 key for one test advertiser.
+
+    The key is derived when the test runs, with ``SHA256(seed)`` as the
+    RFC 8032 private-key seed, so no private key is stored in a fixture.
+
+    Parameters:
+        seed: Fixed label naming the advertiser.
+
+    Returns:
+        The advertiser's private key.
+    """
+    return Ed25519PrivateKey.from_private_bytes(
+        hashlib.sha256(seed.encode("utf-8")).digest()
+    )
+
+
+def advert_public_key(key: Ed25519PrivateKey) -> bytes:
+    """Return the 32 raw public-key bytes an advert carries for *key*.
+
+    Parameters:
+        key: Advertiser key from :func:`advert_key`.
+
+    Returns:
+        The raw Ed25519 public key.
+    """
+    return key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+
+def advert_node_id(key: Ed25519PrivateKey) -> str:
+    """Return the node id the ingestor posts *key* under.
+
+    Parameters:
+        key: Advertiser key from :func:`advert_key`.
+
+    Returns:
+        ``!`` followed by the public key's first four bytes in lowercase hex.
+    """
+    return "!" + advert_public_key(key)[:4].hex()
+
+
+def advert_app_data(
+    adv_type: int = ADV_TYPE_NONE,
+    *,
+    name: str | None = None,
+    lat_e6: int | None = None,
+    lon_e6: int | None = None,
+) -> bytes:
+    """Encode an advert's app data as ``AdvertDataBuilder::encodeTo`` does.
+
+    Parameters:
+        adv_type: ``ADV_TYPE_*`` value for the low four flag bits.
+        name: Node name, cut to fit the 32-byte app data as the firmware cuts
+            it; ``None`` or empty leaves the name out.
+        lat_e6: Latitude in millionths of a degree; used with *lon_e6*.
+        lon_e6: Longitude in millionths of a degree; used with *lat_e6*.
+
+    Returns:
+        ``flags(1) + [lat(4) + lon(4)] + [name]``, integers little-endian.
+    """
+    flags = adv_type
+    body = b""
+    if lat_e6 is not None and lon_e6 is not None:
+        flags |= ADV_LATLON_MASK
+        body += struct.pack("<ii", lat_e6, lon_e6)
+    if name:
+        flags |= ADV_NAME_MASK
+        body += name.encode("utf-8")[: MAX_ADVERT_DATA_SIZE - 1 - len(body)]
+    return bytes([flags]) + body
+
+
+def advert_signed_message(public_key: bytes, timestamp: int, app_data: bytes) -> bytes:
+    """Return the bytes ``Mesh::createAdvert`` signs for one advert.
+
+    Parameters:
+        public_key: The advertiser's raw public key (:func:`advert_public_key`).
+        timestamp: Sender-side advert time.
+        app_data: Encoded app data from :func:`advert_app_data`.
+
+    Returns:
+        ``pub_key(32) + timestamp(4) + app_data``.
+    """
+    return public_key + struct.pack("<I", timestamp) + app_data
+
+
+def advert_payload_bytes(
+    public_key: bytes, timestamp: int, signature: bytes, app_data: bytes
+) -> bytes:
+    """Lay out an ``ADVERT`` packet payload for any public-key bytes.
+
+    For keys no private key stands behind, such as the small-order encodings;
+    :func:`advert_payload` signs with a test key instead.
+
+    Parameters:
+        public_key: The 32 bytes to send as the advertiser's key.
+        timestamp: Sender-side advert time, sent as a little-endian ``uint32``.
+        signature: The 64 bytes to send as the signature.
+        app_data: Encoded app data from :func:`advert_app_data`.
+
+    Returns:
+        ``pub_key(32) + timestamp(4) + signature(64) + app_data``.
+    """
+    return public_key + struct.pack("<I", timestamp) + signature + app_data
+
+
+def advert_payload(
+    key: Ed25519PrivateKey,
+    timestamp: int,
+    app_data: bytes,
+    *,
+    signature: bytes | None = None,
+) -> bytes:
+    """Build an ``ADVERT`` packet payload as ``Mesh::createAdvert`` does.
+
+    Parameters:
+        key: Advertiser key from :func:`advert_key`.
+        timestamp: Sender-side advert time, sent as a little-endian ``uint32``.
+        app_data: Encoded app data from :func:`advert_app_data`.
+        signature: Bytes to send in the signature's place, to forge or cut
+            one; by default *key* signs :func:`advert_signed_message`.
+
+    Returns:
+        ``pub_key(32) + timestamp(4) + signature(64) + app_data``.
+    """
+    public_key = advert_public_key(key)
+    if signature is None:
+        signature = key.sign(advert_signed_message(public_key, timestamp, app_data))
+    return advert_payload_bytes(public_key, timestamp, signature, app_data)
+
+
+def rx_log_advert(
+    payload: bytes,
+    *,
+    recv_time: int,
+    snr: float | None = None,
+    rssi: int | None = None,
+    hops: int = 0,
+) -> dict:
+    """Return the ``RX_LOG_DATA`` event payload the reader dispatches for an advert.
+
+    Wraps *payload* in a flood packet that travelled *hops* repeaters and
+    parses it with the pinned library's ``MeshcorePacketParser``, as
+    ``MessageReader`` does for a ``LOG_RX_DATA`` push.  The reader's
+    ``raw_hex`` and ``payload`` hex copies are left out: the ingestor reads
+    the parsed fields and ``pkt_payload`` only.
+
+    Parameters:
+        payload: Advert payload from :func:`advert_payload`.
+        recv_time: Receiver-side reception time.
+        snr: Reception SNR in dB, or ``None`` to leave it out.
+        rssi: Reception RSSI in dBm, or ``None`` to leave it out.
+        hops: Repeaters the copy travelled, as one-byte hashes ``01``, ``02``...
+
+    Returns:
+        The parsed RX-log frame; ``pkt_payload`` holds *payload*.
+    """
+    log: dict = {"recv_time": recv_time}
+    if snr is not None:
+        log["snr"] = snr
+    if rssi is not None:
+        log["rssi"] = rssi
+    raw = raw_packet(
+        payload, path=bytes(range(1, hops + 1)), payload_type=PAYLOAD_TYPE_ADVERT
+    )
+    return asyncio.run(MeshcorePacketParser().parsePacketPayload(raw, log))
 
 
 class FakeConnection:
