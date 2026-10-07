@@ -21,6 +21,7 @@
 * Web: live refreshes keep unchanged nodes-table rows, so an open `+` row, focus, a text selection, an overlay opened from a badge and the row under a scrolled page stay put; a moved overlay's close button now works (#881, SPEC DR1)
 * Matrix: the bridge crate declares its crates.io package metadata, and its README screenshot no longer links outside the crate (#879)
 * Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
+* Data: `MESH_UDP_ALLOWED_SOURCES` limits which hosts the UDP transport accepts packets from: comma-separated IPv4 addresses or CIDRs, e.g. your node's IP; unset accepts every host that can reach the multicast group, as before (SPEC UT1-UT4)
 * Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
 * Web: live refreshes keep map overlays, line tooltips and waypoint cards open, and repaint only the table, map or chat whose data changed (#881, SPEC DR2/DR4)
 * Docs: the README documents `MESHTASTIC_PSK_B64` (SPEC PX7)

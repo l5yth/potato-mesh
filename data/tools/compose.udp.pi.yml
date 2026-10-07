@@ -34,6 +34,9 @@ services:
       DROP_VIA_MQTT: ${DROP_VIA_MQTT:-0}
       MESH_UDP_GROUP: ${MESH_UDP_GROUP:-239.0.0.69,224.0.0.69}
       MESH_UDP_PORT: ${MESH_UDP_PORT:-4403}
+      # Your node's IP (or a CIDR) to accept packets from it only; unset
+      # accepts every host that can reach the multicast group.
+      MESH_UDP_ALLOWED_SOURCES: ${MESH_UDP_ALLOWED_SOURCES:-}
       INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
       API_TOKEN: ${API_TOKEN}
       INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}

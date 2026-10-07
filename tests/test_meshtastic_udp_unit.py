@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import base64
 import importlib
+import ipaddress
 import json
 import os
 import select
@@ -322,14 +323,21 @@ class _ScriptedSock:
     """Fake group socket replaying scripted ``recvfrom`` results.
 
     Each positional entry is the bytes of one datagram to return or an
-    exception instance to raise, consumed in order. ``close()`` records the
-    call and raises *close_error* when one is given.
+    exception instance to raise, consumed in order; every datagram comes from
+    *source*, port 4403. ``close()`` records the call and raises *close_error*
+    when one is given.
     """
 
-    def __init__(self, *script, close_error: BaseException | None = None):
-        """Queue *script* for ``recvfrom`` and remember *close_error*."""
+    def __init__(
+        self,
+        *script,
+        close_error: BaseException | None = None,
+        source: str = "192.0.2.1",
+    ):
+        """Queue *script* for ``recvfrom``; remember *close_error* and *source*."""
         self._script = list(script)
         self._close_error = close_error
+        self._source = source
         self.closed = False
 
     def recvfrom(self, bufsize):
@@ -337,7 +345,7 @@ class _ScriptedSock:
         step = self._script.pop(0)
         if isinstance(step, BaseException):
             raise step
-        return step, ("192.0.2.1", 4403)
+        return step, (self._source, 4403)
 
     def close(self):
         """Record the close, raising the configured error if there is one."""
@@ -503,6 +511,85 @@ class TestRecvLoop:
         MeshtasticUdpProvider()._recv_loop(iface)  # must return, not raise
 
         assert not iface.isConnected.is_set()
+
+
+class TestRecvLoopAllowedSources:
+    """``MESH_UDP_ALLOWED_SOURCES`` is checked right after ``recvfrom`` (UT-A1).
+
+    Runs the real loop and the real ``_handle_datagram`` on one datagram: a
+    primary-channel packet under the default ``AQ==`` key from ``!deadbeef``.
+    """
+
+    @pytest.fixture
+    def deliver(self, run_loop, monkeypatch):
+        """Return ``deliver(source, *cidrs)``: list *cidrs*, run the datagram once.
+
+        No *cidrs* means the setting is unset. ``deliver`` returns
+        ``(decrypts, received)``: the key of every decrypt attempt and every
+        packet dispatched to ``on_receive``.
+        """
+        monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_KEY", "AQ==")
+        monkeypatch.setattr(udp_mod.config, "PRIMARY_CHANNEL_NAME", "MediumFast")
+        raw = _encrypt_packet(
+            udp_decode.channel_hash("MediumFast", "AQ=="), node_from=0xDEADBEEF
+        )
+        decrypts: list[str] = []
+        received: list[dict] = []
+        real_decrypt = udp_mod.decrypt_meshpacket
+
+        def spy_decrypt(mp, key_b64):
+            """Record the decrypt attempt, then decrypt for real."""
+            decrypts.append(key_b64)
+            return real_decrypt(mp, key_b64)
+
+        monkeypatch.setattr(udp_mod, "decrypt_meshpacket", spy_decrypt)
+        monkeypatch.setattr(
+            udp_mod.handlers,
+            "on_receive",
+            lambda packet, interface: received.append(packet),
+        )
+
+        def deliver(source: str, *cidrs: str):
+            """Run the loop once for *raw* from *source*, with *cidrs* listed."""
+            allowed = tuple(ipaddress.IPv4Network(cidr) for cidr in cidrs)
+            # Created when absent, so on a tree without the setting the drop
+            # test fails on its decrypt assertion rather than here.
+            monkeypatch.setattr(
+                udp_mod.config, "MESH_UDP_ALLOWED_SOURCES", allowed, raising=False
+            )
+            sock = _ScriptedSock(raw, source=source)
+            run_loop([sock], [sock], handle=MeshtasticUdpProvider()._handle_datagram)
+            return decrypts, received
+
+        return deliver
+
+    def test_unlisted_source_is_dropped_before_decrypt(self, deliver, monkeypatch):
+        """A sender outside the list never reaches decrypt; the drop logs at debug."""
+        logs: list[tuple[str, dict]] = []
+        monkeypatch.setattr(
+            udp_mod.config,
+            "_debug_log",
+            lambda message, **meta: logs.append((message, meta)),
+        )
+
+        decrypts, received = deliver("203.0.113.66", "192.168.1.0/24")
+
+        assert decrypts == [], "the source was not checked before decrypt"
+        assert received == []
+        drop = {"context": "udp.recv", "severity": "debug", "source": "203.0.113.66"}
+        assert logs == [("Dropped UDP datagram from unlisted source", drop)]
+
+    def test_listed_source_is_dispatched(self, deliver):
+        """A sender inside any listed network is decrypted and dispatched."""
+        decrypts, received = deliver("192.168.1.20", "10.0.0.5", "192.168.1.0/24")
+        assert decrypts == ["AQ=="]
+        assert [packet["fromId"] for packet in received] == ["!deadbeef"]
+
+    def test_unset_accepts_every_source(self, deliver):
+        """With no list, a datagram from any source is handled, as before."""
+        decrypts, received = deliver("203.0.113.66")
+        assert decrypts == ["AQ=="]
+        assert [packet["fromId"] for packet in received] == ["!deadbeef"]
 
 
 # ---------------------------------------------------------------------------

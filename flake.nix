@@ -447,6 +447,12 @@
                 description = "Multicast port for Meshtastic \"Mesh via UDP\"";
               };
 
+              meshUdpAllowedSources = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Comma-separated IPv4 addresses or CIDRs allowed to send to the UDP transport; packets from any other address are dropped. Empty accepts every host";
+              };
+
               meshcoreSelfTelemetrySeconds = lib.mkOption {
                 type = lib.types.int;
                 default = 3600;
@@ -587,6 +593,7 @@
                 PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;
                 MESH_UDP_GROUP = cfg.ingestor.meshUdpGroup;
                 MESH_UDP_PORT = toString cfg.ingestor.meshUdpPort;
+                MESH_UDP_ALLOWED_SOURCES = cfg.ingestor.meshUdpAllowedSources;
               } // lib.optionalAttrs (cfg.ingestor.primaryChannelName != null) {
                 PRIMARY_CHANNEL_NAME = cfg.ingestor.primaryChannelName;
               } // lib.optionalAttrs (cfg.ingestor.nodeId != null) {

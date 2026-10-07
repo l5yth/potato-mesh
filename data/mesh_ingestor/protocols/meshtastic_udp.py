@@ -39,14 +39,25 @@ optional: when the primary hash cannot be resolved (no
 :data:`config.PRIMARY_CHANNEL_NAME`) the provider FAILS CLOSED and drops every
 packet. (:data:`config.PRIMARY_CHANNEL_ONLY` still governs the separate
 API/serial transport; it does not weaken this gate.) Accepted packets must be
-channel-encrypted -- already-decoded (plaintext) packets are dropped to close a
-no-key LAN spoofing path -- then decrypted with
+channel-encrypted -- already-decoded (plaintext) packets are dropped, because
+genuine primary-channel traffic is always encrypted -- then decrypted with
 :data:`config.PRIMARY_CHANNEL_KEY` and enriched to match the API/serial
 transport's packet shape.
+
+None of these gates authenticates the sender (SPEC UT1). The group sockets
+accept a datagram from every host that can reach the multicast group, and a
+packet that decrypts proves only that its sender holds the channel key: the
+default ``AQ==`` key is public, and the AES-CTR encryption carries no MAC, so a
+key holder can forge a packet under any sender id. When
+:data:`config.MESH_UDP_ALLOWED_SOURCES` is set, the receive loop drops a
+datagram from any other source address before it is parsed or decrypted
+(SPEC UT2). A host on the same segment can spoof its source address, so that
+check is defence in depth, not authentication (SPEC UT3).
 """
 
 from __future__ import annotations
 
+import ipaddress
 import select
 import socket
 import threading
@@ -67,6 +78,30 @@ _RECV_POLL_SECS = 1.0
 Matches the 1-second socket timeout set by
 :func:`~data.mesh_ingestor.protocols.meshtastic_udp_socket.open_multicast_socket`,
 which bounded the same re-check while the loop read a single socket."""
+
+
+def _source_allowed(addr: tuple[str, int]) -> bool:
+    """Return whether a datagram from *addr* may be handled (SPEC UT2).
+
+    Reads :data:`config.MESH_UDP_ALLOWED_SOURCES` at call time, as
+    :meth:`MeshtasticUdpProvider._primary_channel_hash` reads the channel
+    settings, so a changed setting is honoured without reconstructing the
+    provider. The address is not parsed while the setting is empty.
+
+    Parameters:
+        addr: The ``(host, port)`` pair ``recvfrom`` returned on an IPv4
+            group socket.
+
+    Returns:
+        ``True`` when the setting is empty (the default: every source is
+        accepted) or when *addr*'s host lies in one of its networks;
+        ``False`` otherwise.
+    """
+    allowed = config.MESH_UDP_ALLOWED_SOURCES
+    if not allowed:
+        return True
+    source = ipaddress.IPv4Address(addr[0])
+    return any(source in network for network in allowed)
 
 
 class _UdpInterface:
@@ -230,10 +265,14 @@ class MeshtasticUdpProvider:
         is skipped. Any other ``OSError`` -- or the ``ValueError`` ``select``
         raises for a socket that is already closed -- means
         :meth:`_UdpInterface.close` closed a socket out from under this
-        thread, and ends the loop. Per-datagram handling is wrapped so a
-        malformed or hostile packet is dropped rather than propagating and
-        killing the thread, and :attr:`_UdpInterface.isConnected` is cleared
-        on every exit path so a dead reader is detectable.
+        thread, and ends the loop. Right after ``recvfrom``, a datagram whose
+        source :func:`_source_allowed` rejects (only possible while
+        :data:`config.MESH_UDP_ALLOWED_SOURCES` is set) is dropped before it
+        is parsed or decrypted, with a debug-severity log line only.
+        Per-datagram handling is wrapped so a malformed or hostile packet is
+        dropped rather than propagating and killing the thread, and
+        :attr:`_UdpInterface.isConnected` is cleared on every exit path so a
+        dead reader is detectable.
 
         Parameters:
             iface: The interface whose sockets to read and stop flag to
@@ -249,7 +288,7 @@ class MeshtasticUdpProvider:
                     return
                 for sock in ready:
                     try:
-                        raw, _addr = sock.recvfrom(65535)
+                        raw, addr = sock.recvfrom(65535)
                     except socket.timeout:
                         # Readable yet empty by the time recvfrom ran (Linux
                         # can discard a datagram that fails its checksum after
@@ -258,6 +297,17 @@ class MeshtasticUdpProvider:
                     except OSError:
                         # Closed under the read; ``finally`` still runs.
                         return
+                    if not _source_allowed(addr):
+                        # An unlisted sender is dropped before any parse or
+                        # decrypt. Debug severity only, as for a malformed
+                        # datagram, so a flood cannot fill the log.
+                        config._debug_log(
+                            "Dropped UDP datagram from unlisted source",
+                            context="udp.recv",
+                            severity="debug",
+                            source=addr[0],
+                        )
+                        continue
                     try:
                         self._handle_datagram(raw, iface)
                     except Exception:
@@ -283,7 +333,10 @@ class MeshtasticUdpProvider:
 
         Parses *raw* as a ``MeshPacket`` and dispatches it to
         :func:`~data.mesh_ingestor.handlers.on_receive` only when it passes
-        every gate below; anything else is silently dropped:
+        every gate below; anything else is silently dropped. The sender's
+        source address has already passed
+        :data:`config.MESH_UDP_ALLOWED_SOURCES` in :meth:`_recv_loop`; no gate
+        here authenticates the sender (see the module docstring):
 
         1. **Parse** -- unparseable bytes are dropped.
         2. **Primary-channel hash** -- the packet's ``channel`` hash must equal
@@ -295,8 +348,10 @@ class MeshtasticUdpProvider:
            :data:`config.PRIMARY_CHANNEL_NAME`) the gate FAILS CLOSED and drops
            everything, rather than risk leaking a secondary channel.
         3. **Encrypted-only** -- the packet must carry ``encrypted`` bytes;
-           already-``decoded`` (plaintext) packets are dropped, closing a
-           no-key LAN spoofing path.
+           already-``decoded`` (plaintext) packets are dropped, because genuine
+           primary-channel traffic is always encrypted. This keeps out a
+           sender without the channel key, not one that holds it: the default
+           ``AQ==`` key is public.
         4. **Decrypt** -- decryption with :data:`config.PRIMARY_CHANNEL_KEY`
            must succeed (a private channel this key cannot open decrypts to
            ``None`` and is dropped).
@@ -320,9 +375,10 @@ class MeshtasticUdpProvider:
         if primary_hash is None or mp.channel != primary_hash:
             return
         # Require channel-encrypted traffic. Real primary-channel packets on the
-        # multicast feed are always encrypted with the channel key; dropping
-        # packets that arrive already-``decoded`` (plaintext) closes a no-key
-        # LAN spoofing path and avoids forwarding unauthenticated records.
+        # multicast feed are always encrypted with the channel key, so a packet
+        # that arrives already-``decoded`` (plaintext) is never genuine. This is
+        # not authentication: anyone holding the key (the default AQ== is
+        # public) can still forge a packet under any sender id (SPEC UT1).
         if not mp.HasField("encrypted"):
             return
         data = decrypt_meshpacket(mp, config.PRIMARY_CHANNEL_KEY)

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -46,3 +47,36 @@ def permit_tx(monkeypatch):
     monkeypatch.setattr(config, "TX_ANNOUNCE", True)
     monkeypatch.setattr(config, "RX_ONLY", False)
     return config
+
+
+@pytest.fixture
+def load_config(monkeypatch):
+    """Reload :mod:`~data.mesh_ingestor.config` under the given environment.
+
+    Each keyword passed to the yielded callable sets that variable (``None``
+    unsets it); the module is then reloaded and returned, so import-time
+    parsing and validation run exactly as they do at ingestor startup.  On
+    teardown every variable the callable touched is unset and the module is
+    reloaded once more.  That runs before ``monkeypatch`` restores the
+    environment, so later tests see the defaults, not a value a test parsed.
+
+    Yields:
+        ``load(**env)``, returning the reloaded module.
+    """
+
+    touched: set[str] = set()
+
+    def load(**env: str | None):
+        """Apply *env* to the environment and return the reloaded ``config``."""
+        for name, value in env.items():
+            touched.add(name)
+            if value is None:
+                monkeypatch.delenv(name, raising=False)
+            else:
+                monkeypatch.setenv(name, value)
+        return importlib.reload(config)
+
+    yield load
+    for name in touched:
+        monkeypatch.delenv(name, raising=False)
+    importlib.reload(config)

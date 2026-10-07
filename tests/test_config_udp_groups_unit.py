@@ -25,7 +25,6 @@ there would keep every such deployment deaf to one firmware line.
 
 from __future__ import annotations
 
-import importlib
 import re
 import sys
 from pathlib import Path
@@ -44,28 +43,6 @@ EXPECTED_GROUPS = ("239.0.0.69", "224.0.0.69")
 
 #: :data:`EXPECTED_GROUPS` as an operator writes it in ``MESH_UDP_GROUP``.
 EXPECTED_SETTING = ",".join(EXPECTED_GROUPS)
-
-
-@pytest.fixture
-def load_config(monkeypatch):
-    """Reload ``config`` under a given ``MESH_UDP_GROUP``; restore defaults after.
-
-    Yields a callable taking the raw value (``None`` unsets the variable) that
-    reloads the module and returns it, so import-time parsing and validation
-    run exactly as they do at ingestor startup.
-    """
-
-    def _load(value: str | None):
-        """Reload ``config`` with *value* as ``MESH_UDP_GROUP`` (``None`` unsets it)."""
-        if value is None:
-            monkeypatch.delenv("MESH_UDP_GROUP", raising=False)
-        else:
-            monkeypatch.setenv("MESH_UDP_GROUP", value)
-        return importlib.reload(config)
-
-    yield _load
-    monkeypatch.delenv("MESH_UDP_GROUP", raising=False)
-    importlib.reload(config)
 
 
 class TestParseMeshUdpGroups:
@@ -138,17 +115,17 @@ class TestMeshUdpGroupsAtImport:
 
     def test_default_listens_on_both_groups(self, load_config):
         """Unset, the ingestor joins the firmware 2.8+ group and the earlier one."""
-        assert load_config(None).MESH_UDP_GROUPS == EXPECTED_GROUPS
+        assert load_config(MESH_UDP_GROUP=None).MESH_UDP_GROUPS == EXPECTED_GROUPS
 
     def test_list_is_normalised_into_both_names(self, load_config):
         """The tuple and the comma-joined string agree after normalisation."""
-        cfg = load_config(" 224.0.0.69 ,239.0.0.69,224.0.0.69")
+        cfg = load_config(MESH_UDP_GROUP=" 224.0.0.69 ,239.0.0.69,224.0.0.69")
         assert cfg.MESH_UDP_GROUPS == ("224.0.0.69", "239.0.0.69")
         assert cfg.MESH_UDP_GROUP == "224.0.0.69,239.0.0.69"
 
     def test_one_address_restricts_to_that_group(self, load_config):
         """Setting a single address listens on that group only."""
-        cfg = load_config("239.0.0.69")
+        cfg = load_config(MESH_UDP_GROUP="239.0.0.69")
         assert cfg.MESH_UDP_GROUPS == ("239.0.0.69",)
         assert cfg.MESH_UDP_GROUP == "239.0.0.69"
 
@@ -160,7 +137,7 @@ class TestMeshUdpGroupsAtImport:
         (the failure mode ACCEPTANCE UH-A1 closed for ``PRIMARY_CHANNEL_KEY``).
         """
         with pytest.raises(ValueError, match="MESH_UDP_GROUP entry '10.0.0.1'"):
-            load_config("239.0.0.69,10.0.0.1")
+            load_config(MESH_UDP_GROUP="239.0.0.69,10.0.0.1")
 
     def test_both_names_are_exported(self):
         """The parsed tuple joins the string setting on the public surface."""
