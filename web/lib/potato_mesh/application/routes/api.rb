@@ -228,6 +228,8 @@ module PotatoMesh
             since_val = coerce_integer(since) || 0
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0 || before
               json_body = query_ingestors(limit, since: since, before: before, protocol: protocol).to_json
@@ -235,7 +237,7 @@ module PotatoMesh
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}", ttl_seconds: 30) do
+              cached = PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
                 query_ingestors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -319,6 +321,8 @@ module PotatoMesh
             since_val = coerce_integer(since) || 0
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0 || before
               json_body = query_positions(limit, since: since, before: before, protocol: protocol).to_json
@@ -326,7 +330,7 @@ module PotatoMesh
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}", ttl_seconds: 15) do
+              cached = PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
                 query_positions(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -397,6 +401,8 @@ module PotatoMesh
             since_val = coerce_integer(since) || 0
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0 || before
               json_body = query_neighbors(limit, since: since, before: before, protocol: protocol).to_json
@@ -404,7 +410,7 @@ module PotatoMesh
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}", ttl_seconds: 30) do
+              cached = PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
                 query_neighbors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -432,6 +438,8 @@ module PotatoMesh
             since_val = coerce_integer(since) || 0
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0 || before
               json_body = query_telemetry(limit, since: since, before: before, protocol: protocol).to_json
@@ -439,7 +447,7 @@ module PotatoMesh
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}", ttl_seconds: 15) do
+              cached = PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
                 query_telemetry(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -484,6 +492,8 @@ module PotatoMesh
 
             since = params["since"]
             since_val = coerce_integer(since) || 0
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0
               json_body = query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
@@ -491,7 +501,7 @@ module PotatoMesh
               api_cache_control(max_age: 30)
               json_body
             else
-              cache_key = "api:telemetry_agg:#{window_seconds}:#{bucket_seconds}"
+              cache_key = "api:telemetry_agg:#{window_seconds}:#{bucket_seconds}:#{priv}"
               cached = PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60) do
                 query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
               end
@@ -520,6 +530,8 @@ module PotatoMesh
             since_val = coerce_integer(since) || 0
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
+            # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
+            priv = private_mode? ? 1 : 0
 
             if since_val > 0 || before
               json_body = query_traces(limit, since: since, before: before, protocol: protocol).to_json
@@ -527,7 +539,7 @@ module PotatoMesh
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}", ttl_seconds: 30) do
+              cached = PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
                 query_traces(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak

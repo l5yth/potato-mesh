@@ -101,7 +101,7 @@ The web app can be configured with environment variables (defaults shown):
 | `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web services. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
-| `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
+| `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients and their data from the API and pages. |
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
 | `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm. |
 | `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
@@ -139,6 +139,12 @@ every viewport: OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
 (`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent - no key,
 cookie, or analytics parameter. Tiles are the only third-party request the
 dashboard makes.
+
+### Privacy
+
+- Hide a node: put U+1F6D1 (stop sign) anywhere in its short or long name. The API, pages, `/metrics` and federation counts then omit the node and its positions, telemetry, neighbors, traces, messages and waypoints. Ingest continues and the rows stay stored.
+- Reticulum: put the marker in the node's headline name, the name the dashboard shows. A marker in another destination's name hides nothing.
+- Retention: rows not updated for 365 days are deleted daily. No `/api/` read returns data older than 28 days.
 
 ### Custom Pages
 

@@ -961,10 +961,13 @@ module PotatoMesh
 
     # Filesystem path used to cache the most recent runtime-generated
     # preview image. The directory is created lazily on first capture.
+    # Private mode keeps a file of its own, so a capture cached in one mode
+    # is never served in the other: a public capture can show a
+    # +CLIENT_HIDDEN+ node (SPEC HC7).
     #
     # @return [String] absolute cache file path.
     def og_image_cache_path
-      File.join(data_directory, "og-image.png")
+      File.join(data_directory, private_mode_enabled? ? "og-image-private.png" : "og-image.png")
     end
 
     # Filesystem path of the bundled fallback preview image served when no

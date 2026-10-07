@@ -17,7 +17,9 @@
 module PotatoMesh
   module App
     module Queries
-      # Fetch positions optionally scoped by node and timestamp.
+      # Fetch positions optionally scoped by node and timestamp.  Rows of an
+      # opted-out node are never served, nor, in private mode, rows of a
+      # +CLIENT_HIDDEN+ node (SPEC HC1).
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
@@ -51,6 +53,7 @@ module PotatoMesh
         append_before_filter(where_clauses, params, before, column: "rx_time")
 
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
+        where_clauses << hidden_client_node_id_filter("node_id") if private_mode?
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -86,6 +89,8 @@ module PotatoMesh
       end
 
       # Fetch neighbor relationships optionally scoped by node and timestamp.
+      # A link is never served when either end is an opted-out node or, in
+      # private mode, a +CLIENT_HIDDEN+ node (SPEC HC1).
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
@@ -124,6 +129,10 @@ module PotatoMesh
 
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("neighbor_id"))
+        if private_mode?
+          where_clauses << hidden_client_node_id_filter("node_id")
+          where_clauses << hidden_client_node_id_filter("neighbor_id")
+        end
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -148,7 +157,12 @@ module PotatoMesh
         db&.close
       end
 
-      # Fetch trace records optionally scoped by node and timestamp.
+      # Fetch trace records optionally scoped by node and timestamp.  A trace
+      # from or to an opted-out node is never served, and such a node's hops
+      # are dropped from the traces that are; in private mode the same holds
+      # for a +CLIENT_HIDDEN+ node (SPEC HC1).  A per-id lookup of either
+      # node matches no trace through its hops, so it returns nothing
+      # (SPEC HC7).
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
@@ -168,6 +182,13 @@ module PotatoMesh
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold
 
+        # The hops of an opted-out node, and in private mode of a
+        # CLIENT_HIDDEN node, are never read: they match no per-id lookup
+        # and are dropped from the hops of every trace served (SPEC HC1,
+        # HC7).  Binds the opt-out marker twice.
+        hop_filter = opt_out_node_num_filter("th.node_id")
+        hop_filter += " AND #{hidden_client_node_num_filter("th.node_id")}" if private_mode?
+
         if node_ref
           tokens = node_reference_tokens(node_ref)
           numeric_values = tokens[:numeric_values]
@@ -178,9 +199,11 @@ module PotatoMesh
           candidate_clauses = []
           candidate_clauses << "src IN (#{placeholders})"
           candidate_clauses << "dest IN (#{placeholders})"
-          candidate_clauses << "id IN (SELECT trace_id FROM trace_hops WHERE node_id IN (#{placeholders}))"
+          candidate_clauses << "id IN (SELECT th.trace_id FROM trace_hops th " \
+                               "WHERE th.node_id IN (#{placeholders}) AND #{hop_filter})"
           where_clauses << "(#{candidate_clauses.join(" OR ")})"
           3.times { params.concat(numeric_values) }
+          params.concat(opt_out_marker_params)
         end
 
         # Drop traces whose endpoints carry the opt-out marker.  Hops are
@@ -193,6 +216,10 @@ module PotatoMesh
 
         append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("src"))
         append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("dest"))
+        if private_mode?
+          where_clauses << hidden_client_node_num_filter("src")
+          where_clauses << hidden_client_node_num_filter("dest")
+        end
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -213,7 +240,8 @@ module PotatoMesh
           placeholders = Array.new(trace_ids.length, "?").join(", ")
           # Hide opted-out intermediate hops too — otherwise a single trace
           # could expose a silenced node's numeric ID via the relay chain.
-          hop_filter = opt_out_node_num_filter("th.node_id")
+          # +hop_filter+ hides a CLIENT_HIDDEN relay the same way in private
+          # mode.
           hop_rows =
             db.execute(
               "SELECT th.trace_id, th.hop_index, th.node_id FROM trace_hops th " \
