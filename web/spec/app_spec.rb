@@ -2731,7 +2731,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       }
 
       stale_nodes = Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
-        { "node_id" => "stale-node-#{index}", "last_heard" => (Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age) - index - 1 }
+        { "node_id" => "stale-node-#{index}", "last_heard" => (Time.now.to_i - PotatoMesh::Config.remote_instance_max_inactivity) - index - 1 }
       end
 
       allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|

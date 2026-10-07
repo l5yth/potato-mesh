@@ -25,6 +25,7 @@
 * Web: federation node counts distinguish zero from not-reported uniformly across all three protocols (SPEC RL4)
 * Web: a destination's identifier links to its identity page (SPEC RL5)
 * Web: Reticulum rows match every other row's height; one dash glyph throughout the nodes table (SPEC RA11)
+* Web: a federation peer whose newest node is up to 7 days old is accepted and refreshed again, not only within 24 hours (ACCEPTANCE FS-A5)
 * Data/Web: Reticulum nodes are keyed on the announcing identity, not on each destination - one node, several destinations (SPEC RE7/RE10)
 * Data: the ingestor's own node id is its primary announced identity (SPEC RE8)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)

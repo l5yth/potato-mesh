@@ -75,6 +75,11 @@ module PotatoMesh
       # Confirm a remote +/api/nodes+ payload contains a sufficient set of
       # recently active nodes.
       #
+      # The newest node must have been heard within
+      # {PotatoMesh::Config.remote_instance_max_inactivity} (seven days,
+      # ACCEPTANCE FS-A5), not the 24-hour window of the peer's signed counts,
+      # so a peer whose data sources pause for a few days stays federated.
+      #
       # @param nodes [Object] decoded array of remote node entries.
       # @return [Array(Boolean, String, nil)] tuple of (is_fresh, optional reason).
       def validate_remote_nodes(nodes)
@@ -86,21 +91,25 @@ module PotatoMesh
           return [false, "insufficient nodes"]
         end
 
-        latest = nodes.filter_map do |node|
-          next unless node.is_a?(Hash)
-
-          last_heard_values = []
-          last_heard_values << coerce_integer(node["last_heard"])
-          last_heard_values << coerce_integer(node["lastHeard"])
-          last_heard_values.compact.max
-        end.compact.max
+        latest = nodes.filter_map { |node| remote_node_last_heard(node) }.max
 
         return [false, "missing last_heard data"] unless latest
 
-        cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_inactivity
         return [false, "node data is stale"] if latest < cutoff
 
         [true, nil]
+      end
+
+      # Read when a remote node entry was last heard, under either wire casing.
+      #
+      # @param node [Object] one entry of a remote +/api/nodes+ payload.
+      # @return [Integer, nil] the later of +last_heard+ and +lastHeard+, or nil
+      #   when the entry is not a Hash or carries neither.
+      def remote_node_last_heard(node)
+        return nil unless node.is_a?(Hash)
+
+        [coerce_integer(node["last_heard"]), coerce_integer(node["lastHeard"])].compact.max
       end
     end
   end

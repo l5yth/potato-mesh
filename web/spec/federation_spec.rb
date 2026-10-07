@@ -469,13 +469,27 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
     end
 
-    def stats_mapping(now:, stats_response:, full_nodes_response:, window_nodes_response: nil)
+    # The 7-day request the crawl sends when a peer's /api/nodes fails.
+    def active_nodes_path(now)
+      since = now.to_i - PotatoMesh::Config.remote_instance_max_inactivity
+      "/api/nodes?since=#{since}&limit=#{PotatoMesh::Config.remote_instance_min_node_count}"
+    end
+
+    # The peer's answer to that request, distinct from +node_payload+.
+    def active_nodes_payload(now)
+      Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
+        { "node_id" => "active-node-#{index}", "last_heard" => now.to_i - index }
+      end
+    end
+
+    def stats_mapping(now:, stats_response:, full_nodes_response:, window_nodes_response: nil, active_nodes_response: nil)
       recent_cutoff = now.to_i - 900
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each do |attributes|
         mapping[[attributes[:domain], STATS_API_PATH]] = stats_response
         mapping[[attributes[:domain], NODES_API_PATH]] = full_nodes_response
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+        mapping[[attributes[:domain], active_nodes_path(now)]] = active_nodes_response if active_nodes_response
         next unless window_nodes_response
 
         mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = window_nodes_response
@@ -621,30 +635,37 @@ RSpec.describe PotatoMesh::App::Federation do
     it "falls back to recent node window when full node data is unavailable" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
+      active_payload = active_nodes_payload(now)
 
       mapping = stats_mapping(
         now:,
         stats_response: [nil, ["stats unavailable"]],
         full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [node_payload, :nodes],
+        active_nodes_response: [active_payload, :nodes],
       )
       stub_ingest_fetches(mapping)
 
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
+      # The 24-hour window feeds the count; the 7-day list decides acceptance.
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
+      expect(federation_helpers).to have_received(:validate_remote_nodes).with(active_payload).exactly(3).times
+      expect(federation_helpers).to have_received(:upsert_instance_record).exactly(3).times
     end
 
     it "uses recent node window fallback when stats succeed but full node data is unavailable" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
       recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
+      active_payload = active_nodes_payload(now)
 
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 9, "day" => 10, "week" => 11, "month" => 12 }, "sampled" => false }, :stats],
         full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [node_payload, :nodes],
+        active_nodes_response: [active_payload, :nodes],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
 
@@ -660,7 +681,15 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[1][:domain], recent_path],
         [attributes_list[2][:domain], recent_path],
       )
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], active_nodes_path(now)],
+        [attributes_list[1][:domain], active_nodes_path(now)],
+        [attributes_list[2][:domain], active_nodes_path(now)],
+      )
+      # /api/stats feeds the count; the 7-day list decides acceptance.
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(9))
+      expect(federation_helpers).to have_received(:validate_remote_nodes).with(active_payload).exactly(3).times
+      expect(federation_helpers).to have_received(:upsert_instance_record).exactly(3).times
     end
 
     it "handles URI metadata from malformed /api/stats payloads without crashing" do

@@ -657,11 +657,24 @@ module PotatoMesh
       )
     end
 
-    # Maximum acceptable age for remote node data.
+    # Activity window of the node counts in a federation record.  The self
+    # record counts nodes heard within this many seconds, as the "(24h)"
+    # headers of the instances table say (SPEC FS2, RL9).  Peer acceptance
+    # uses {#remote_instance_max_inactivity}.
     #
-    # @return [Integer] seconds before remote nodes are considered stale.
+    # @return [Integer] seconds in one day.
     def remote_instance_max_node_age
       86_400
+    end
+
+    # Maximum age of a peer's most recently heard node before the peer is
+    # refused federation (ACCEPTANCE FS-A5).  A peer whose data sources pause
+    # for less than {#week_seconds} stays federated, while its signed counts
+    # keep the 24-hour {#remote_instance_max_node_age}.
+    #
+    # @return [Integer] seconds in seven days.
+    def remote_instance_max_inactivity
+      week_seconds
     end
 
     # Minimum node count expected from a remote instance before storing.

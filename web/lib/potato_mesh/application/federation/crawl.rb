@@ -220,6 +220,13 @@ module PotatoMesh
 
       # Recursively ingest federation records exposed by the supplied domain.
       #
+      # A peer is judged on its +/api/nodes+ list or, when that fails, on the
+      # nodes it heard within {PotatoMesh::Config.remote_instance_max_inactivity}
+      # (ACCEPTANCE FS-A5).  Node counts cover only
+      # {PotatoMesh::Config.remote_instance_max_node_age} (SPEC RL9): the
+      # 24-hour +/api/nodes?since=+ list, or the +/api/nodes+ entries heard in
+      # that window; the 7-day list never feeds them.
+      #
       # @param db [SQLite3::Database] open database connection used for writes.
       # @param domain [String] remote domain to crawl for federation records.
       # @param visited [Set<String>] domains processed during this crawl.
@@ -269,6 +276,7 @@ module PotatoMesh
 
         processed_entries = 0
         recent_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        active_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_inactivity
         payload.each do |entry|
           break if federation_shutdown_requested?
 
@@ -351,9 +359,20 @@ module PotatoMesh
           end
 
           remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          remote_nodes = nodes_since_window if remote_nodes.nil? && nodes_since_window.is_a?(Array)
           if attributes[:nodes_count].nil? && remote_nodes.is_a?(Array)
-            attributes[:nodes_count] = remote_nodes.length
+            # The plain list covers 7 days; count only the nodes heard inside
+            # the 24-hour count window.
+            attributes[:nodes_count] = remote_nodes.count do |node|
+              (remote_node_last_heard(node) || 0) >= recent_cutoff
+            end
+          end
+          # Without the full list, judge the peer on its 7-day window: the
+          # 24-hour list above only feeds the counts.  The peer sorts by
+          # last_heard, so the newest minimum-count nodes decide acceptance.
+          if remote_nodes.nil?
+            min_nodes = PotatoMesh::Config.remote_instance_min_node_count
+            active_nodes_path = "/api/nodes?since=#{active_cutoff}&limit=#{min_nodes}"
+            remote_nodes, = fetch_instance_json(attributes[:domain], active_nodes_path)
           end
 
           if stats_count.nil? && Array(stats_metadata).any?
