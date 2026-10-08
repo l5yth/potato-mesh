@@ -94,8 +94,8 @@ The web app can be configured with environment variables (defaults shown):
 | `MESHTASTIC_FREQ` | `"915MHz"` | Meshtastic frequency shown alongside the preset. |
 | `MESHCORE_PRESET` | _unset_ | Meshcore radio preset for the join strip; the Meshcore line is hidden until both `MESHCORE_*` values are set. |
 | `MESHCORE_FREQ` | _unset_ | Meshcore frequency for the join strip. |
-| `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
-| `ANNOUNCEMENT` | _unset_ | Optional announcement banner text rendered above the header on every page. |
+| `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer, the mobile menu, and overlays. |
+| `ANNOUNCEMENT` | _unset_ | Optional announcement banner text rendered above the header on every page. `http(s)://` URLs become links; write `[label](https://example.org)` to link a label. |
 | `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map on load. |
 | `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom applied on first load; disables auto-fit when provided. |
 | `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |
@@ -150,8 +150,8 @@ dashboard makes.
 ### Custom Pages
 
 Add Markdown files to `web/pages/` to publish static content pages (contact
-info, rules, legal notices). Each `.md` file becomes a nav entry and a route
-at `/pages/<slug>`.
+info, rules, legal notices). Each `.md` file becomes a footer link, a mobile
+menu entry, and a route at `/pages/<slug>`.
 
 Filename format: `<sort-prefix>-<slug>.md`. The prefix sets nav order; the
 slug sets the URL and nav label:

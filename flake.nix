@@ -218,7 +218,7 @@
             contactLink = lib.mkOption {
               type = lib.types.str;
               default = "#potatomesh:dod.ngo";
-              description = "Chat link or Matrix alias rendered in the footer and overlays";
+              description = "Chat link or Matrix alias rendered in the footer, the mobile menu, and overlays";
             };
 
             mapCenter = lib.mkOption {
@@ -290,7 +290,7 @@
             announcement = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "Announcement banner text rendered above the header on every page";
+              description = "Announcement banner text rendered above the header on every page; http(s) URLs and [label](https://...) render as links";
             };
 
             ogImageUrl = lib.mkOption {
