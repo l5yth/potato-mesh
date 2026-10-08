@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+from daemon_fakes import daemon_threading
 from meshtastic_protobuf_stub import build as build_protobuf_stub
 
 import pytest
@@ -1609,7 +1610,7 @@ def test_post_json_sends_payload_with_token(mesh_module, monkeypatch):
 
     captured = {}
 
-    def fake_urlopen(req, timeout=0):
+    def fake_open(req, timeout):
         captured["req"] = req
 
         class DummyResponse:
@@ -1624,7 +1625,7 @@ def test_post_json_sends_payload_with_token(mesh_module, monkeypatch):
 
         return DummyResponse()
 
-    monkeypatch.setattr(mesh.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(mesh.queue, "_open_upload", fake_open)
 
     mesh._post_json("/api/test", {"hello": "world"})
 
@@ -1731,7 +1732,7 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
     monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
-    monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
+    monkeypatch.setattr(mesh.daemon, "threading", daemon_threading(DummyEvent))
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
     monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
     monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
@@ -1805,7 +1806,7 @@ def test_main_reconnects_when_connection_event_clears(mesh_module, monkeypatch):
     monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
-    monkeypatch.setattr(mesh.threading, "Event", DummyStopEvent)
+    monkeypatch.setattr(mesh.daemon, "threading", daemon_threading(DummyStopEvent))
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
     monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
     monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
@@ -1872,7 +1873,7 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh, "upsert_node", record_upsert)
-    monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
+    monkeypatch.setattr(mesh.daemon, "threading", daemon_threading(DummyEvent))
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
     monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
     monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
@@ -3142,7 +3143,7 @@ def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
     def boom(*_, **__):
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(mesh.queue.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(mesh.queue, "_open_upload", boom)
 
     mesh._post_json("/api/test", {"foo": "bar"})
 
@@ -3173,6 +3174,8 @@ def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     mesh = mesh_module
 
     mesh._clear_post_queue()
+    # The inline drain: without upload lanes the record waits in the heap.
+    monkeypatch.setattr(mesh.STATE, "drainer", None)
     mesh.STATE.active = True
 
     mesh._queue_post_json("/api/test", {"id": 1})

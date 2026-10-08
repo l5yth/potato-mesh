@@ -536,7 +536,8 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
     )
     # Uses the module-level global STATE — acceptable because there is only
     # one queue in production, and in tests this is purely informational.
-    queue_depth = len(queue.STATE.queue)
+    # The depth is the inline heap plus the deepest upload lane (SPEC UR1).
+    queue_depth = queue._queue_depth(queue.STATE)
     config._debug_log(
         "Mesh interface inactivity detected",
         context="daemon.interface",
@@ -847,6 +848,9 @@ def main(*, provider: MeshProtocol | None = None) -> None:
         state.stop.set()
     finally:
         _close_interface(state.iface)
+        # Stop the upload lanes this call started; what they hold is lost on
+        # exit, as before (SPEC UR8).
+        queue._stop_queue_drainer(queue.STATE)
 
 
 __all__ = [

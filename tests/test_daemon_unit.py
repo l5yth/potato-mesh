@@ -31,7 +31,11 @@ from data.mesh_ingestor import daemon  # noqa: E402 - path setup
 import data.mesh_ingestor.config as _cfg_module  # noqa: E402 - path setup
 
 # FakeEvent and the _DaemonState factory are shared with other test modules.
-from daemon_fakes import FakeEvent, make_state as _make_state  # noqa: E402
+from daemon_fakes import (  # noqa: E402
+    FakeEvent,
+    daemon_threading,
+    make_state as _make_state,
+)
 
 
 class AutoSetEvent(FakeEvent):
@@ -59,9 +63,7 @@ def test_event_wait_default_detection(monkeypatch):
         def wait(self, timeout):  # type: ignore[override]
             return bool(timeout)
 
-    monkeypatch.setattr(
-        daemon, "threading", types.SimpleNamespace(Event=_NoDefaultEvent)
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(_NoDefaultEvent))
     assert daemon._event_wait_allows_default_timeout() is False
 
 
@@ -267,15 +269,7 @@ def test_main_happy_path(monkeypatch):
     """The main loop processes snapshots and heartbeats once before stopping."""
 
     _configure_common_defaults(monkeypatch)
-    monkeypatch.setattr(
-        daemon,
-        "threading",
-        types.SimpleNamespace(
-            Event=AutoSetEvent,
-            current_thread=threading.current_thread,
-            main_thread=threading.main_thread,
-        ),
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(AutoSetEvent))
     monkeypatch.setattr(
         daemon, "pub", types.SimpleNamespace(subscribe=lambda *_args, **_kwargs: None)
     )
@@ -322,15 +316,7 @@ def test_main_energy_saving_disconnect(monkeypatch):
     """Energy saving mode disconnects and sleeps when deadlines expire."""
 
     _configure_common_defaults(monkeypatch, energy_saving=True)
-    monkeypatch.setattr(
-        daemon,
-        "threading",
-        types.SimpleNamespace(
-            Event=AutoSetEvent,
-            current_thread=threading.current_thread,
-            main_thread=threading.main_thread,
-        ),
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(AutoSetEvent))
     monkeypatch.setattr(
         daemon, "pub", types.SimpleNamespace(subscribe=lambda *_args, **_kwargs: None)
     )
@@ -367,15 +353,7 @@ def test_main_inactivity_reconnect(monkeypatch):
     """Inactivity triggers reconnect attempts and respects stop events."""
 
     _configure_common_defaults(monkeypatch, inactivity=0.5)
-    monkeypatch.setattr(
-        daemon,
-        "threading",
-        types.SimpleNamespace(
-            Event=AutoSetEvent,
-            current_thread=threading.current_thread,
-            main_thread=threading.main_thread,
-        ),
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(AutoSetEvent))
     monkeypatch.setattr(
         daemon, "pub", types.SimpleNamespace(subscribe=lambda *_args, **_kwargs: None)
     )
@@ -911,15 +889,7 @@ def _patch_daemon_for_fast_exit(monkeypatch):
     """Apply monkeypatches that make daemon.main() return after one iteration."""
     _configure_common_defaults(monkeypatch)
     monkeypatch.setattr(daemon.config, "CONNECTION", "fake")
-    monkeypatch.setattr(
-        daemon,
-        "threading",
-        types.SimpleNamespace(
-            Event=AutoSetEvent,
-            current_thread=daemon.threading.current_thread,
-            main_thread=daemon.threading.main_thread,
-        ),
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(AutoSetEvent))
     monkeypatch.setattr(
         daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
     )
@@ -1265,6 +1235,25 @@ def test_main_starts_queue_drainer(monkeypatch):
     daemon.main(provider=provider)
 
     assert len(drainer_calls) == 1
+
+
+def test_main_stops_the_upload_lanes_it_started(monkeypatch):
+    """main() stops its upload lanes' threads on the way out (SPEC UR8)."""
+    monkeypatch.setattr(daemon.queue, "STATE", daemon.queue.QueueState())
+    real_start = daemon.queue._start_queue_drainer
+    threads: list = []
+
+    def start(state):
+        real_start(state)
+        threads.extend(lane.thread for lane in state.drainer.lanes)
+
+    monkeypatch.setattr(daemon.queue, "_start_queue_drainer", start)
+    _patch_daemon_for_fast_exit(monkeypatch)
+    daemon.main(provider=_make_minimal_fake_provider("meshtastic"))
+
+    assert len(threads) == 1
+    assert not threads[0].is_alive()
+    assert daemon.queue.STATE.drainer is None
 
 
 # ---------------------------------------------------------------------------

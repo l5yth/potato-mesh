@@ -48,6 +48,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import meshcore_frames as frames  # noqa: E402 - pytest puts tests/ on sys.path
+from daemon_fakes import daemon_threading  # noqa: E402 - tests/ on sys.path
 
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
 from data.mesh_ingestor.mesh_protocol import MeshProtocol  # noqa: E402 - path setup
@@ -146,15 +147,7 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
     monkeypatch.setattr(daemon.config, "_INACTIVITY_RECONNECT_SECS", 0)
     monkeypatch.setattr(daemon.config, "CONNECTION", "serial0")
 
-    monkeypatch.setattr(
-        daemon,
-        "threading",
-        types.SimpleNamespace(
-            Event=AutoStopEvent,
-            current_thread=daemon.threading.current_thread,
-            main_thread=daemon.threading.main_thread,
-        ),
-    )
+    monkeypatch.setattr(daemon, "threading", daemon_threading(AutoStopEvent))
 
     monkeypatch.setattr(daemon.config, "INSTANCES", (("http://test", ""),))
     monkeypatch.setattr(daemon.config, "INSTANCE", "http://test")

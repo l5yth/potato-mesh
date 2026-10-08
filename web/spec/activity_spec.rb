@@ -117,6 +117,28 @@ RSpec.describe "Ingestor activity time-series (MA3)" do
       expect(activity_rows.map { |r| r[2] }).to eq([3, 4])
     end
 
+    it "adds no second row for a heartbeat sent again (SPEC UR7)" do
+      # An ingestor re-sends a heartbeat whose reply it never got; the re-sent
+      # copy carries the same ingestor, time and packets as the stored row.
+      now = Time.now.to_i
+      post_heartbeat(node_id: "!abc12345", last_seen_time: now - 60, packets: 42)
+      post_heartbeat(node_id: "!abc12345", last_seen_time: now - 60, packets: 42)
+      expect(last_response.status).to eq(201)
+      expect(activity_rows.map { |r| r.first(3) }).to eq([["!abc12345", now - 60, 42]])
+
+      # A later heartbeat with the same count, or another ingestor's at the
+      # same time, is a new interval and still appends.
+      post_heartbeat(node_id: "!abc12345", last_seen_time: now - 30, packets: 42)
+      post_heartbeat(node_id: "!def67890", last_seen_time: now - 60, packets: 42)
+      expect(activity_rows.map { |r| r.first(3) }).to eq(
+        [
+          ["!abc12345", now - 60, 42],
+          ["!abc12345", now - 30, 42],
+          ["!def67890", now - 60, 42],
+        ],
+      )
+    end
+
     it "records no activity when packets is absent (older ingestor)" do
       post_heartbeat
       expect(last_response.status).to eq(201)

@@ -110,4 +110,9 @@ def _store_meshcore_position(
     # lands with nil radio config, unlike MeshCore messages and node upserts,
     # which are already enriched.  The fields are added only when the ingestor
     # has captured them from SELF_INFO (absent ⇒ omitted, never nil-stamped).
-    _queue._queue_post_json("/api/positions", _apply_radio_metadata(payload))
+    # It queues in the position class of every protocol (SPEC UR2, invariant IV).
+    _queue._queue_post_json(
+        "/api/positions",
+        _apply_radio_metadata(payload),
+        priority=_queue._POSITION_POST_PRIORITY,
+    )

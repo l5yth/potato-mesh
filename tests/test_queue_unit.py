@@ -11,13 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for :mod:`data.mesh_ingestor.queue`."""
+"""Unit tests for :mod:`data.mesh_ingestor.queue`.
+
+HTTP is replaced at :func:`queue._open_upload`, the one opener every POST uses,
+or at :func:`queue._send_single` for the lanes (SPEC UR1).
+"""
 
 from __future__ import annotations
 
 import sys
 import threading
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -31,6 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import data.mesh_ingestor.config as config
 import data.mesh_ingestor.queue as _queue_mod
+from data.mesh_ingestor import upload_lanes
 from data.mesh_ingestor.queue import (
     QueueState,
     _clear_post_queue,
@@ -39,7 +43,6 @@ from data.mesh_ingestor.queue import (
     _MAX_SEND_RETRIES,
     _post_json,
     _QUEUE_DEPTH_WARNING_THRESHOLD,
-    _queue_drainer_loop,
     _queue_post_json,
     _send_single,
     _start_queue_drainer,
@@ -54,6 +57,10 @@ from data.mesh_ingestor.queue import (
     _TELEMETRY_POST_PRIORITY,
     _TRACE_POST_PRIORITY,
 )
+from upload_wire import lanes, logs, wait, wire  # noqa: F401 - tests/ on sys.path
+
+OK = upload_lanes.SendOutcome.OK
+UNKNOWN = upload_lanes.SendOutcome.UNKNOWN
 
 
 def _fresh_state() -> QueueState:
@@ -62,7 +69,7 @@ def _fresh_state() -> QueueState:
 
 
 class _FakeResp:
-    """Minimal context-manager response stub for ``urlopen`` patches."""
+    """Minimal context-manager response stub for ``_open_upload`` patches."""
 
     def read(self):
         return b""
@@ -109,7 +116,7 @@ class TestPostJson:
         """Does nothing when INSTANCES is empty."""
         monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
-        with patch("urllib.request.urlopen") as mock_open:
+        with patch.object(_queue_mod, "_open_upload") as mock_open:
             _post_json("/api/test", {"key": "val"})
             mock_open.assert_not_called()
 
@@ -121,11 +128,11 @@ class TestPostJson:
 
         captured_req = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured_req.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/nodes", {"a": 1})
 
         assert len(captured_req) == 1
@@ -144,7 +151,7 @@ class TestPostJson:
         def raise_error(req, timeout=None):
             raise OSError("connection refused")
 
-        with patch("urllib.request.urlopen", raise_error):
+        with patch.object(_queue_mod, "_open_upload", raise_error):
             _post_json("/api/test", {"x": 1})  # should not raise
 
     def test_uses_instance_override(self, monkeypatch):
@@ -153,11 +160,11 @@ class TestPostJson:
 
         captured_req = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured_req.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/test", {}, instance="http://override")
 
         assert "http://override" in captured_req[0].get_full_url()
@@ -170,11 +177,11 @@ class TestPostJson:
 
         captured_req = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured_req.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/test", {})
 
         assert captured_req[0].get_header("Authorization") is None
@@ -409,11 +416,11 @@ class TestMultiInstanceFanOut:
 
         captured = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/nodes", {"a": 1})
 
         assert len(captured) == 2
@@ -433,13 +440,13 @@ class TestMultiInstanceFanOut:
 
         captured = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             if "broken" in req.get_full_url():
                 raise OSError("connection refused")
             captured.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/test", {"x": 1})
 
         assert len(captured) == 1
@@ -455,11 +462,11 @@ class TestMultiInstanceFanOut:
 
         captured = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/test", {}, instance="http://override")
 
         assert len(captured) == 1
@@ -470,7 +477,7 @@ class TestMultiInstanceFanOut:
         monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
 
-        with patch("urllib.request.urlopen") as mock_open:
+        with patch.object(_queue_mod, "_open_upload") as mock_open:
             _post_json("/api/test", {})
             mock_open.assert_not_called()
 
@@ -482,11 +489,11 @@ class TestMultiInstanceFanOut:
 
         captured = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_open(req, timeout=None):
             captured.append(req)
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch.object(_queue_mod, "_open_upload", fake_open):
             _post_json("/api/test", {"v": 1})
 
         assert len(captured) == 1
@@ -521,7 +528,7 @@ def test_http_failure_always_logged(monkeypatch):
     def raise_error(req, timeout=None):
         raise OSError("connection refused")
 
-    with patch("urllib.request.urlopen", raise_error):
+    with patch.object(_queue_mod, "_open_upload", raise_error):
         _send_single("http://localhost", "", "/api/test", {"x": 1})
 
     assert any(
@@ -530,69 +537,100 @@ def test_http_failure_always_logged(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Background drain thread
+# Upload lanes (SPEC UR1)
 # ---------------------------------------------------------------------------
 
 
+def _record_sends(monkeypatch, outcome=OK) -> list[tuple[str, str]]:
+    """Answer every lane POST with ``outcome`` and record ``(instance, path)``.
+
+    The lanes look :func:`queue._send_single` up per attempt, so replacing it
+    replaces their transport.
+    """
+
+    sent: list[tuple[str, str]] = []
+
+    def send(instance, _api_token, path, _payload):
+        sent.append((instance, path))
+        return upload_lanes.SendResult(outcome)
+
+    monkeypatch.setattr(_queue_mod, "_send_single", send)
+    return sent
+
+
+def _kill_lane_thread(lane) -> threading.Thread:
+    """End ``lane``'s thread as a crash would: the reference stays, dead."""
+
+    thread = lane.thread
+    lane.shutdown.set()
+    lane.wake.set()
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    return thread
+
+
 class TestQueueDrainer:
-    """Tests for :func:`_start_queue_drainer` and :func:`_queue_drainer_loop`."""
+    """Tests for :func:`_start_queue_drainer` and :func:`_stop_queue_drainer`."""
 
-    def test_start_queue_drainer_starts_thread(self):
-        """_start_queue_drainer creates and starts a daemon thread."""
+    def test_start_queue_drainer_starts_one_lane_per_instance(self, lanes):
+        """Every configured instance gets its own lane and daemon thread."""
+        state = lanes("alpha.example.test", "beta.example.test")
+        targets = [(lane.instance, lane.api_token) for lane in state.drainer.lanes]
+        assert targets == [
+            ("http://alpha.example.test", "tok-0"),
+            ("http://beta.example.test", "tok-1"),
+        ]
+        assert all(
+            lane.thread.is_alive() and lane.thread.daemon
+            for lane in state.drainer.lanes
+        )
+
+    def test_start_queue_drainer_idempotent(self, lanes):
+        """Calling _start_queue_drainer again creates no second lane or thread."""
+        state = lanes("alpha.example.test")
+        first, thread = state.drainer, state.drainer.lanes[0].thread
+        _start_queue_drainer(state)
+        assert state.drainer is first
+        assert state.drainer.lanes[0].thread is thread
+
+    def test_start_queue_drainer_uses_the_legacy_instance(self, wire, monkeypatch):
+        """Without INSTANCES, the single INSTANCE and API_TOKEN get the lane."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "http://legacy.example.test")
+        monkeypatch.setattr(config, "API_TOKEN", "tok")
         state = _fresh_state()
+        _start_queue_drainer(state)
+        try:
+            targets = [(lane.instance, lane.api_token) for lane in state.drainer.lanes]
+            assert targets == [("http://legacy.example.test", "tok")]
+        finally:
+            _stop_queue_drainer(state)
+
+    def test_start_queue_drainer_without_instances_keeps_the_inline_drain(
+        self, monkeypatch
+    ):
+        """With no instance configured no lane is made: records drain inline."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "")
+        state = _fresh_state()
+        _start_queue_drainer(state)
         assert state.drainer is None
-        _start_queue_drainer(state)
-        assert state.drainer is not None
-        assert state.drainer.is_alive()
-        _stop_queue_drainer(state)
 
-    def test_start_queue_drainer_idempotent(self):
-        """Calling _start_queue_drainer twice does not create a second thread."""
-        state = _fresh_state()
-        _start_queue_drainer(state)
-        first_thread = state.drainer
-        _start_queue_drainer(state)
-        assert state.drainer is first_thread
-        _stop_queue_drainer(state)
+    def test_lanes_deliver_in_the_background(self, lanes, monkeypatch):
+        """With lanes, _queue_post_json returns at once; each lane posts its copy."""
+        sent = _record_sends(monkeypatch)
+        state = lanes("alpha.example.test", "beta.example.test")
 
-    def test_queue_drainer_loop_drains_items(self):
-        """_queue_drainer_loop drains enqueued items when signalled."""
-        state = _fresh_state()
-        drained: list[str] = []
+        _queue_post_json("/api/bg-test", {"k": 1}, priority=10, state=state)
 
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        try:
-            _start_queue_drainer(state)
-            _enqueue_post_json("/api/drainer-test", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while "/api/drainer-test" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/drainer-test" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
-
-    def test_queue_post_json_signals_drain_event_with_drainer(self):
-        """When a drainer is alive, _queue_post_json signals drain_event instead of blocking."""
-        state = _fresh_state()
-        drained: list[str] = []
-
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        try:
-            _start_queue_drainer(state)
-            # With a live drainer, the call should return immediately
-            # (signal only) and the drainer processes the item in the background.
-            _queue_post_json("/api/bg-test", {"k": 1}, priority=10, state=state)
-            deadline = time.monotonic() + 2.0
-            while "/api/bg-test" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/bg-test" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
+        assert state.queue == []
+        assert wait(
+            lambda: sorted(sent)
+            == [
+                ("http://alpha.example.test", "/api/bg-test"),
+                ("http://beta.example.test", "/api/bg-test"),
+            ]
+        )
 
     def test_queue_post_json_falls_back_to_sync_drain_without_drainer(self):
         """When no drainer is running, _queue_post_json drains synchronously."""
@@ -608,52 +646,35 @@ class TestQueueDrainer:
         )
         assert "/api/sync" in sent
 
-    def test_enqueue_during_drain_is_processed(self):
-        """Items enqueued while the drainer is mid-drain are still drained.
+    def test_enqueue_during_drain_is_processed(self, lanes, monkeypatch):
+        """A record put while its lane is sending goes out after it."""
+        sent: list[str] = []
+        sending = threading.Event()
+        release = threading.Event()
 
-        Simulates the race where a new item arrives while
-        ``_drain_post_queue`` is actively processing.  The new item must
-        be picked up within the same drain cycle or on the next signal.
-        """
-        state = _fresh_state()
-        drained: list[str] = []
-        gate = threading.Event()
-
-        original_post_json = _queue_mod._post_json
-
-        def slow_send(path, payload):
-            """Drain the first item slowly, allowing a second enqueue."""
-            drained.append(path)
+        def slow_send(_instance, _api_token, path, _payload):
+            """Hold the first POST until the second record is queued."""
+            sent.append(path)
             if path == "/api/first":
-                gate.set()
+                sending.set()
+                release.wait(timeout=2.0)
+            return upload_lanes.SendResult(OK)
 
-        _queue_mod._post_json = slow_send
-        try:
-            _start_queue_drainer(state)
-            _enqueue_post_json("/api/first", {}, 10, state=state)
-            state.drain_event.set()
-            # Wait until the drainer has started processing /api/first.
-            gate.wait(timeout=2.0)
-            # Enqueue a second item while the drainer is active.
-            _enqueue_post_json("/api/second", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while "/api/second" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/second" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
+        monkeypatch.setattr(_queue_mod, "_send_single", slow_send)
+        state = lanes("alpha.example.test")
+        _queue_post_json("/api/first", {}, priority=10, state=state)
+        assert sending.wait(timeout=2.0)
+        _queue_post_json("/api/second", {}, priority=10, state=state)
+        release.set()
+        assert wait(lambda: sent == ["/api/first", "/api/second"])
 
-    def test_stop_queue_drainer(self):
-        """_stop_queue_drainer signals the thread to exit and joins it."""
-        state = _fresh_state()
-        _start_queue_drainer(state)
-        assert state.drainer is not None
-        assert state.drainer.is_alive()
+    def test_stop_queue_drainer(self, lanes):
+        """_stop_queue_drainer joins every lane thread and detaches the lanes."""
+        state = lanes("alpha.example.test", "beta.example.test")
+        threads = [lane.thread for lane in state.drainer.lanes]
         _stop_queue_drainer(state)
         assert state.drainer is None
-        assert state.shutdown.is_set()
+        assert not any(thread.is_alive() for thread in threads)
 
     def test_stop_queue_drainer_noop_when_not_running(self):
         """_stop_queue_drainer is safe to call with no drainer."""
@@ -663,169 +684,87 @@ class TestQueueDrainer:
 
 
 # ---------------------------------------------------------------------------
-# Drainer resilience
+# Lane resilience
 # ---------------------------------------------------------------------------
+
+
+def _flaky_pump(monkeypatch) -> list[int]:
+    """Make the first pump of any lane raise; return the call log."""
+
+    original = upload_lanes._Lane.pump
+    calls: list[int] = []
+
+    def flaky(lane, stop=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("transient pump error")
+        return original(lane, stop)
+
+    monkeypatch.setattr(upload_lanes._Lane, "pump", flaky)
+    return calls
 
 
 class TestDrainerResilience:
-    """Tests verifying the drainer thread cannot be killed by exceptions."""
+    """Tests verifying a lane thread cannot be killed by exceptions."""
 
-    def test_drainer_survives_drain_exception(self, monkeypatch):
-        """The drainer loop keeps running after _drain_post_queue raises."""
-        state = _fresh_state()
-        drained: list[str] = []
-        call_count = [0]
+    def test_lane_survives_a_pump_exception(self, lanes, logs, monkeypatch):
+        """A lane keeps running, and delivering, after its pump raises."""
+        sent = _record_sends(monkeypatch)
+        _flaky_pump(monkeypatch)
+        state = lanes("alpha.example.test")
+        assert wait(lambda: any(msg == "Upload lane error" for msg, _kw in logs))
 
-        original_drain = _queue_mod._drain_post_queue
+        _queue_post_json("/api/second", {}, priority=10, state=state)
 
-        def flaky_drain(s, send=None):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise RuntimeError("transient drain error")
-            original_drain(s, send=send)
+        assert wait(lambda: sent == [("http://alpha.example.test", "/api/second")])
+        assert state.drainer.lanes[0].thread.is_alive()
+        error = next(kw for msg, kw in logs if msg == "Upload lane error")
+        assert (error["error_class"], error["severity"]) == ("RuntimeError", "error")
 
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        monkeypatch.setattr(_queue_mod, "_drain_post_queue", flaky_drain)
-        try:
-            _start_queue_drainer(state)
-            # First signal triggers the RuntimeError; drainer should survive.
-            _enqueue_post_json("/api/first", {}, 10, state=state)
-            state.drain_event.set()
-            time.sleep(0.2)
-            assert state.drainer.is_alive(), "Drainer died after drain exception"
-            # Second signal should succeed normally.
-            _enqueue_post_json("/api/second", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while "/api/second" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/second" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
-
-    def test_drainer_survives_debug_log_exception(self, monkeypatch):
-        """The drainer survives even when _debug_log raises inside the error handler."""
-        state = _fresh_state()
-        drained: list[str] = []
-        call_count = [0]
-
-        original_drain = _queue_mod._drain_post_queue
-
-        def flaky_drain(s, send=None):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise RuntimeError("drain error")
-            original_drain(s, send=send)
-
-        def broken_log(*args, **kwargs):
-            raise BrokenPipeError("stdout closed")
-
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        monkeypatch.setattr(_queue_mod, "_drain_post_queue", flaky_drain)
-        monkeypatch.setattr(config, "_debug_log", broken_log)
-        try:
-            _start_queue_drainer(state)
-            _enqueue_post_json("/api/first", {}, 10, state=state)
-            state.drain_event.set()
-            time.sleep(0.2)
-            assert state.drainer.is_alive(), "Drainer died after log exception"
-            # Restore log so the second drain can proceed.
-            monkeypatch.undo()
-            _queue_mod._post_json = lambda path, payload: drained.append(path)
-            monkeypatch.setattr(_queue_mod, "_drain_post_queue", original_drain)
-            _enqueue_post_json("/api/second", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while "/api/second" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/second" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
-
-    def test_drainer_logs_startup(self, monkeypatch):
-        """The drainer logs a startup message."""
-        state = _fresh_state()
-        log_msgs: list[str] = []
-        monkeypatch.setattr(
-            config, "_debug_log", lambda msg, **kw: log_msgs.append(msg)
+    def test_lane_logs_startup_and_exit(self, lanes, logs):
+        """A lane thread logs when it starts and when it exits."""
+        state = lanes("alpha.example.test")
+        assert wait(
+            lambda: any(msg == "Upload lane thread started" for msg, _kw in logs)
         )
-        _start_queue_drainer(state)
-        time.sleep(0.1)
         _stop_queue_drainer(state)
-        assert any("started" in m.lower() for m in log_msgs)
-
-    def test_drainer_logs_exit(self, monkeypatch):
-        """The drainer logs an exit message on clean shutdown."""
-        state = _fresh_state()
-        log_msgs: list[str] = []
-        monkeypatch.setattr(
-            config, "_debug_log", lambda msg, **kw: log_msgs.append(msg)
-        )
-        _start_queue_drainer(state)
-        time.sleep(0.1)
-        _stop_queue_drainer(state)
-        assert any("exiting" in m.lower() for m in log_msgs)
-
-    def test_drainer_logs_depth_warning(self, monkeypatch):
-        """A warning is emitted when queue depth exceeds the threshold."""
-        state = _fresh_state()
-        log_kwargs: list[dict] = []
-        monkeypatch.setattr(
-            config,
-            "_debug_log",
-            lambda msg, **kw: log_kwargs.append({"msg": msg, **kw}),
-        )
-
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: None
-        try:
-            for i in range(_QUEUE_DEPTH_WARNING_THRESHOLD + 1):
-                _enqueue_post_json(f"/api/{i}", {}, 10, state=state)
-            _start_queue_drainer(state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while (
-                not any("depth" in e.get("msg", "").lower() for e in log_kwargs)
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.01)
-            assert any("depth" in e.get("msg", "").lower() for e in log_kwargs)
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
+        assert any(msg == "Upload lane thread exiting" for msg, _kw in logs)
 
 
 # ---------------------------------------------------------------------------
-# Retry logic
+# Outcomes of one POST (UR5) and the inline drain's retries
 # ---------------------------------------------------------------------------
 
 
 class TestRetryLogic:
-    """Tests for send failure retry in :func:`_drain_post_queue`."""
+    """Tests for :func:`_send_single` outcomes and inline-drain retries."""
 
-    def test_send_single_returns_true_on_success(self, monkeypatch):
-        """_send_single returns True when the HTTP call succeeds."""
-        with patch("urllib.request.urlopen", lambda req, timeout=None: _FakeResp()):
-            assert _send_single("http://localhost", "", "/api/ok", {}) is True
+    def test_send_single_reports_ok_on_success(self):
+        """_send_single reports OK when the instance answers 2xx."""
+        with patch.object(
+            _queue_mod, "_open_upload", lambda req, timeout=None: _FakeResp()
+        ):
+            result = _send_single("http://localhost", "", "/api/ok", {})
+        assert (result.outcome, result.status) == (OK, None)
 
-    def test_send_single_returns_false_on_failure(self, monkeypatch):
-        """_send_single returns False when the HTTP call fails."""
+    def test_send_single_reports_a_failure_as_retriable(self, monkeypatch):
+        """An error while waiting for the reply leaves the outcome unknown."""
         monkeypatch.setattr(config, "_debug_log", lambda *a, **kw: None)
 
         def raise_error(req, timeout=None):
             raise OSError("fail")
 
-        with patch("urllib.request.urlopen", raise_error):
-            assert _send_single("http://localhost", "", "/api/fail", {}) is False
+        with patch.object(_queue_mod, "_open_upload", raise_error):
+            result = _send_single("http://localhost", "", "/api/fail", {})
+        assert result.outcome is UNKNOWN
+        assert result.retriable
 
     def test_post_json_returns_true_on_success(self, monkeypatch):
         """_post_json returns True when the instance succeeds."""
         monkeypatch.setattr(config, "INSTANCES", (("http://ok", ""),))
-        with patch("urllib.request.urlopen", lambda req, timeout=None: _FakeResp()):
+        with patch.object(
+            _queue_mod, "_open_upload", lambda req, timeout=None: _FakeResp()
+        ):
             assert _post_json("/api/ok", {}) is True
 
     def test_post_json_returns_false_when_all_fail(self, monkeypatch):
@@ -836,23 +775,67 @@ class TestRetryLogic:
         def raise_error(req, timeout=None):
             raise OSError("fail")
 
-        with patch("urllib.request.urlopen", raise_error):
+        with patch.object(_queue_mod, "_open_upload", raise_error):
             assert _post_json("/api/fail", {}) is False
 
     def test_post_json_returns_true_when_at_least_one_succeeds(self, monkeypatch):
-        """_post_json returns True when at least one instance succeeds."""
+        """_post_json returns True when at least one instance succeeds.
+
+        The inline drain's rule only: it re-queues nothing once one instance
+        took the payload.  Started lanes send each instance its own copy, so
+        none loses a record another one took (SPEC UR1).
+        """
         monkeypatch.setattr(
             config, "INSTANCES", (("http://broken", ""), ("http://ok", ""))
         )
         monkeypatch.setattr(config, "_debug_log", lambda *a, **kw: None)
 
-        def selective_urlopen(req, timeout=None):
+        def selective_open(req, timeout=None):
             if "broken" in req.get_full_url():
                 raise OSError("fail")
             return _FakeResp()
 
-        with patch("urllib.request.urlopen", selective_urlopen):
+        with patch.object(_queue_mod, "_open_upload", selective_open):
             assert _post_json("/api/mixed", {}) is True
+
+    def test_post_json_does_not_retry_a_permanent_answer(self, monkeypatch):
+        """A final 4xx is not worth an inline retry, on any path (UR5)."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://a", ""), ("http://b", "")))
+        monkeypatch.setattr(config, "_debug_log", lambda *a, **kw: None)
+
+        def reject(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", None, None)
+
+        with patch.object(_queue_mod, "_open_upload", reject):
+            assert _post_json("/api/bad", {}) is True
+            assert _post_json("/api/bad", {}, instance="http://c") is True
+
+    def test_post_json_skips_empty_targets(self, monkeypatch):
+        """An empty override or configured instance is passed over, not failed."""
+        monkeypatch.setattr(config, "INSTANCES", (("", "t1"), ("http://ok", "t2")))
+        captured = []
+
+        def fake_open(req, timeout=None):
+            captured.append(req.get_full_url())
+            return _FakeResp()
+
+        with patch.object(_queue_mod, "_open_upload", fake_open):
+            assert _post_json("/api/x", {}, instance="") is True
+            assert _post_json("/api/x", {}) is True
+        assert captured == ["http://ok/api/x"]
+
+    def test_post_json_reports_a_failed_single_target(self, monkeypatch):
+        """The override and the legacy target report a retriable failure."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "http://legacy")
+        monkeypatch.setattr(config, "_debug_log", lambda *a, **kw: None)
+
+        def raise_error(req, timeout=None):
+            raise OSError("fail")
+
+        with patch.object(_queue_mod, "_open_upload", raise_error):
+            assert _post_json("/api/fail", {}) is False
+            assert _post_json("/api/fail", {}, instance="http://override") is False
 
     def test_drain_retries_on_send_failure(self):
         """Items are re-queued and retried when send returns False."""
@@ -929,41 +912,25 @@ class TestRetryLogic:
 
 
 # ---------------------------------------------------------------------------
-# Drainer auto-restart
+# Lane thread auto-restart
 # ---------------------------------------------------------------------------
 
 
 class TestDrainerAutoRestart:
-    """Tests for automatic drainer thread recovery in :func:`_queue_post_json`."""
+    """Tests for lane thread recovery in :func:`_queue_post_json`."""
 
-    def test_queue_post_json_restarts_dead_drainer(self, monkeypatch):
-        """A dead drainer is automatically restarted by _queue_post_json."""
-        state = _fresh_state()
-        drained: list[str] = []
+    def test_queue_post_json_restarts_a_dead_lane_thread(self, lanes, monkeypatch):
+        """A lane whose thread died is restarted by the next record."""
+        sent = _record_sends(monkeypatch)
+        state = lanes("alpha.example.test")
+        lane = state.drainer.lanes[0]
+        dead = _kill_lane_thread(lane)
 
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        monkeypatch.setattr(config, "_debug_log", lambda *a, **kw: None)
-        try:
-            # Start and then kill the drainer.
-            _start_queue_drainer(state)
-            _stop_queue_drainer(state)
-            # _stop_queue_drainer sets drainer=None, so simulate a crash
-            # where the Thread object is still present but dead.
-            state.drainer = threading.Thread(target=lambda: None, daemon=True)
-            state.drainer.start()
-            state.drainer.join()  # Dead thread, is_alive()=False
+        _queue_post_json("/api/revived", {"v": 1}, priority=10, state=state)
 
-            _queue_post_json("/api/revived", {"v": 1}, priority=10, state=state)
-            deadline = time.monotonic() + 2.0
-            while "/api/revived" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/revived" in drained
-            assert state.drainer is not None
-            assert state.drainer.is_alive()
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
+        assert lane.thread is not dead
+        assert lane.thread.is_alive()
+        assert wait(lambda: sent == [("http://alpha.example.test", "/api/revived")])
 
     def test_queue_post_json_no_restart_when_never_started(self):
         """No drainer is started when state.drainer is None (daemon's job)."""
@@ -980,18 +947,15 @@ class TestDrainerAutoRestart:
         assert "/api/no-restart" in sent
         assert state.drainer is None
 
-    def test_start_queue_drainer_resets_shutdown(self):
-        """_start_queue_drainer clears the shutdown event before starting."""
-        state = _fresh_state()
-        _start_queue_drainer(state)
+    def test_start_after_stop_makes_fresh_lanes(self, lanes):
+        """Starting again after a stop builds and starts new lanes."""
+        state = lanes("alpha.example.test")
+        old = state.drainer
         _stop_queue_drainer(state)
-        assert state.shutdown.is_set()
-        # Re-start should clear shutdown and start a live thread.
         _start_queue_drainer(state)
-        assert not state.shutdown.is_set()
-        assert state.drainer is not None
-        assert state.drainer.is_alive()
-        _stop_queue_drainer(state)
+        assert state.drainer is not old
+        assert state.drainer.lanes[0].thread.is_alive()
+        assert not state.drainer.lanes[0].shutdown.is_set()
 
 
 # ---------------------------------------------------------------------------
@@ -1042,18 +1006,23 @@ class TestDefensiveExceptionGuards:
     """Cover the ``except Exception: pass`` guards wrapping ``_debug_log`` calls.
 
     These guards ensure that a broken logging backend (e.g. ``BrokenPipeError``
-    from ``print()`` to a closed stdout) never crashes the drainer thread or
-    drops data.
+    from ``print()`` to a closed stdout) never crashes a lane thread or drops
+    data.
     """
 
-    def test_drain_drop_log_exception(self, monkeypatch):
-        """Max-retries drop path survives a broken _debug_log."""
-        state = _fresh_state()
+    @staticmethod
+    def _break_log(monkeypatch) -> None:
+        """Make every ``_debug_log`` call raise."""
         monkeypatch.setattr(
             config,
             "_debug_log",
             lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
         )
+
+    def test_drain_drop_log_exception(self, monkeypatch):
+        """Max-retries drop path survives a broken _debug_log."""
+        state = _fresh_state()
+        self._break_log(monkeypatch)
 
         attempts: list[str] = []
 
@@ -1066,133 +1035,51 @@ class TestDefensiveExceptionGuards:
         _drain_post_queue(state, send=always_fail)
         assert attempts.count("/api/fail") == _MAX_SEND_RETRIES + 1
 
-    def test_drainer_startup_log_exception(self, monkeypatch):
-        """Drainer thread starts even when the startup log raises."""
-        state = _fresh_state()
-        monkeypatch.setattr(
-            config,
-            "_debug_log",
-            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
-        )
-        _start_queue_drainer(state)
-        time.sleep(0.15)
-        assert state.drainer is not None
-        assert state.drainer.is_alive()
-        # Restore log so stop can log cleanly.
-        monkeypatch.undo()
-        _stop_queue_drainer(state)
+    def test_lane_startup_log_exception(self, lanes, monkeypatch):
+        """A lane thread starts and delivers even when its startup log raises."""
+        self._break_log(monkeypatch)
+        sent = _record_sends(monkeypatch)
+        state = lanes("alpha.example.test")
+        _queue_post_json("/api/x", {}, priority=10, state=state)
+        assert wait(lambda: sent == [("http://alpha.example.test", "/api/x")])
 
-    def test_drainer_exit_log_exception(self, monkeypatch):
-        """Drainer thread exits cleanly even when the exit log raises."""
-        state = _fresh_state()
-        _start_queue_drainer(state)
-        time.sleep(0.05)
-        # Break _debug_log AFTER startup so only the exit log raises.
-        monkeypatch.setattr(
-            config,
-            "_debug_log",
-            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
-        )
+    def test_lane_exit_log_exception(self, lanes, monkeypatch):
+        """A lane thread exits cleanly even when its exit log raises."""
+        state = lanes("alpha.example.test")
+        thread = state.drainer.lanes[0].thread
+        # Break _debug_log after startup so only the exit log raises.
+        self._break_log(monkeypatch)
         _stop_queue_drainer(state)
         assert state.drainer is None
+        assert not thread.is_alive()
 
-    def test_drainer_depth_warning_log_exception(self, monkeypatch):
-        """Drainer survives a broken _debug_log during depth warning."""
-        state = _fresh_state()
-        drained: list[str] = []
+    def test_lane_depth_warning_log_exception(self, lanes, monkeypatch):
+        """A paused lane survives a broken log while it warns of its backlog."""
+        _record_sends(monkeypatch, outcome=upload_lanes.SendOutcome.UNSENT)
+        self._break_log(monkeypatch)
+        state = lanes("alpha.example.test")
+        lane = state.drainer.lanes[0]
+        for i in range(_QUEUE_DEPTH_WARNING_THRESHOLD + 1):
+            _queue_post_json(f"/api/{i}", {}, priority=10, state=state)
+        assert wait(lambda: lane._depth_warned)
+        assert lane.thread.is_alive()
+        assert _queue_mod._queue_depth(state) == _QUEUE_DEPTH_WARNING_THRESHOLD + 1
 
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        try:
-            _start_queue_drainer(state)
-            time.sleep(0.05)
-            # Break _debug_log so the depth warning raises.
-            monkeypatch.setattr(
-                config,
-                "_debug_log",
-                lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
-            )
-            for i in range(_QUEUE_DEPTH_WARNING_THRESHOLD + 1):
-                _enqueue_post_json(f"/api/{i}", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while (
-                len(drained) < _QUEUE_DEPTH_WARNING_THRESHOLD + 1
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.01)
-            assert len(drained) == _QUEUE_DEPTH_WARNING_THRESHOLD + 1
-        finally:
-            _queue_mod._post_json = original_post_json
-            monkeypatch.undo()
-            _stop_queue_drainer(state)
+    def test_lane_error_handler_log_exception(self, lanes, monkeypatch):
+        """A lane survives when both its pump and the error log raise."""
+        sent = _record_sends(monkeypatch)
+        calls = _flaky_pump(monkeypatch)
+        self._break_log(monkeypatch)
+        state = lanes("alpha.example.test")
+        assert wait(lambda: len(calls) >= 1)
+        _queue_post_json("/api/second", {}, priority=10, state=state)
+        assert wait(lambda: sent == [("http://alpha.example.test", "/api/second")])
 
-    def test_drainer_error_handler_log_exception(self, monkeypatch):
-        """Drainer survives when both drain and error-log raise."""
-        state = _fresh_state()
-        call_count = [0]
-        original_drain = _queue_mod._drain_post_queue
-
-        def flaky_drain(s, send=None):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise RuntimeError("drain boom")
-            original_drain(s, send=send)
-
-        drained: list[str] = []
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        monkeypatch.setattr(_queue_mod, "_drain_post_queue", flaky_drain)
-        # _debug_log raises on the error handler's inner logging call.
-        monkeypatch.setattr(
-            config,
-            "_debug_log",
-            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
-        )
-        try:
-            _start_queue_drainer(state)
-            _enqueue_post_json("/api/first", {}, 10, state=state)
-            state.drain_event.set()
-            time.sleep(0.3)
-            assert state.drainer.is_alive()
-            # Restore to process an item normally.
-            monkeypatch.undo()
-            _queue_mod._post_json = lambda path, payload: drained.append(path)
-            monkeypatch.setattr(_queue_mod, "_drain_post_queue", original_drain)
-            _enqueue_post_json("/api/second", {}, 10, state=state)
-            state.drain_event.set()
-            deadline = time.monotonic() + 2.0
-            while "/api/second" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/second" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            _stop_queue_drainer(state)
-
-    def test_restart_warning_log_exception(self, monkeypatch):
-        """Drainer restart proceeds even when the restart warning log raises."""
-        state = _fresh_state()
-        drained: list[str] = []
-        original_post_json = _queue_mod._post_json
-        _queue_mod._post_json = lambda path, payload: drained.append(path)
-        monkeypatch.setattr(
-            config,
-            "_debug_log",
-            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
-        )
-        try:
-            # Simulate a crashed drainer (dead Thread, not None).
-            state.drainer = threading.Thread(target=lambda: None, daemon=True)
-            state.drainer.start()
-            state.drainer.join()
-            assert not state.drainer.is_alive()
-
-            _queue_post_json("/api/restarted", {"v": 1}, priority=10, state=state)
-            deadline = time.monotonic() + 2.0
-            while "/api/restarted" not in drained and time.monotonic() < deadline:
-                time.sleep(0.01)
-            assert "/api/restarted" in drained
-        finally:
-            _queue_mod._post_json = original_post_json
-            monkeypatch.undo()
-            _stop_queue_drainer(state)
+    def test_restart_warning_log_exception(self, lanes, monkeypatch):
+        """A dead lane thread is restarted even when the restart warning raises."""
+        sent = _record_sends(monkeypatch)
+        state = lanes("alpha.example.test")
+        _kill_lane_thread(state.drainer.lanes[0])
+        self._break_log(monkeypatch)
+        _queue_post_json("/api/restarted", {"v": 1}, priority=10, state=state)
+        assert wait(lambda: sent == [("http://alpha.example.test", "/api/restarted")])

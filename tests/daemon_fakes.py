@@ -20,7 +20,9 @@ Imported by test modules as ``daemon_fakes`` (pytest puts ``tests/`` on
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +38,12 @@ class FakeEvent:
     instances: list["FakeEvent"] = []
 
     def __init__(self, *, auto_set_on_wait: bool = False):
+        """Create an unset event and register it in :attr:`instances`.
+
+        Parameters:
+            auto_set_on_wait: Whether each :meth:`wait` sets the event.
+        """
+
         self._is_set = False
         self._auto_set_on_wait = auto_set_on_wait
         self.wait_calls: list[Any] = []
@@ -58,6 +66,31 @@ class FakeEvent:
         if self._auto_set_on_wait:
             self._is_set = True
         return self._is_set
+
+
+def daemon_threading(event_cls: type) -> SimpleNamespace:
+    """Return a stand-in for the daemon's ``threading`` whose ``Event`` is ``event_cls``.
+
+    A test sets it as ``daemon.threading`` only, never on the shared
+    :mod:`threading` module, and ``Thread``, ``current_thread`` and
+    ``main_thread`` stay the real ones: the threads ``daemon.main()`` starts
+    (one per upload lane, SPEC UR1) must get real events, and patching the
+    shared ``threading.Event`` broke ``Thread.start()`` (Known gap C2).
+
+    Parameters:
+        event_cls: The class the daemon creates its events from.
+
+    Returns:
+        A namespace with ``Event``, ``Thread``, ``current_thread`` and
+        ``main_thread``.
+    """
+
+    return SimpleNamespace(
+        Event=event_cls,
+        Thread=threading.Thread,
+        current_thread=threading.current_thread,
+        main_thread=threading.main_thread,
+    )
 
 
 def make_state(**overrides):
@@ -83,4 +116,4 @@ def make_state(**overrides):
     return state
 
 
-__all__ = ["FakeEvent", "make_state"]
+__all__ = ["FakeEvent", "daemon_threading", "make_state"]
