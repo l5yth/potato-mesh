@@ -53,10 +53,24 @@ const MESHTASTIC = Object.freeze({
   hops: 1,
 });
 
+/**
+ * A line whose sender a future API marks verified (``sender_verified: true``).
+ * The API sends no such row today (SPEC SV2); the chat tags it if one comes.
+ */
+const VERIFIED = Object.freeze({ ...NAMED, id: 404, sender_verified: true });
+
 /** The hydrated sender node the dashboard attaches to a line. */
 const ALICE_NODE = Object.freeze({ short_name: 'ALCE', role: 'COMPANION', protocol: 'meshcore' });
 
-const MARKER = ' <span class="chat-sender-unverified" title="Sender not verified">unverified</span>';
+/**
+ * The unverified marker (SPEC SV3, amended 2026-10-08): kept with its class
+ * and title for inspection, hidden, and without a leading space, so the line
+ * shows and spaces nothing for it.
+ */
+const MARKER = '<span class="chat-sender-unverified" title="Sender not verified" hidden>unverified</span>';
+
+/** The visible tag of a verified sender, with a leading space like the route chip. */
+const VERIFIED_TAG = ' <span class="chat-sender-verified" title="Sender verified">verified</span>';
 
 /**
  * Badge renderer standing in for the dashboard's ``renderShortHtml``.
@@ -89,12 +103,21 @@ test('isSenderUnverified is true only for sender_verified false or a badge named
   assert.equal(isSenderUnverified(MESHTASTIC, {}), false);
 });
 
-test('formatChatSenderMarker renders a titled "unverified" chip with a leading space', () => {
+test('formatChatSenderMarker keeps the "unverified" marker hidden, with its class and title, and no leading space', () => {
   assert.equal(formatChatSenderMarker(NAMED), MARKER);
   assert.equal(formatChatSenderMarker(MESHTASTIC, { senderFromText: true }), MARKER);
 });
 
-test('formatChatSenderMarker renders nothing for a sender from an id the packet carries', () => {
+test('formatChatSenderMarker shows a "verified" tag only for sender_verified true', () => {
+  assert.equal(formatChatSenderMarker(VERIFIED), VERIFIED_TAG);
+  for (const value of [undefined, null, 'true', 1, {}]) {
+    assert.equal(formatChatSenderMarker({ ...NAMED, sender_verified: value }), '', `${String(value)} is not the flag`);
+  }
+  // A badge the renderer named from the text is never verified, whatever the row says.
+  assert.equal(formatChatSenderMarker(VERIFIED, { senderFromText: true }), MARKER);
+});
+
+test('formatChatSenderMarker renders nothing for a row without the key', () => {
   assert.equal(formatChatSenderMarker(MESHTASTIC), '');
   assert.equal(formatChatSenderMarker({ ...NAMED, sender_verified: undefined }), '');
   assert.equal(formatChatSenderMarker(null), '');
@@ -102,7 +125,7 @@ test('formatChatSenderMarker renders nothing for a sender from an id the packet 
 
 // --- the dashboard chat line ---
 
-test('the dashboard chat line marks the sender after the badge and before the route chip, outside the prefix', () => {
+test('the dashboard chat line keeps the hidden marker after the badge and before the route chip, outside the prefix', () => {
   withApp((t) => {
     const html = innerHtml(t.createMessageChatEntry({ ...NAMED, node: ALICE_NODE }));
     const marker = html.indexOf(MARKER);
@@ -110,6 +133,20 @@ test('the dashboard chat line marks the sender after the badge and before the ro
     assert.ok(marker < html.indexOf('class="chat-route-chip"'), 'marker precedes the route chip');
     assert.ok(marker < html.indexOf('see you at the hut'), 'marker precedes the text');
     assert.match(html, /^\[[^\]]*\]\[[^\]]*\]\[[^\]]*\] /, 'the bracketed 19ch prefix is unchanged');
+    // The hidden element is the only difference from the same line without the flag.
+    const unflagged = innerHtml(t.createMessageChatEntry({ ...NAMED, sender_verified: undefined, node: ALICE_NODE }));
+    assert.equal(html.replace(MARKER, ''), unflagged, 'the marker adds no text and no space');
+  });
+});
+
+test('the dashboard chat line tags a verified sender after the badge and before the route chip', () => {
+  withApp((t) => {
+    const html = innerHtml(t.createMessageChatEntry({ ...VERIFIED, node: ALICE_NODE }));
+    const tag = html.indexOf(VERIFIED_TAG);
+    assert.ok(tag > html.indexOf('short-name'), 'tag follows the sender badge');
+    assert.ok(tag < html.indexOf('class="chat-route-chip"'), 'tag precedes the route chip');
+    assert.ok(tag < html.indexOf('see you at the hut'), 'tag precedes the text');
+    assert.ok(!html.includes('chat-sender-unverified'), html);
   });
 });
 
@@ -121,6 +158,7 @@ test('the dashboard chat line has no marker for a Meshtastic sender or an unflag
       t.createMessageChatEntry({ ...NAMED, sender_verified: undefined, node: ALICE_NODE }),
     );
     assert.ok(!unflagged.includes('chat-sender-unverified'), unflagged);
+    assert.ok(!meshtastic.includes('chat-sender-verified') && !unflagged.includes('chat-sender-verified'));
   });
 });
 
@@ -142,32 +180,61 @@ test('the dashboard marks a MeshCore channel line whose badge it named from the 
 
 // --- the node page ---
 
-test('the node page marks the sender after the badge and before the route chip', () => {
+test('the node page keeps the hidden marker after the badge and before the route chip', () => {
   const node = { shortName: 'ALCE', longName: 'Alice', role: 'COMPANION', nodeId: '!a11ce001', protocol: 'meshcore' };
   const html = renderMessages([{ ...NAMED, node: ALICE_NODE }], badge, node);
   const marker = html.indexOf(MARKER);
   assert.ok(marker > html.indexOf('short-name'), 'marker follows the sender badge');
   assert.ok(marker < html.indexOf('class="chat-route-chip"'), 'marker precedes the route chip');
   assert.ok(marker < html.indexOf('see you at the hut'), 'marker precedes the text');
+  const unflagged = renderMessages([{ ...NAMED, sender_verified: undefined, node: ALICE_NODE }], badge, node);
+  assert.equal(html.replace(MARKER, ''), unflagged, 'the marker adds no text and no space');
   // The node page names a MeshCore channel badge from the text when the line
   // carries no hydrated node; that badge is marked too.
   const fromText = renderMessages([{ ...NAMED, sender_verified: undefined }], badge, node);
   assert.ok(fromText.indexOf(MARKER) > fromText.indexOf('short-name'), fromText);
 });
 
-test('the node page has no marker for a Meshtastic sender', () => {
+test('the node page tags a verified sender after the badge and before the route chip', () => {
+  const node = { shortName: 'ALCE', longName: 'Alice', role: 'COMPANION', nodeId: '!a11ce001', protocol: 'meshcore' };
+  const html = renderMessages([{ ...VERIFIED, node: ALICE_NODE }], badge, node);
+  const tag = html.indexOf(VERIFIED_TAG);
+  assert.ok(tag > html.indexOf('short-name'), 'tag follows the sender badge');
+  assert.ok(tag < html.indexOf('class="chat-route-chip"'), 'tag precedes the route chip');
+  assert.ok(tag < html.indexOf('see you at the hut'), 'tag precedes the text');
+});
+
+test('the node page has no marker and no tag for a Meshtastic sender', () => {
   const node = { shortName: 'BOB', longName: 'Bob', role: 'CLIENT', nodeId: '!0badc0de', protocol: 'meshtastic' };
   const html = renderMessages([{ ...MESHTASTIC, node: { short_name: 'BOB' } }], badge, node);
   assert.ok(html.includes('short-name') && !html.includes('chat-sender-unverified'), html);
+  assert.ok(!html.includes('chat-sender-verified'), html);
 });
 
 // --- the stylesheet ---
 
+/** The dashboard stylesheet. */
+const CSS = readFileSync(fileURLToPath(new URL('../../../styles/base.css', import.meta.url)), 'utf8');
+
 test('base.css keeps the marker out of the hanging indent and lets the line wrap', () => {
-  const cssPath = fileURLToPath(new URL('../../../styles/base.css', import.meta.url));
-  const rule = readFileSync(cssPath, 'utf8').match(/\.chat-sender-unverified \{[^}]*\}/);
+  const rule = CSS.match(/\.chat-sender-unverified \{[^}]*\}/);
   assert.ok(rule, '.chat-sender-unverified rule exists');
   assert.match(rule[0], /text-indent: 0;/);
+  assert.match(rule[0], /display: inline-block;/);
+  assert.doesNotMatch(rule[0], /white-space: nowrap/, 'the line may wrap (LC3)');
+});
+
+test('base.css hides the marker while it carries hidden, over its inline-block', () => {
+  // An author display beats the UA sheet's [hidden], so the rule must say it.
+  const rule = CSS.match(/\.chat-sender-unverified\[hidden\] \{[^}]*\}/);
+  assert.ok(rule, '.chat-sender-unverified[hidden] rule exists');
+  assert.match(rule[0], /display: none;/);
+});
+
+test('base.css keeps the verified tag out of the hanging indent and lets the line wrap', () => {
+  const rule = CSS.match(/\.chat-sender-verified \{[^}]*\}/);
+  assert.ok(rule, '.chat-sender-verified rule exists');
+  assert.match(rule[0], /text-indent: 0;/, 'outside the 19ch hang (FU9)');
   assert.match(rule[0], /display: inline-block;/);
   assert.doesNotMatch(rule[0], /white-space: nowrap/, 'the line may wrap (LC3)');
 });

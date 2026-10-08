@@ -52,9 +52,10 @@ module PotatoMesh
       # Decide whether a later copy's scope replaces the stored one (SPEC SC6).
       #
       # A NULL scope takes any value. A stored {MESSAGE_SCOPE_UNKNOWN} takes a
-      # resolved region name: a scoped packet's transport code matches only its
-      # true region (a false match is about one in 65,536 per frame), so an
-      # ingestor that names the region knows more than one that could not.
+      # resolved region name: a scoped packet's transport code is reproduced by
+      # its true region and by another candidate name only by chance (SPEC SC3
+      # gives the rate), so an ingestor that names the region knows more than
+      # one that could not.
       # {MESSAGE_SCOPE_UNSCOPED} and a stored name are never replaced, and a
       # later {MESSAGE_SCOPE_UNKNOWN} replaces nothing.
       #

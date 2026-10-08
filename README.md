@@ -360,7 +360,7 @@ RSSI, repeater path and flood scope, and per-advert SNR/RSSI/hops for every node
 heard - including nodes with no room in the radio's contact roster.
 
 The chat shows each message's hop count and scope. To show your region's name
-instead of `scoped`, set the radio's default flood scope in the MeshCore app
+instead of `??`, set the radio's default flood scope in the MeshCore app
 (firmware 1.15 or later).
 
 The ingestor writes one radio setting at startup: enables the firmware's

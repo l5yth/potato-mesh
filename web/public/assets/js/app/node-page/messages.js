@@ -210,8 +210,8 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
             ?? null,
         source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
-      // A sender named only by the text gets a marker right after its badge
-      // (SPEC SV3).
+      // A sender named only by the text gets a hidden marker right after its
+      // badge, a verified one a tag (SPEC SV3).
       const senderMarker = formatChatSenderMarker(message, {
         senderFromText: senderNode !== null && senderNode === meshcoreSenderNode,
       });

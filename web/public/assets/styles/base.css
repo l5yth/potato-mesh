@@ -2089,12 +2089,22 @@ input[type="radio"] {
 }
 
 /* One protocol in the first column: its header and role filters, spaced as a
-   column spaces them. No margin or padding: the stack's gap is the only space
-   between groups. */
+   column spaces them. No margin or padding: the stack's gap and the Reticulum
+   sub-headline's margin below are the only space between groups. */
 .legend-group {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* The Reticulum sub-headline under the MeshCore group (SPEC LS1, amended
+   2026-10-08): a 12px top margin over the stack's 8px gap, so the stacked
+   groups read as two legends. A margin stays behind when the group above it
+   hides, so it applies only while the stack is not `legend-column--lone`,
+   which applyProtocolVisibility sets while fewer than two groups are in view:
+   a lone group keeps the column top and top-aligns with Meshtastic (FU12). */
+.legend-column--stack:not(.legend-column--lone) > .legend-group + .legend-group > .legend-column-header {
+  margin-top: 12px;
 }
 
 .legend-protocol-count {
@@ -3254,11 +3264,14 @@ button.legend-item[aria-pressed="true"] {
   font-size: 0.85em;
 }
 
-/* Unverified-sender marker (SPEC SV3): an "unverified" chip after the sender
-   badge of a line whose sender is named only by its text, outside the 19ch
-   prefix (FU9). It resets the inherited hanging indent like the route chip,
-   and has no nowrap, so the line still wraps on a narrow panel (LC3). The
-   dashed border sets it apart from the route chip. */
+/* Unverified-sender marker (SPEC SV3, amended 2026-10-08): an "unverified"
+   chip after the sender badge of a line whose sender is named only by its
+   text, outside the 19ch prefix (FU9). The chat renders it with `hidden`, so
+   its class and title stay for inspection while nothing shows; the rule keeps
+   the chip's look for a marker shown without it. It resets the inherited
+   hanging indent like the route chip, and has no nowrap, so the line still
+   wraps on a narrow panel (LC3). The dashed border sets it apart from the
+   route chip. */
 .chat-sender-unverified {
   display: inline-block;
   text-indent: 0;
@@ -3268,6 +3281,26 @@ button.legend-item[aria-pressed="true"] {
   color: var(--muted);
   font-size: 0.85em;
   cursor: help;
+}
+
+/* An author `display` beats the UA sheet's `[hidden]`, so the hidden marker
+   needs its own rule: no box, no space. */
+.chat-sender-unverified[hidden] {
+  display: none;
+}
+
+/* Verified-sender tag (SPEC SV3, amended 2026-10-08): a "verified" chip after
+   the sender badge of a line served with `sender_verified: true`, outside the
+   19ch prefix (FU9). Chrome of the route chip; it resets the inherited
+   hanging indent and has no nowrap, so the line still wraps (LC3). */
+.chat-sender-verified {
+  display: inline-block;
+  text-indent: 0;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.85em;
 }
 
 /* Chat date dividers separate days spatially (UX11, D-040). */
