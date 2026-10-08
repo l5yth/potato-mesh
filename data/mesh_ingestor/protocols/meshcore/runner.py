@@ -249,9 +249,10 @@ async def _run_meshcore(
                 error=str(exc),
             )
 
-        # The radio's default flood scope is the one region a scoped channel
-        # message can be named by (SPEC SC3).  A companion-link read, not a
-        # transmission; unsupported firmware simply leaves it unset.
+        # The radio's default flood scope is the first region a scoped channel
+        # message is named by; the built-in scope table follows (SPEC SC3).  A
+        # companion-link read, not a transmission; unsupported firmware simply
+        # leaves it unset.
         try:
             iface._route.region = await read_default_flood_scope(mc)
         except Exception as exc:
