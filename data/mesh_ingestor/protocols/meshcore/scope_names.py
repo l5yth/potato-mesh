@@ -14,7 +14,7 @@
 
 """Built-in public hashtag region names that can name a MeshCore flood scope.
 
-SPEC SC3 (amended 2026-10-08).  A scoped flood carries
+SPEC SC3 (amended 2026-10-08) and SN1.  A scoped flood carries
 ``transport_codes[0]``, a 16-bit HMAC keyed by its region, and the companion
 firmware has no command that lists regions, so the ingestor can name a region
 only by recomputing that code for a candidate name
@@ -34,9 +34,11 @@ once, at import, into :data:`.route.SCOPE_TABLE`.  The groups:
   Union and therefore not in the group above;
 * :data:`ISO_3166_2_DE`, :data:`ISO_3166_2_AT` and :data:`ISO_3166_2_CH`: the
   ISO 3166-2 codes of the German Länder (16), the Austrian states (9) and the
-  Swiss cantons (26).
+  Swiss cantons (26);
+* :data:`DE_COMMUNITY_REGIONS`: German community region names that are not
+  ISO 3166-2 codes (5).
 
-The codes are those of Debian ``iso-codes`` 4.20.1 (``iso_3166-1.json`` and
+The ISO codes are those of Debian ``iso-codes`` 4.20.1 (``iso_3166-1.json`` and
 ``iso_3166-2.json``); its alpha-2 list equals tzdata's ``iso3166.tab``,
 current as of ISO/TC 46 N1127 (2024-02-29).
 
@@ -107,12 +109,28 @@ ISO_3166_2_CH: tuple[str, ...] = tuple("""
     """.split())
 """ISO 3166-2:CH, the 26 cantons (``ch-zh`` Zürich, ``ch-ge`` Genève, ...)."""
 
-SCOPE_NAMES: tuple[str, ...] = (
-    ISO_3166_1_ALPHA_2 + EU + ISO_3166_2_DE + ISO_3166_2_AT + ISO_3166_2_CH
+DE_COMMUNITY_REGIONS: tuple[str, ...] = tuple(
+    "de-bebb de-nord de-ost de-sued de-west".split()
 )
-"""Every built-in name, in the order :data:`.route.SCOPE_TABLE` keeps (301)."""
+"""German community region names that are not ISO 3166-2 codes (5).
+
+``de-bebb`` (Berlin and Brandenburg), then ``de-nord``, ``de-ost``,
+``de-sued`` and ``de-west``; added at the maintainer's request on 2026-10-08
+(SPEC SN1).
+"""
+
+SCOPE_NAMES: tuple[str, ...] = (
+    ISO_3166_1_ALPHA_2
+    + EU
+    + ISO_3166_2_DE
+    + ISO_3166_2_AT
+    + ISO_3166_2_CH
+    + DE_COMMUNITY_REGIONS
+)
+"""Every built-in name, in the order :data:`.route.SCOPE_TABLE` keeps (306)."""
 
 __all__ = [
+    "DE_COMMUNITY_REGIONS",
     "EU",
     "ISO_3166_1_ALPHA_2",
     "ISO_3166_2_AT",

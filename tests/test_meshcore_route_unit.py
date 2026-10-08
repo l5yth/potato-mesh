@@ -356,7 +356,9 @@ def _scoped(region: str, payload: bytes) -> route.RxCopy:
     return _copy(0, code0, payload)
 
 
-@pytest.mark.parametrize("name", ["fr", "eu", "de-by", "at-9", "ch-zh"])
+@pytest.mark.parametrize(
+    "name", ["fr", "eu", "de-by", "at-9", "ch-zh", "de-bebb", "de-ost"]
+)
 @pytest.mark.parametrize("region", [None, _UNLISTED, "$ops"])
 def test_resolve_scope_names_a_table_region(name, region):
     """A default region that misses, or none, leaves the table to name the
