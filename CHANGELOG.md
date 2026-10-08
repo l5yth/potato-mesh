@@ -152,6 +152,9 @@
 * Nix: the flake ingestor includes `rns`, so `PROTOCOL=reticulum` runs on NixOS; `flake.lock` moves nixpkgs to nixos-unstable of 2026-10-03, which brings Python 3.14 and Ruby 3.4.9 (SPEC DP8)
 * Docs: `CONTRACTS.md` states the Reticulum placeholder and headline name rules as amended (SPEC RA10, RE10)
 * App: the Flutter app (`app/`) and its CI are removed (SPEC AR1)
+* Web: on /map, /chat, /nodes and node pages the announcement banner, the header and the filter and live controls sit on the dashboard's 16 px page margin (SPEC SR1)
+* Web: on screens wider than 1024 px the footer shows PotatoMesh and the version on the same row as the page links when both fit; otherwise the links keep their own row (SPEC SR2)
+* Web: map overlays keep their dark background in browsers without `color-mix()` (Chrome before 111, Safari before 16.2, Firefox before 113) (SPEC SR3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

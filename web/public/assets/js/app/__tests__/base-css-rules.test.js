@@ -44,12 +44,25 @@ test('the parsed rules keep their @media condition and split selector lists', ()
   assert.ok(TOP_LEVEL_RULES.length > 0 && TOP_LEVEL_RULES.every(rule => rule.media === null));
 });
 
+test('the parsed rules keep their @supports condition, outside the top-level rules', () => {
+  const conditional = BASE_CSS_RULES.filter(rule => rule.supports !== null);
+  assert.ok(conditional.length > 0, 'some rule sits under @supports');
+  assert.ok(BASE_CSS_RULES.every(rule => rule.supports === null || typeof rule.supports === 'string'));
+  assert.ok(TOP_LEVEL_RULES.every(rule => rule.supports === null));
+  const [rule] = conditional;
+  assert.doesNotMatch(rule.supports, /^@supports|\{/, 'the condition alone, without the at-keyword or the block');
+  const options = { media: rule.media, supports: rule.supports };
+  assert.ok(rulesFor(rule.selectors[0], options).includes(rule));
+  assert.equal(rulesFor(rule.selectors[0], { media: rule.media }).includes(rule), false);
+  assert.equal(TOP_LEVEL_RULES.includes(rule), false);
+});
+
 test('rulesFor and declarationsFor read a selector at the top level or under one condition', () => {
   assert.ok(rulesFor(':root').length > 0);
   assert.deepEqual(rulesFor('.no-such-selector'), []);
   assert.deepEqual(declarationsFor('.no-such-selector'), {});
   assert.equal(declarationsFor(':root')['--bg'], cssValue(':root', '--bg'));
-  const nested = BASE_CSS_RULES.find(rule => rule.media !== null);
+  const nested = BASE_CSS_RULES.find(rule => rule.media !== null && rule.supports === null);
   assert.ok(rulesFor(nested.selectors[0], { media: nested.media }).includes(nested));
   assert.equal(rulesFor(nested.selectors[0], { media: nested.media }).every(rule => rule.media === nested.media), true);
 });

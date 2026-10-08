@@ -20,7 +20,8 @@
  * Reads the dashboard stylesheet once, without its comments, so a class named
  * in a comment is never taken for a rule, and parses it into style rules: a
  * test asks for the declarations of a selector, at the top level or under one
- * `@media` condition, instead of matching `base.css` with a regex of its own.
+ * `@media` or `@supports` condition, instead of matching `base.css` with a
+ * regex of its own.
  *
  * @module app/__tests__/base-css-rules
  */
@@ -42,7 +43,10 @@ export const BASE_CSS = readFileSync(fileURLToPath(new URL('../../../styles/base
  *
  * @typedef {Object} CssRule
  * @property {?string} media Condition of the enclosing `@media`, such as
- *   `(max-width: 1024px)`, or `null` for a top-level rule.
+ *   `(max-width: 1024px)`, or `null` for a rule outside every `@media`.
+ * @property {?string} supports Condition of the enclosing `@supports`, such as
+ *   `not (color: color-mix(in srgb, #000 50%, transparent))`, or `null` for a
+ *   rule outside every `@supports`.
  * @property {Array<string>} selectors The rule's selector list.
  * @property {string} selector The selector list joined with `, `.
  * @property {string} body The rule's text between its braces.
@@ -111,14 +115,16 @@ function blockEnd(css, open) {
 }
 
 /**
- * Parse the style rules of `css`, descending into `@media` blocks and
- * skipping other at-rules (`@keyframes` frames are not style rules).
+ * Parse the style rules of `css`, descending into `@media` and `@supports`
+ * blocks and skipping other at-rules (`@keyframes` frames are not style
+ * rules).
  *
  * @param {string} css Stylesheet text without comments.
  * @param {?string} [media=null] Condition of the enclosing `@media`.
+ * @param {?string} [supports=null] Condition of the enclosing `@supports`.
  * @returns {Array<CssRule>} Rules in source order.
  */
-function parseRules(css, media = null) {
+function parseRules(css, media = null, supports = null) {
   const rules = [];
   let open = css.indexOf('{');
   let cursor = 0;
@@ -127,7 +133,9 @@ function parseRules(css, media = null) {
     const end = blockEnd(css, open);
     const body = css.slice(open + 1, end - 1);
     if (head.startsWith('@media')) {
-      rules.push(...parseRules(body, squash(head.slice('@media'.length))));
+      rules.push(...parseRules(body, squash(head.slice('@media'.length)), supports));
+    } else if (head.startsWith('@supports')) {
+      rules.push(...parseRules(body, media, squash(head.slice('@supports'.length))));
     } else if (!head.startsWith('@')) {
       const declarations = {};
       for (const declaration of splitTopLevel(body, ';')) {
@@ -135,7 +143,7 @@ function parseRules(css, media = null) {
         declarations[squash(declaration.slice(0, colon))] = squash(declaration.slice(colon + 1));
       }
       const selectors = splitTopLevel(head, ',');
-      rules.push({ media, selectors, selector: selectors.join(', '), body, declarations });
+      rules.push({ media, supports, selectors, selector: selectors.join(', '), body, declarations });
     }
     cursor = end;
     open = css.indexOf('{', cursor);
@@ -154,12 +162,16 @@ export const BASE_CSS_RULES = parseRules(BASE_CSS);
  * The rules whose selector list holds `selector` exactly.
  *
  * @param {string} selector Selector, written as in `base.css`.
- * @param {{ media?: ?string }} [options] `media`: the exact `@media`
- *   condition, or `null` (the default) for top-level rules.
+ * @param {{ media?: ?string, supports?: ?string }} [options] `media`: the
+ *   exact `@media` condition, or `null` (the default) for rules outside every
+ *   `@media`; `supports`: the exact `@supports` condition, or `null` (the
+ *   default) for rules outside every `@supports`.
  * @returns {Array<CssRule>} Matching rules, in source order.
  */
-export function rulesFor(selector, { media = null } = {}) {
-  return BASE_CSS_RULES.filter(rule => rule.media === media && rule.selectors.includes(selector));
+export function rulesFor(selector, { media = null, supports = null } = {}) {
+  return BASE_CSS_RULES.filter(
+    rule => rule.media === media && rule.supports === supports && rule.selectors.includes(selector),
+  );
 }
 
 /**
@@ -175,11 +187,14 @@ export function declarationsFor(selector, options = {}) {
 }
 
 /**
- * Every top-level rule of base.css (outside any `@media`), in source order.
+ * Every top-level rule of base.css (outside any `@media` and any
+ * `@supports`), in source order.
  *
  * @type {ReadonlyArray<CssRule>}
  */
-export const TOP_LEVEL_RULES = Object.freeze(BASE_CSS_RULES.filter(rule => rule.media === null));
+export const TOP_LEVEL_RULES = Object.freeze(
+  BASE_CSS_RULES.filter(rule => rule.media === null && rule.supports === null),
+);
 
 /**
  * Every top-level rule whose whole selector list is `selectorList`.

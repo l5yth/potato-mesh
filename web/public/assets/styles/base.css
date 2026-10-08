@@ -60,6 +60,16 @@
   --pad: 16px;
 }
 
+/* --overlay-bg for engines without color-mix() (SPEC SR3): there the mix above
+   is invalid at computed-value time and every overlay paints transparent. A
+   literal declared first in :root cannot help, since both values are valid
+   custom properties and the later one wins. This is --panel at 92%. */
+@supports not (color: color-mix(in srgb, #000 50%, transparent)) {
+  :root {
+    --overlay-bg: rgba(21, 28, 34, 0.92);
+  }
+}
+
 html {
   color-scheme: dark;
 }
@@ -215,8 +225,12 @@ body {
   gap: var(--pad);
 }
 
+/* A full-screen shell keeps the dashboard's top gutter, inside the 100vh it
+   fills (border-box), so the banner and the header start where the dashboard's
+   do (SPEC SR1); the map, the chat panel and the nodes table stay full-bleed. */
 .page-shell--full-screen {
-  padding: 0;
+  box-sizing: border-box;
+  padding: var(--pad) 0 0;
   gap: var(--pad);
 }
 
@@ -226,13 +240,19 @@ body {
   padding-right: var(--pad);
 }
 
-.page-shell--full-screen .site-header {
-  padding-top: var(--pad);
-}
-
 .page-shell--full-screen .app-footer {
   padding-top: var(--pad);
   padding-bottom: var(--pad);
+}
+
+/* The banner and the controls row take the side gutter (SPEC SR1). */
+.page-shell--full-screen .announcement-banner {
+  margin: 0 var(--pad);
+}
+
+.page-shell--full-screen .meta-controls {
+  padding-left: var(--pad);
+  padding-right: var(--pad);
 }
 
 .page-main {
@@ -2453,7 +2473,8 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
 
 /* The links are their own footer tier (Post-Deploy review 02): flex-basis 100%
    drops them onto their own line inside the wrapping .footer-content, so the row
-   can no longer strand the version→links separator at the end of line one. */
+   can no longer strand the version→links separator at the end of line one.
+   Above 1024 px they join the brand group's row when both fit (SPEC SR2). */
 .app-footer .footer-links {
   display: inline-flex;
   align-items: center;
@@ -2471,6 +2492,32 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
   color: inherit;
 }
 
+/* The brand, its separator and the version (SPEC SR2). At 1024 px and below
+   the group lays out no box, so they stay the row's own items. */
+.app-footer .footer-brand-group {
+  display: contents;
+}
+
+/* Above 1024 px the brand group and the links share a row when both fit
+   (SPEC SR2): the group is one item, and the links drop the tier's basis and
+   keep their one-line width. They join its row past a 24 px gap, without a
+   separator, or move whole onto a row of their own, as PD2's tier. */
+@media (min-width: 1025px) {
+  .app-footer .footer-content {
+    column-gap: 24px;
+  }
+
+  .app-footer .footer-brand-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .app-footer .footer-links {
+    flex-basis: auto;
+  }
+}
+
 /* The slim (transparent, borderless) footer variant is retired (audit
    follow-up 08): it left the still-`position: fixed` footer floating without a
    background over the scrolling body copy on Charts, Federation and /pages/*.
@@ -2485,8 +2532,8 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
 @media (max-width: 600px) {
   /* The phone footer scrolls with the page (SH1): pinned, its stack was taller
      than the 112 px reserve and covered the end of every page. Only shells
-     that render a footer drop the reserve; a full-screen shell keeps its
-     `padding: 0`, so the full-screen chat panel keeps its height. */
+     that render a footer drop the reserve; a full-screen shell keeps its zero
+     bottom padding (SR1), so the full-screen chat panel keeps its height. */
   .app-footer {
     position: static;
     box-shadow: none;
