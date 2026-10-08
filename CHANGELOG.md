@@ -25,6 +25,7 @@
 * Data: `TRANSPORT=udp` listens on both Meshtastic multicast groups by default, `239.0.0.69` (firmware 2.8+) and `224.0.0.69`; `MESH_UDP_GROUP` takes a comma-separated list. If you set `MESH_UDP_GROUP=224.0.0.69` before, remove it to also hear firmware 2.8+ nodes (#903)
 * Data: `MESH_UDP_ALLOWED_SOURCES` limits which hosts the UDP transport accepts packets from: comma-separated IPv4 addresses or CIDRs, e.g. your node's IP; unset accepts every host that can reach the multicast group, as before (SPEC UT1-UT4)
 * Data: `MESHCORE_TELEMETRY_POLL_24H_EXEMPT` reaches every packaged deployment - `docker-compose.yml`, both `data/Dockerfile` stages and the NixOS module (`meshcoreTelemetryPoll24hExempt`); setting it in `.env` had no effect under Compose or NixOS (SPEC PX5)
+* Data: `mesh.sh` builds `data/.venv` and runs pip for one start at a time, and runs no pip when `requirements.txt` and the venv's Python are unchanged; it also works when started from the checkout root. If a unit fails to import its packages: stop the units, remove `data/.venv`, start them (SPEC VL1-VL3)
 * Web: live refreshes keep map overlays, line tooltips and waypoint cards open, and repaint only the table, map or chat whose data changed (#881, SPEC DR2/DR4)
 * Web: a node role or modem preset named like a built-in object property, such as `constructor`, gets its protocol's base color and its derived preset code instead of an uncolored badge or a `[FU]` tag (SPEC FE1)
 * Web: a node id containing `"` no longer stops the live-update flashes of a refresh (SPEC FE2)

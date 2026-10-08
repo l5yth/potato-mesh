@@ -4,3 +4,5 @@
 *.backup
 *.copy
 *.log
+/.venv/
+/.venv.lock
