@@ -9,9 +9,9 @@ set -euo pipefail
 NOTICE='Copyright © 2025-26 l5yth & contributors'
 
 missing=$(git ls-files \
-    '*.rb' '*.py' '*.js' '*.rs' '*.dart' \
+    '*.rb' '*.py' '*.js' '*.rs' \
     '*.yml' '*.yaml' '*.toml' '*.sh' '*.nix' 'Dockerfile' '*/Dockerfile' \
-  | grep -vE '(^|/)(vendor|node_modules|build|\.dart_tool)/' \
+  | grep -vE '(^|/)(vendor|node_modules|build)/' \
   | xargs grep -L "$NOTICE" || true)
 
 if [ -n "$missing" ]; then

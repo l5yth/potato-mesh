@@ -441,7 +441,7 @@ RSpec.describe "MeshCore cross-ingestor message dedup" do
       ingest("/api/messages", channel_copy(slot: 6, from_id: synthetic_id, dt: dt))
     end
 
-    # The chat feed every reader (dashboard, Matrix bridge, mobile app) sees.
+    # The chat feed every reader (dashboard, Matrix bridge) sees.
     #
     # @return [Array<Hash>] GET /api/messages rows for MeshCore.
     def served_messages

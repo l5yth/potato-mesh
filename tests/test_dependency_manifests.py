@@ -95,17 +95,14 @@ DOCUMENTED_ECOSYSTEMS = frozenset(
 
 # Language dependency manifests (file-name glob, Dependabot ecosystem) that
 # need an entry for their directory. Lockfiles sit beside their manifests, so
-# the manifests alone decide the directories. Container base images and the
-# Flutter platform build files (Gradle, CocoaPods) are deliberately absent:
-# the image pins are bounded on purpose (ACCEPTANCE DK-A2) and the platform
-# files belong to the Flutter toolchain.
+# the manifests alone decide the directories. Container base images are
+# deliberately absent: the image pins are bounded on purpose (ACCEPTANCE DK-A2).
 MANIFEST_ECOSYSTEMS = (
     ("Gemfile", "bundler"),
     ("requirements*.txt", "pip"),
     ("pyproject.toml", "pip"),
     ("package.json", "npm"),
     ("Cargo.toml", "cargo"),
-    ("pubspec.yaml", "pub"),
 )
 
 # Developer tools that belong in requirements-dev.txt, never in the image.
