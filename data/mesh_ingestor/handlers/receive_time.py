@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Receive-time check for Meshtastic packets (SPEC RK1-RK3).
+"""Receive-time checks for Meshtastic packets and snapshots (SPEC RK1-RK4).
 
 A Meshtastic packet's ``rxTime`` comes from the clock of a radio, not from the
 ingestor host.  A radio whose clock is wrong stamps every packet it hears
@@ -154,8 +154,38 @@ def _warn_replaced(packet: Mapping, offset_secs: int) -> None:
     _unlogged_replacements = 0
 
 
+def radio_clock_offset(radio_now: object, host_now: int) -> int | None:
+    """Return how far a radio's clock reading lies off the host clock (SPEC RK4).
+
+    The Meshtastic node-list snapshot posts each nodeDB entry's ``lastHeard``,
+    which the radio stamped with its own clock.  The radio stamps its own
+    entry with that clock's reading while it sends the nodeDB at connect, so
+    the reading tells how far every entry's time is off.  A reading within
+    :data:`RX_TIME_TOLERANCE_SECS` of the host clock, the bound included,
+    counts as the host clock, as a packet's receive time does (SPEC RK2).
+
+    Parameters:
+        radio_now: The radio's clock reading in Unix seconds, as its nodeDB
+            holds it.  Anything that does not parse as a positive integer is
+            no reading.
+        host_now: The host clock in whole Unix seconds.
+
+    Returns:
+        ``None`` when ``radio_now`` is no clock reading; ``0`` when it lies
+        within the tolerance; otherwise ``radio_now - host_now``, negative for
+        a radio clock that runs behind.
+    """
+
+    radio_time = _coerce_int(radio_now)
+    if radio_time is None or radio_time <= 0:
+        return None
+    offset = radio_time - host_now
+    return 0 if abs(offset) <= RX_TIME_TOLERANCE_SECS else offset
+
+
 __all__ = [
     "RX_TIME_TOLERANCE_SECS",
     "RX_TIME_WARNING_INTERVAL_SECS",
+    "radio_clock_offset",
     "replace_skewed_rx_time",
 ]

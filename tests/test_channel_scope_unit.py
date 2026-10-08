@@ -153,15 +153,35 @@ def _mesh_packet(port: str, *, channel: int, via_mqtt: bool = False):
     return packet
 
 
-def _node_info_frame(num: int, *, channel: int = 0, via_mqtt: bool = False) -> bytes:
-    """Serialized ``FromRadio.node_info`` as the radio sends its nodeDB."""
+def _node_info_frame(
+    num: int,
+    *,
+    channel: int = 0,
+    via_mqtt: bool = False,
+    last_heard: int = 0,
+    user_id: str | None = None,
+    uptime_seconds: int = 0,
+) -> bytes:
+    """Serialized ``FromRadio.node_info`` as the radio sends its nodeDB.
+
+    ``last_heard`` is the radio clock's reading when it last heard the node
+    (SPEC RK4); proto3 omits it at ``0``, as it omits ``channel``.
+    ``user_id`` is the ``user.id`` the entry names, the node's own id by
+    default; the library files the entry under it (SPEC NI1).
+    ``uptime_seconds`` goes into the entry's device metrics, as the radio's
+    own entry carries its uptime (SPEC RK4); at ``0`` the entry has none.
+    """
 
     info = mesh_pb2.NodeInfo(
         num=num,
-        user=mesh_pb2.User(id=f"!{num:08x}", long_name=f"Node {num:x}"),
+        user=mesh_pb2.User(id=user_id or f"!{num:08x}", long_name=f"Node {num:x}"),
         channel=channel,
         via_mqtt=via_mqtt,
+        last_heard=last_heard,
     )
+    if uptime_seconds:
+        # Only a set submessage is sent, so other entries keep no metrics.
+        info.device_metrics.uptime_seconds = uptime_seconds
     return mesh_pb2.FromRadio(node_info=info).SerializeToString()
 
 

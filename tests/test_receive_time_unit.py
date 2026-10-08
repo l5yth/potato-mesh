@@ -137,16 +137,10 @@ def reset_warning_state(monkeypatch):
 
 
 @pytest.fixture
-def host_clock(monkeypatch):
-    """Drive the ingestor host clock by hand, starting at :data:`NOW`.
+def host_now():
+    """Start the shared ``host_clock`` fixture (``tests/conftest.py``) at :data:`NOW`."""
 
-    Returns:
-        A namespace whose ``now`` attribute :func:`time.time` returns.
-    """
-
-    clock = SimpleNamespace(now=NOW)
-    monkeypatch.setattr(time, "time", lambda: float(clock.now))
-    return clock
+    return NOW
 
 
 @pytest.fixture

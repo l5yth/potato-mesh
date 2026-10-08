@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,6 +66,23 @@ def permit_tx(monkeypatch):
     monkeypatch.setattr(config, "TX_ANNOUNCE", True)
     monkeypatch.setattr(config, "RX_ONLY", False)
     return config
+
+
+@pytest.fixture
+def host_clock(monkeypatch, host_now):
+    """Drive the ingestor host clock by hand, starting at ``host_now``.
+
+    ``host_now`` is a fixture the requesting test module defines, returning
+    its start time in whole Unix seconds (the receive-time checks, SPEC
+    RK1-RK4).  The clock stays there until a test moves it.
+
+    Returns:
+        A namespace whose ``now`` attribute :func:`time.time` returns.
+    """
+
+    clock = SimpleNamespace(now=host_now)
+    monkeypatch.setattr(time, "time", lambda: float(clock.now))
+    return clock
 
 
 @pytest.fixture
