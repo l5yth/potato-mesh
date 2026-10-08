@@ -267,7 +267,9 @@
         <span id="footerActiveNodes" class="meta-active-nodes"></span>
         <%# The join strip moved to the footer (audit follow-up 04), freeing the
             meta row for the per-minute vital signs. %>
-        <button id="autorefreshToggle" type="button" aria-label="Pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">● live</button>
+        <%# The live state as autorefresh-control.js renders it, so the first
+            apply changes nothing; phones hide the action span (SPEC CT4). %>
+        <button id="autorefreshToggle" type="button" aria-label="live, pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">● live<span class="autorefresh-toggle__action"> · pause</span></button>
       </div>
     <% end %>
 
