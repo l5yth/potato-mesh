@@ -114,6 +114,18 @@ def test_section_states_the_host_position_and_how_to_stop_it():
     )
 
 
+def test_section_says_what_the_diagnostics_lines_mean():
+    """The connect and hourly lines are named, with what to do on a warning (RG4)."""
+    text = " ".join(_section("Reticulum").split())
+    assert "After each connect the ingestor logs `Reticulum stack state`" in text
+    assert "`role='client'` means it is attached to `rnsd`" in text
+    assert "Every hour it logs `Reticulum announce summary`" in text
+    assert (
+        "a warning when no announce reached the ingestor or the interface scope "
+        "dropped all of them; follow its `hints`."
+    ) in text
+
+
 def test_docs_name_what_the_rns_stack_transmits():
     """No blanket "never transmits": the stack's own traffic is named (SPEC RN5)."""
     section = _section("Reticulum")

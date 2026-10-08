@@ -1492,3 +1492,76 @@ def test_loop_iteration_self_node_retried_after_interval(monkeypatch):
     daemon._loop_iteration(state)
 
     assert "!aabbccdd" in upserted
+
+
+# ---------------------------------------------------------------------------
+# _loop_iteration — optional provider diagnostics (SPEC RG4)
+# ---------------------------------------------------------------------------
+
+
+class _DiagnosticsProvider:
+    """A provider stub that exposes the optional ``log_diagnostics`` hook."""
+
+    name = "test"
+
+    def __init__(self):
+        self.calls: list = []
+
+    def subscribe(self):
+        return []
+
+    def node_snapshot_items(self, iface):
+        return []
+
+    def extract_host_node_id(self, iface):
+        return None
+
+    def log_diagnostics(self, iface):
+        self.calls.append(iface)
+
+
+def _diagnostics_state(monkeypatch, provider):
+    """Return a connected state whose passes run to the end, announcements off."""
+    _patch_loop_iteration_common(monkeypatch)
+    monkeypatch.setattr(daemon, "_process_announcements", lambda s: s.last_announce)
+    return _make_state(
+        provider=provider,
+        iface=DummyInterface(),
+        initial_snapshot_sent=True,
+        last_self_node_report=100.0,
+    )
+
+
+def test_loop_iteration_calls_the_diagnostics_hook_on_every_full_pass(monkeypatch):
+    """Every full pass hands the hook the interface; the provider rate-limits it."""
+    provider = _DiagnosticsProvider()
+    state = _diagnostics_state(monkeypatch, provider)
+
+    assert daemon._loop_iteration(state) is False
+    assert daemon._loop_iteration(state) is False
+
+    assert provider.calls == [state.iface, state.iface]
+
+
+def test_loop_iteration_skips_the_diagnostics_hook_when_a_pass_ends_early(
+    monkeypatch,
+):
+    """A pass that reconnects ends before the hook; the next full pass calls it."""
+    provider = _DiagnosticsProvider()
+    state = _diagnostics_state(monkeypatch, provider)
+    monkeypatch.setattr(daemon, "_check_inactivity_reconnect", lambda s: True)
+
+    assert daemon._loop_iteration(state) is True
+
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize("hook", ["absent", None], ids=["absent", "not_callable"])
+def test_loop_iteration_runs_without_a_diagnostics_hook(monkeypatch, hook):
+    """A provider without the hook, or with a non-callable one, is left alone."""
+    provider = _make_self_node_provider(node_item=None)
+    if hook is None:
+        provider.log_diagnostics = None
+    state = _diagnostics_state(monkeypatch, provider)
+
+    assert daemon._loop_iteration(state) is False

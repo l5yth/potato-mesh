@@ -442,6 +442,13 @@ Changing the id strands the old row. Setting, changing, or removing
 `/api/ingestors` without heartbeats until it ages out. Leaving the variable
 as-is across upgrades is inert.
 
+After each connect the ingestor logs `Reticulum stack state`: `role='client'`
+means it is attached to `rnsd`, and `received` counts the announces that
+reached it. Every hour it logs `Reticulum announce summary` with the announces
+delivered, admitted and dropped per reason. That line is a warning when no
+announce reached the ingestor or the interface scope dropped all of them;
+follow its `hints`.
+
 Frequency and preset are read from the first `RNodeInterface` in your RNS
 config; `RETICULUM_FREQ` and `RETICULUM_PRESET` override them. A matching
 preset name describes radio settings only, not interoperability with a

@@ -57,6 +57,8 @@
 * Web: the map legend lists only protocols in view: a protocol toggled off, or with no node matching the filter, leaves it; Clear filters also clears the filter text (SPEC LP1)
 * Data: the host's own transport aspect is ingested when the stack has transport enabled (SPEC RE9)
 * Data: the Reticulum ingestor re-posts its host's own destinations every hour, so `rns.transport` and the host aspects stay fresh on a connection that never reconnects (SPEC RE8)
+* Data: the Reticulum ingestor logs `Reticulum stack state` after each connect and `Reticulum announce summary` every hour; the summary is a warning with hints when no announce arrives or the interface scope drops them all (SPEC RG1-RG4)
+* Data: after a failed Reticulum connect, the next connect no longer posts and counts every announce twice (SPEC RG5)
 * Web: a federation record relayed by another instance is stored only when its domain's well-known document names its key, except a refresh under the key already stored; relayed records and `POST /api/instances` announcements need an id equal to the SHA-256 of their public key (SPEC FS8/FS9)
 * Web: a federation crawl fetches each peer once, however often it is listed, keeps the newest signed copy of a record and never fetches this instance; `FEDERATION_MAX_DOMAINS_PER_CRAWL` counts the domains a crawl fetches (SPEC FL1)
 * Web: in one crawl the port variants of a host share one well-known fetch beside the bare domain's own, and a domain ending in `:443` or `:80` counts as the bare domain (SPEC FL1)
