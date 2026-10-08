@@ -3,6 +3,6 @@
 
 # Development dependencies: the production set plus the test and lint tools
 -r requirements.txt
-black==26.5.1
+black==26.10.0
 pytest==9.1.1
 pytest-cov==7.1.0
