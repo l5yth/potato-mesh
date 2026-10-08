@@ -29,7 +29,9 @@
   --line: rgba(255, 255, 255, 0.1);
   --accent: #5fa8ff;
   --row-alt: rgba(255, 255, 255, 0.05);
-  --table-head-bg: rgba(255, 255, 255, 0.06);
+  /* Opaque: the former rgba(255, 255, 255, 0.06) over --bg, so the sticky
+     header rows hide the rows scrolled beneath them (SPEC GF4). */
+  --table-head-bg: #1c2226;
   --table-head-fg: var(--fg);
   --input-bg: #1e262c;
   --input-fg: var(--fg);
@@ -40,6 +42,15 @@
   --announcement-fg: #ffd184;
   --announcement-border: #a56a00;
   --danger: #ff6b6b;
+  /* One grey family (SPEC GF1): the raised surface of chat, footer, dialogs
+     and popovers, the hairline of surfaces and controls, and secondary text
+     between --fg and --muted. */
+  --panel: #151c22;
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg-soft: #c9d1d9;
+  /* Map overlay chrome over the tiles: the panel at 92% and its hairline. */
+  --overlay-bg: color-mix(in srgb, var(--panel) 92%, transparent);
+  --overlay-line: var(--line-strong);
   /* Alias layer (SPEC UX3): names consumed by the federation styles resolve
      to the canonical tokens instead of silently failing (audit D-009). */
   --border: var(--line);
@@ -576,19 +587,20 @@ h1 {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #444;
+  background: var(--line-strong);
   font-size: 12px;
 }
 
 #map {
   position: relative;
+  /* The border stays inside the 100% width: /map scrolled sideways 2px (SPEC GF6). */
+  box-sizing: border-box;
   width: 100%;
   height: 60vh;
-  border: 1px solid #ddd;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   overflow: hidden;
   display: block;
-  border-color: #444;
 }
 
 .map-panel.is-fullscreen,
@@ -727,7 +739,7 @@ td {
 th {
   position: sticky;
   top: 0;
-  background: #222;
+  background: var(--panel);
 }
 
 .mono {
@@ -941,15 +953,15 @@ body.view-chat .page-shell {
   flex: 0 0 33%;
   max-width: 33%;
   height: 60vh;
-  border: 1px solid #ddd;
+  box-sizing: border-box;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   font-size: 12px;
-  background: #222;
-  border-color: #444;
-  color: #eee;
+  background: var(--panel);
+  color: var(--fg);
 }
 
 .chat-panel.chat-panel--full {
@@ -979,8 +991,7 @@ body.view-chat .page-shell {
   display: flex;
   align-items: stretch;
   overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  border-bottom-color: rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid var(--line-strong);
 }
 
 .chat-tablist {
@@ -1002,7 +1013,7 @@ body.view-chat .page-shell {
   white-space: nowrap;
   border: none;
   background: transparent;
-  color: #ddd;
+  color: var(--fg);
   padding: 6px 8px;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
@@ -1072,7 +1083,7 @@ body.view-chat .page-shell {
 }
 
 .chat-tab.is-active {
-  background: #222;
+  background: var(--panel);
   color: var(--accent);
   border-bottom: 2px solid var(--accent);
   border-bottom-color: var(--accent);
@@ -1095,7 +1106,7 @@ body.view-chat .page-shell {
 
 .chat-empty {
   margin: 12px 0;
-  color: #888;
+  color: var(--muted);
   font-style: italic;
 }
 
@@ -1116,7 +1127,7 @@ body.view-chat .page-shell {
 
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  color: #bbb;
+  color: var(--fg-soft);
 }
 
 .chat-entry-date {
@@ -1160,9 +1171,9 @@ body.view-chat .page-shell {
 
 .short-info-overlay {
   position: absolute;
-  background: #1c1c1c;
-  color: #eee;
-  border: 1px solid #ccc;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   padding: 8px 10px 10px;
@@ -1171,7 +1182,6 @@ body.view-chat .page-shell {
   min-width: 200px;
   max-width: 240px;
   z-index: 20000;
-  border-color: #444;
 }
 
 .short-info-overlay[hidden] {
@@ -1242,11 +1252,15 @@ body.view-chat .page-shell {
 }
 
 .node-detail-overlay__dialog {
+  /* 90vw x 90vh include the padding and border, so the dialog keeps a margin
+     of scrim on every side (SPEC GF5). */
+  box-sizing: border-box;
   width: 90vw;
   height: 90vh;
   max-width: 1400px;
   max-height: 960px;
-  background: var(--bg2);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
   color: var(--fg);
   border-radius: 16px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
@@ -1689,12 +1703,11 @@ body.view-chat .page-shell {
 
 button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure) {
   padding: 6px 10px;
-  border: 1px solid #ccc;
-  background: #333;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
   border-radius: 6px;
   cursor: pointer;
-  color: #eee;
-  border-color: #444;
+  color: var(--fg);
 }
 
 .icon-button {
@@ -1713,11 +1726,10 @@ button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-di
   height: 32px;
   gap: 4px;
   padding: 0 6px;
-  border: 1px solid #ccc;
-  background: #333;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
   border-radius: 6px;
   cursor: pointer;
-  border-color: #444;
 }
 
 /* Per-protocol node count on the toggle (audit follow-up 04). Mirrors the
@@ -1744,7 +1756,7 @@ button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-di
 }
 
 button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure):hover {
-  background: #444;
+  background: var(--line-strong);
 }
 
 .sort-button {
@@ -1793,7 +1805,7 @@ th[aria-sort] .sort-indicator {
 
 label {
   font-size: 14px;
-  color: #ddd;
+  color: var(--fg);
 }
 
 input[type="text"] {
@@ -2279,9 +2291,9 @@ button.legend-item[aria-pressed="true"] {
   inset-block-end: 0;
   inset-inline: 0;
   box-sizing: border-box;
-  background: #222;
-  border-top: 1px solid #444;
-  color: #eee;
+  background: var(--panel);
+  border-top: 1px solid var(--line-strong);
+  color: var(--fg);
   font-size: 12px;
   z-index: 4100;
   /* Lift the fixed footer over long scrolling pages (audit follow-up 08): the
@@ -2470,7 +2482,7 @@ button.legend-item[aria-pressed="true"] {
 
 
 .protocol-toggle-btn:hover {
-  background: #444;
+  background: var(--line-strong);
 }
 
 
@@ -2533,19 +2545,24 @@ button.legend-item[aria-pressed="true"] {
 
 .federation-page__map-row {
   width: 100%;
-  height: 400px;
+  height: 50vh;
+  min-height: 320px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-strong);
 }
 
 .federation-page__map-row .map-panel {
   height: 100%;
 }
 
+/* The row draws the frame; a second border on the map inside it overflowed
+   the row's content box (SPEC GF6). */
 .federation-page__map-row #map {
   height: 100%;
   width: 100%;
+  border: 0;
+  border-radius: 0;
 }
 
 .instances-table-wrapper {
@@ -2951,7 +2968,7 @@ button.legend-item[aria-pressed="true"] {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
-  background: #222;
+  background: var(--table-head-bg);
   border-bottom: 1px solid var(--line);
   border-left: 1px solid var(--line);
   text-align: left;
@@ -3024,15 +3041,15 @@ button.legend-item[aria-pressed="true"] {
   font-size: 12px;
   line-height: 1;
   vertical-align: middle;
-  border: 1px solid #444;
-  background: #333;
-  color: #eee;
+  border: 1px solid var(--line-strong);
+  background: var(--input-bg);
+  color: var(--fg);
   cursor: pointer;
 }
 
 .node-extra-toggle:hover,
 .identity-disclosure:hover {
-  background: #444;
+  background: var(--line-strong);
 }
 
 @media (pointer: coarse) {
