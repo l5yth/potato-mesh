@@ -13,7 +13,7 @@
 # limitations under the License.
 """The README states Reticulum's scope (ACCEPTANCE RE-A15).
 
-Reticulum ships experimental and announce-only in 0.8.0 (SPEC RD7, maintainer
+Reticulum ships experimental and announce-only in 1.0.0 (SPEC RD7, maintainer
 decision 2026-10-05), and the RNS stack the ingestor uses transmits whatever
 its config enables, from the ingestor's own process when no ``rnsd`` runs
 (SPEC RN5 as amended by RE3).  Each check reads ``README.md`` only.
