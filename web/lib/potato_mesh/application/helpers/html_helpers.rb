@@ -17,14 +17,35 @@
 module PotatoMesh
   module App
     module Helpers
-      # Matches any http:// or https:// URL in announcement copy.  The pattern
-      # uses a word boundary (\b) to avoid matching URLs that appear mid-word,
-      # captures everything up to the first whitespace or HTML-significant <
-      # character so that adjacent punctuation does not get swallowed into the
-      # link href, and the +i+ flag makes the scheme match case-insensitive.
+      # Matches a Markdown-style +[label](url)+ link in announcement copy
+      # (SPEC SH4). The label is any text up to the first +]+; the target must
+      # be an absolute http:// or https:// URL and ends at the first
+      # whitespace, +)+ or HTML-significant < character. A link to any other
+      # scheme, such as +javascript:+, does not match and stays text. The +i+
+      # flag makes the scheme match case-insensitive.
+      ANNOUNCEMENT_LINK_PATTERN = %r{\[([^\]]+)\]\((https?://[^\s)<]+)\)}i.freeze
+
+      # Matches a bare http:// or https:// URL in announcement copy. The word
+      # boundary (\b) skips a scheme that starts mid-word, the match ends at
+      # the first whitespace or HTML-significant < character, and the +i+ flag
+      # makes the scheme match case-insensitive. Trailing +.+ and +)+ are
+      # trimmed afterwards ({ANNOUNCEMENT_URL_TRAILER}), so a sentence's period
+      # or a closing parenthesis stays outside the link href.
       ANNOUNCEMENT_URL_PATTERN = %r{\bhttps?://[^\s<]+}i.freeze
 
+      # Trailing characters a bare URL returns to the surrounding text.
+      ANNOUNCEMENT_URL_TRAILER = /[.)]+\z/.freeze
+
+      # One link in announcement copy. The alternation tries the +[label](url)+
+      # form first at each position, so its target is never linked twice.
+      ANNOUNCEMENT_TOKEN_PATTERN = Regexp.union(ANNOUNCEMENT_LINK_PATTERN, ANNOUNCEMENT_URL_PATTERN).freeze
+
       # Render the announcement copy with safe outbound links.
+      #
+      # A +[label](url)+ link renders its label, and a bare URL renders itself
+      # without trailing +.+ or +)+. Both open in a new tab with
+      # +rel="noopener noreferrer"+; the text between them, every label and
+      # every URL are HTML-escaped.
       #
       # @return [String, nil] escaped HTML snippet or nil when unset.
       def announcement_html
@@ -34,20 +55,26 @@ module PotatoMesh
         fragments = []
         last_index = 0
 
-        announcement.to_enum(:scan, ANNOUNCEMENT_URL_PATTERN).each do
+        announcement.to_enum(:scan, ANNOUNCEMENT_TOKEN_PATTERN).each do
           match = Regexp.last_match
-          next unless match
-
           start_index = match.begin(0)
-          end_index = match.end(0)
+
+          if match[2]
+            label = match[1]
+            url = match[2]
+            end_index = match.end(0)
+          else
+            # The trimmed characters start the next text fragment.
+            url = match[0].sub(ANNOUNCEMENT_URL_TRAILER, "")
+            label = url
+            end_index = start_index + url.length
+          end
 
           if start_index > last_index
             fragments << Rack::Utils.escape_html(announcement[last_index...start_index])
           end
 
-          url = match[0]
-          escaped_url = Rack::Utils.escape_html(url)
-          fragments << %(<a href="#{escaped_url}" target="_blank" rel="noopener noreferrer">#{escaped_url}</a>)
+          fragments << %(<a href="#{Rack::Utils.escape_html(url)}" target="_blank" rel="noopener noreferrer">#{Rack::Utils.escape_html(label)}</a>)
           last_index = end_index
         end
 

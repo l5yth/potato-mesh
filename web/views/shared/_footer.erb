@@ -43,25 +43,9 @@
         on line one. Dot separators, not em dashes (Post-Deploy review 03). %>
     <span class="footer-links">
       <%# Static operator pages live in the footer tier (SPEC UX11): the
-          primary nav carries only the product views. %>
-      <% footer_static_pages.each do |sp| %>
-        <% sp_active = footer_view_mode == "page_#{sp.slug}" %>
-        <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
-        <span class="footer-separator" aria-hidden="true">·</span>
-      <% end %>
-      GitHub:
-      <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-      <% if contact_link && !contact_link.empty? %>
-        <span class="footer-separator" aria-hidden="true">·</span>
-        <span class="footer-contact">
-          chat:
-          <% if contact_link_url %>
-            <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
-          <% else %>
-            <%= contact_link %>
-          <% end %>
-        </span>
-      <% end %>
+          primary nav carries only the product views. The phone menu's Pages
+          group renders the same list (SPEC SH2). %>
+      <%= erb :"shared/_page_links", locals: { static_pages: footer_static_pages, contact_link: contact_link, contact_link_url: contact_link_url, current_view_mode: footer_view_mode, in_menu: false } %>
     </span>
   </div>
 </footer>

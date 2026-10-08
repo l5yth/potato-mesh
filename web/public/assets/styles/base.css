@@ -274,17 +274,27 @@ h1 {
   gap: 12px;
 }
 
+/* The title and the region toggle share one row (SH6). When the open region
+   select does not fit beside the title, it wraps onto its own line instead of
+   squeezing the title. */
 .site-header__left {
   flex: 1 1 auto;
   min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 .site-header__right {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+/* Header glyphs (SH5): inline SVG at their drawn size. As flex items they
+   would otherwise shrink into the generic button reset's padding. */
+.icon-button > svg {
+  flex: none;
 }
 
 .announcement-banner {
@@ -309,6 +319,14 @@ h1 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Banner links keep the banner's amber, underlined (SH4): the page accent
+   blue read as a second colour on the amber pill. */
+.announcement-banner a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .site-title {
@@ -392,7 +410,10 @@ h1 {
 .mobile-menu {
   position: fixed;
   inset: 0;
-  z-index: 1400;
+  /* Above the footer (z-index 4100, which a flex item keeps even where it is
+     static): the footer painted over the open menu and hid its Pages group
+     (SH2). */
+  z-index: 4200;
   display: flex;
   justify-content: flex-end;
   pointer-events: none;
@@ -417,7 +438,9 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: 100%;
+  /* The panel fills the viewport height by stretching, padding included
+     (SH2): `height: 100%` added the padding below the viewport, so a panel
+     that scrolls hid the end of its last link. */
   overflow-y: auto;
   transform: translateX(100%);
   transition: transform 220ms ease;
@@ -429,6 +452,13 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* 44 px close target (SH7). Compound selector: `.icon-button` (36 px) has the
+   same specificity and comes later in the file. */
+.icon-button.mobile-menu__close {
+  width: 44px;
+  height: 44px;
 }
 
 .mobile-menu__title {
@@ -447,10 +477,19 @@ h1 {
   gap: 8px;
 }
 
+/* The Pages group (SH2): static pages, GitHub and the chat link, which the
+   phone footer no longer shows, under a hairline below the product views. */
+.mobile-nav--pages {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+/* 10 px padding over the 22 px line and the 2 px border make a 44 px target
+   (SH7); no min-height, which would add to the padding without border-box. */
 .mobile-nav__link {
   display: inline-flex;
   align-items: center;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: 10px;
   color: var(--fg);
   text-decoration: none;
@@ -555,10 +594,6 @@ h1 {
 @media (max-width: 1100px) {
   .site-header {
     margin-bottom: 4px;
-  }
-
-  .site-header__left {
-    flex-wrap: nowrap;
   }
 
   .site-nav {
@@ -2355,15 +2390,28 @@ button.legend-item[aria-pressed="true"] {
 }
 
 @media (max-width: 600px) {
+  /* The phone footer scrolls with the page (SH1): pinned, its stack was taller
+     than the 112 px reserve and covered the end of every page. Only shells
+     that render a footer drop the reserve; a full-screen shell keeps its
+     `padding: 0`, so the full-screen chat panel keeps its height. */
+  .app-footer {
+    position: static;
+    box-shadow: none;
+  }
+
+  .page-shell:not(.page-shell--full-screen) {
+    padding-bottom: var(--pad);
+  }
+
   .app-footer .footer-content {
     padding: 10px 12px;
     justify-content: center;
     gap: 4px 8px;
   }
 
+  /* The links row moves into the phone menu's Pages group (SH2). */
   .app-footer .footer-links {
-    flex-direction: column;
-    gap: 4px;
+    display: none;
   }
 
   .app-footer .footer-separator {
@@ -3203,28 +3251,20 @@ button.legend-item[aria-pressed="true"] {
   gap: 6px;
 }
 
-/* Region toggle (audit follow-up 02): 🌍 reads as a place where the old 🌐 read
-   as a generic "web" glyph. It sits greyscale/dimmed by default so it stays out
-   of the header's colour budget, then returns to full colour on hover and while
-   open — the colour is the open-state feedback the toggle otherwise lacked
-   (aria-expanded already flips, so no JS change). The transparent border gives
-   the open state an accent frame. */
-.instance-selector-toggle {
-  font-size: 17px;
-  filter: grayscale(1);
-  opacity: 0.72;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  transition: filter 140ms ease, opacity 140ms ease;
+/* Region toggle (SH5, SH6; audit follow-up 02): an inline SVG globe in the
+   muted text colour on a 28 px pill. The accent frame marks the open state
+   (aria-expanded flips in instance-selector.js). The id selector outranks the
+   generic `button:not(…)` reset, which otherwise sets this button's padding,
+   border and colour and hid the frame (FU2). */
+#instanceSelectToggle {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 999px;
+  color: var(--muted);
 }
 
-.instance-selector-toggle:hover,
-.instance-selector-toggle[aria-expanded="true"] {
-  filter: none;
-  opacity: 1;
-}
-
-.instance-selector-toggle[aria-expanded="true"] {
+#instanceSelectToggle[aria-expanded="true"] {
   border-color: var(--accent);
   background: var(--input-bg);
 }
@@ -3336,15 +3376,21 @@ button.legend-item[aria-pressed="true"] {
   }
 }
 
-/* Announcement banner wraps on narrow screens (UX11, D-030). */
+/* Announcement banner wraps on narrow screens (UX11, D-030): up to three whole
+   lines, then an ellipsis (SH4). The line clamp ends the text, so the banner
+   grows to fit it; a height cap centred the overflow and cut the first and
+   last lines. */
 @media (max-width: 600px) {
   .announcement-banner {
     height: auto;
-    max-height: 4.8em;
+    max-height: none;
   }
 
   .announcement-banner__content {
     white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 }
 

@@ -1,0 +1,61 @@
+<!--
+  Copyright © 2025-26 l5yth & contributors
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<%# Static pages, GitHub and the community chat link (SPEC UX11, SH2): one list
+    for the footer's links row and the phone menu's Pages group, so both
+    escape every slug, title and contact value here. With `in_menu` each entry
+    is one `.mobile-nav__link` carrying its own label (`GitHub:`, `chat:`);
+    without it the entries keep the footer's dot separators, with each label
+    in front of its link. %>
+<% links_pages = defined?(static_pages) && static_pages ? static_pages : []
+   links_view_mode = defined?(current_view_mode) && current_view_mode ? current_view_mode.to_s : ""
+   links_in_menu = defined?(in_menu) && in_menu
+   links_contact = defined?(contact_link) && contact_link && !contact_link.empty? ? contact_link : nil
+   links_contact_url = links_contact && defined?(contact_link_url) && contact_link_url ? contact_link_url : nil
+   # Each entry: escaped href (nil renders the text alone), escaped text, an
+   # optional label, and the footer wrapper class.
+   link_entries = links_pages.map do |sp|
+     { href: "/pages/#{Rack::Utils.escape_path(sp.slug)}", text: Rack::Utils.escape_html(sp.title),
+       current: links_view_mode == "page_#{sp.slug}" }
+   end
+   link_entries << { label: "GitHub:", href: "https://github.com/l5yth/potato-mesh", text: "l5yth/potato-mesh", external: true }
+   if links_contact
+     link_entries << { label: "chat:", href: links_contact_url && Rack::Utils.escape_html(links_contact_url),
+                       text: Rack::Utils.escape_html(links_contact), external: true, wrapper: "footer-contact" }
+   end %>
+<% link_entries.each_with_index do |entry, index| %>
+  <% link_attrs = "#{entry[:external] ? ' target="_blank" rel="noopener noreferrer"' : ""}#{entry[:current] ? ' aria-current="page"' : ""}" %>
+  <% if links_in_menu %>
+    <% menu_class = %( class="mobile-nav__link#{entry[:current] ? " is-active" : ""}") %>
+    <% menu_text = [entry[:label], entry[:text]].compact.join(" ") %>
+    <% if entry[:href] %>
+      <a href="<%= entry[:href] %>"<%= menu_class %><%= link_attrs %>><%= menu_text %></a>
+    <% else %>
+      <span<%= menu_class %>><%= menu_text %></span>
+    <% end %>
+  <% else %>
+    <% if index.positive? %>
+      <span class="footer-separator" aria-hidden="true">·</span>
+    <% end %>
+    <% if entry[:wrapper] %><span class="<%= entry[:wrapper] %>"><% end %>
+    <%= entry[:label] %>
+    <% if entry[:href] %>
+      <a href="<%= entry[:href] %>"<%= link_attrs %>><%= entry[:text] %></a>
+    <% else %>
+      <%= entry[:text] %>
+    <% end %>
+    <% if entry[:wrapper] %></span><% end %>
+  <% end %>
+<% end %>

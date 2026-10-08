@@ -104,6 +104,68 @@ RSpec.describe PotatoMesh::App::Helpers do
         expect(result).to include('<a href="http://mesh.local"')
       end
     end
+
+    # Stub the announcement copy for one example.
+    #
+    # @param text [String] raw ANNOUNCEMENT value.
+    # @return [void]
+    def announce(text)
+      allow(PotatoMesh::Sanitizer).to receive(:sanitized_announcement).and_return(text)
+    end
+
+    # The anchor +announcement_html+ renders for one link.
+    #
+    # @param href [String] escaped link target.
+    # @param label [String] escaped link text.
+    # @return [String] anchor markup.
+    def anchor(href, label)
+      %(<a href="#{href}" target="_blank" rel="noopener noreferrer">#{label}</a>)
+    end
+
+    context "when the announcement holds a [label](url) link (SPEC SH4)" do
+      it "links the label and keeps the sentence's own punctuation outside" do
+        announce("Get started at [mesh.dod.ngo](https://mesh.dod.ngo/pages/about).")
+        expect(helper.announcement_html).to eq(
+          "Get started at #{anchor("https://mesh.dod.ngo/pages/about", "mesh.dod.ngo")}.",
+        )
+      end
+
+      it "escapes the label and the URL" do
+        announce(%([<b>Join</b> & "go"](https://example.org/?a=1&b=2) now))
+        expect(helper.announcement_html).to eq(
+          "#{anchor("https://example.org/?a=1&amp;b=2", "&lt;b&gt;Join&lt;/b&gt; &amp; &quot;go&quot;")} now",
+        )
+      end
+
+      it "links a URL label once, to its target" do
+        announce("[https://a.example](https://b.example)")
+        expect(helper.announcement_html).to eq(anchor("https://b.example", "https://a.example"))
+      end
+
+      it "leaves a link to a non-http(s) target as text" do
+        announce("[click](javascript:alert(1)) or [mail](mailto:x@example.org)")
+        expect(helper.announcement_html).to eq("[click](javascript:alert(1)) or [mail](mailto:x@example.org)")
+      end
+
+      it "renders labelled and bare links side by side" do
+        announce("[Map](https://example.org/map) and https://example.org/chat")
+        expect(helper.announcement_html).to eq(
+          "#{anchor("https://example.org/map", "Map")} and #{anchor("https://example.org/chat", "https://example.org/chat")}",
+        )
+      end
+    end
+
+    context "when a bare URL ends in punctuation (SPEC SH4)" do
+      it "keeps a sentence's closing period out of the link" do
+        announce("See https://example.org/about.")
+        expect(helper.announcement_html).to eq("See #{anchor("https://example.org/about", "https://example.org/about")}.")
+      end
+
+      it "keeps a closing parenthesis out of the link" do
+        announce("Docs (https://example.org/docs).")
+        expect(helper.announcement_html).to eq("Docs (#{anchor("https://example.org/docs", "https://example.org/docs")}).")
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------

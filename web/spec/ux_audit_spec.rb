@@ -33,6 +33,30 @@ RSpec.describe "UX audit remediation markup" do
     last_response.body
   end
 
+  # Opening tag of the phone menu's Pages group (SPEC SH2).
+  #
+  # @return [String] the nav's start tag as the layout renders it.
+  def pages_nav_open
+    '<nav class="mobile-nav mobile-nav--pages" aria-label="Pages">'
+  end
+
+  # The phone menu's Pages group in a rendered page (SPEC SH2).
+  #
+  # @param html [String] response body.
+  # @return [String, nil] the nav element, or nil when absent.
+  def pages_nav(html)
+    start = html.index(pages_nav_open)
+    start && html[start..][%r{\A.*?</nav>}m]
+  end
+
+  # The footer element in a rendered page.
+  #
+  # @param html [String] response body.
+  # @return [String, nil] the footer element, or nil when absent.
+  def footer_of(html)
+    html[%r{<footer.*?</footer>}m]
+  end
+
   # Rendered protocol label of one footer join line. Matching it, rather than
   # the bare protocol name the toggles and the legend also carry, is what lets
   # an absence assertion fail when the line renders.
@@ -132,14 +156,16 @@ RSpec.describe "UX audit remediation markup" do
   end
 
   describe "shell economics (UX11)" do
-    it "renders static pages in the footer, not the navs" do
+    it "renders static pages in the footer and the menu's Pages group, not the product navs" do
       html = body_of("/")
-      nav = html[%r{<nav class="site-nav".*?</nav>}m]
-      mobile_nav = html[%r{<nav class="mobile-nav".*?</nav>}m]
-      footer = html[%r{<footer.*?</footer>}m]
-      expect(nav).not_to include("/pages/")
-      expect(mobile_nav).not_to include("/pages/")
-      expect(footer).to include("/pages/about")
+      # Every nav on the page, so a nav added later is checked too.
+      pages_navs, product_navs = html.scan(%r{<nav\b[^>]*>.*?</nav>}m)
+                                     .partition { |nav| nav.start_with?(pages_nav_open) }
+      expect(product_navs.size).to eq(2)
+      product_navs.each { |nav| expect(nav).not_to include("/pages/") }
+      expect(pages_navs.size).to eq(1)
+      expect(pages_navs.first).to include("/pages/about")
+      expect(footer_of(html)).to include("/pages/about")
     end
 
     it "drops the protocol icon from the Charts nav links" do
@@ -154,6 +180,91 @@ RSpec.describe "UX audit remediation markup" do
       expect(html).to include("instance-selector-toggle")
       expect(html).to include("Other regions…")
       expect(html).not_to include("Select region ...")
+    end
+  end
+
+  describe "phone menu Pages group (SH2)" do
+    let(:pages_dir) { File.join(SPEC_TMPDIR, "pages-menu-#{SecureRandom.hex(4)}") }
+
+    before do
+      FileUtils.mkdir_p(pages_dir)
+      File.write(File.join(pages_dir, "1-about.md"), "# About\n")
+      File.write(File.join(pages_dir, "5-rules.md"), %(---\ntitle: "Rules & <Etiquette>"\n---\n\n# Rules\n))
+      allow(PotatoMesh::Config).to receive(:pages_directory).and_return(pages_dir)
+      PotatoMesh::App::Pages.clear_pages_cache!
+    end
+
+    after do
+      FileUtils.rm_rf(pages_dir)
+      PotatoMesh::App::Pages.clear_pages_cache!
+    end
+
+    it "lists every static page, GitHub and the contact link in the phone menu on every view" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return("#mesh:example.org")
+      %w[/ /map /chat /nodes /charts].each do |path|
+        nav = pages_nav(body_of(path))
+        expect(nav).to include('<a href="/pages/about" class="mobile-nav__link">About</a>')
+        expect(nav).to include('<a href="/pages/rules" class="mobile-nav__link">Rules &amp; &lt;Etiquette&gt;</a>')
+        expect(nav).to include('<a href="https://github.com/l5yth/potato-mesh" class="mobile-nav__link" target="_blank" rel="noopener noreferrer">GitHub: l5yth/potato-mesh</a>')
+        expect(nav).to include('<a href="https://matrix.to/#/#mesh:example.org" class="mobile-nav__link" target="_blank" rel="noopener noreferrer">chat: #mesh:example.org</a>')
+      end
+    end
+
+    it "marks the active page in the phone menu" do
+      nav = pages_nav(body_of("/pages/rules"))
+      expect(nav).to include('<a href="/pages/rules" class="mobile-nav__link is-active" aria-current="page">')
+      expect(nav).to include('<a href="/pages/about" class="mobile-nav__link">About</a>')
+    end
+
+    it "escapes the page titles and the contact link in the phone menu and the footer" do
+      link = %(https://chat.example.org/?a=1&b="><script>x</script>)
+      escaped = "https://chat.example.org/?a=1&amp;b=&quot;&gt;&lt;script&gt;x&lt;/script&gt;"
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return(link)
+      html = body_of("/")
+      [pages_nav(html), footer_of(html)].each do |links|
+        expect(links).to include("Rules &amp; &lt;Etiquette&gt;")
+        expect(links).to include(%(href="#{escaped}"))
+        expect(links).to include("#{escaped}</a>")
+        expect(links).not_to include("<script>")
+        expect(links).not_to include("<Etiquette>")
+      end
+    end
+
+    it "shows a contact link without a URL as escaped text" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return("ask at the <info> tent")
+      html = body_of("/")
+      expect(pages_nav(html)).to include('<span class="mobile-nav__link">chat: ask at the &lt;info&gt; tent</span>')
+      expect(footer_of(html)).to include("ask at the &lt;info&gt; tent")
+      expect(footer_of(html)).not_to include("<info>")
+    end
+
+    it "leaves the contact entry out when no contact link is set" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return(" ")
+      html = body_of("/")
+      expect(pages_nav(html)).not_to include("chat:")
+      expect(footer_of(html)).not_to include("footer-contact")
+    end
+  end
+
+  describe "header glyphs (SH5)" do
+    it "draws the region, menu and close glyphs as inline SVG in the text colour" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+      allow_any_instance_of(Sinatra::Application).to receive(:federation_enabled?).and_return(true)
+      html = body_of("/")
+      buttons = {
+        region: html[%r{<button\s+id="instanceSelectToggle".*?</button>}m],
+        menu: html[%r{<button\s+id="mobileMenuToggle".*?</button>}m],
+        close: html[%r{<button class="icon-button mobile-menu__close".*?</button>}m],
+      }
+      buttons.each do |name, button|
+        expect(button).to include('<svg viewBox="0 0 24 24"'), name.to_s
+        expect(button).to include('aria-hidden="true" focusable="false"'), name.to_s
+        expect(button).to include('stroke="currentColor"'), name.to_s
+        expect(button).to include('stroke-width="1.8"'), name.to_s
+      end
+      expect(html).not_to include("🌍")
+      expect(html).not_to include("☰")
+      expect(buttons[:close]).not_to include("×")
     end
   end
 
