@@ -5967,8 +5967,9 @@ export function initializeApp(config) {
   }
 
   // --- Auto-refresh play/pause toggle ---
-  // Live vs. paused is visible text, not a glyph-only secret (SPEC UX6):
-  // `\u25CF live` while streaming, `\u275A\u275A paused HH:MM` when frozen.
+  // Live vs. paused is visible text that names the action (SPEC UX6, CT4):
+  // `\u25CF live \u00B7 pause` while streaming,
+  // `\u275A\u275A paused HH:MM \u00B7 resume` when frozen.
   if (autorefreshToggle) {
     applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
     autorefreshToggle.addEventListener('click', () => {

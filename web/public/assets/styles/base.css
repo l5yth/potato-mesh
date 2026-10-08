@@ -3272,6 +3272,8 @@ button.legend-item[aria-pressed="true"] {
 #autorefreshToggle {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   white-space: nowrap;
+  border-radius: 999px; /* a pill, so it reads as a control (CT4) */
+  margin-left: auto; /* row end: counts filling in never move it (CT3) */
 }
 
 #autorefreshToggle[aria-pressed="false"] {
@@ -3280,12 +3282,136 @@ button.legend-item[aria-pressed="true"] {
 
 #autorefreshToggle[aria-pressed="true"] {
   color: var(--muted);
+  border-color: var(--accent);
 }
 
 /* Promoted day count in the vital-sign line (UX11, D-026). */
 .meta-active-nodes__today {
   color: var(--fg);
   font-weight: 600;
+}
+
+/* `hidden` hides these (CT3). An author `display` beats the UA sheet's
+   `[hidden]`, and each sets one (`.icon-button`, `.filter-clear` and
+   `.map-toolbar button` inline-flex, `.header-federation` flex), so a hidden
+   toggle painted as an empty box from first paint. */
+.protocol-toggle-btn[hidden],
+.filter-clear[hidden],
+.header-federation[hidden],
+.map-toolbar button[hidden] {
+  display: none;
+}
+
+@media (max-width: 659px) {
+  /* The vital-sign line owns a reserved row, so the meta row's height is
+     final at first paint (CT3). */
+  .meta-active-nodes {
+    order: 1;
+    flex-basis: 100%;
+    line-height: 1.4;
+    min-height: 1.4em;
+  }
+
+  /* The toggle's action hides from view, so pausing does not wrap the toggle
+     row; the aria-label still names it (CT4). */
+  .autorefresh-toggle__action {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* One accent focus ring for every button and `role="button"` control (CT2).
+   At (0,1,1) the component rules (0,2,0) keep their own ring. */
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The tab strip scrolls, and a scroll container clips an outset ring. */
+.chat-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+/* 44 px touch targets on coarse pointers (CT1, extends FU11 and RA11).
+   Standalone controls grow. Three dense controls keep their box and get a
+   transparent hit box: the filter's × the chat badge's centred one, the
+   short-info close one that grows from inside its popover's corner, and a sort
+   button its whole header cell. None of these reaches a node row or another
+   button. Legend chips keep their box: they touch, so a hit box would only
+   move each chip's tap area onto its neighbour. Fine pointers keep the tight
+   targets. The Leaflet zoom and the mobile-menu links and close are sized by
+   their own rules. */
+@media (pointer: coarse) {
+  .icon-button:not(.mobile-menu__close),
+  .map-toolbar button,
+  .node-detail-overlay__close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .protocol-toggle-btn,
+  #autorefreshToggle,
+  .legend-toggle-button,
+  .chat-tab,
+  .chat-tab-select,
+  .filter-input input[type="text"] {
+    box-sizing: border-box; /* the text input is content-box */
+    min-height: 44px;
+  }
+
+  /* The text stops short of the ×'s hit box, which reaches 38 px in from
+     the box's right edge (inset 6 px, 20 px wide, 44 px box). */
+  .filter-input input[type="text"] {
+    padding-right: 40px;
+  }
+
+  /* The × is already absolutely positioned. */
+  .filter-clear::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* The close sits 5 px inside the popover's top-right corner. Its hit box
+     grows down and left from 3 px inside that corner, so it stays within the
+     popover's 8 px rounding instead of reaching the rows beneath. */
+  .short-info-overlay .short-info-close::after {
+    content: "";
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The column row grows to 45 px, a 44 px padding box over its 1 px rule
+     (it is 28 px where no label wraps). The sticky `th` is the containing
+     block of the sort button's hit box, so the box fills the cell and never
+     reaches the group row above or the first node row below. */
+  #nodes thead tr:not(.nodes-group-header) th {
+    box-sizing: border-box;
+    height: 45px;
+  }
+
+  #nodes thead .sort-button::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
 }
 
 /* MeshCore marker chips (UX7, D-013; audit follow-up 03): shape encodes
