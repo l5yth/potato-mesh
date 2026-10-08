@@ -842,6 +842,9 @@ body.view-map .map-panel--full #map {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
+  /* The 1px border inside the 100% width, or the page clips the right
+     border (SPEC CD8). */
+  box-sizing: border-box;
 }
 
 .full-screen-section--chat .chat-panel {
@@ -874,6 +877,24 @@ body.view-chat .page-shell {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* Full-screen /chat type (SPEC CD8, design review rc3 C6): where the tab
+   strip shows, the page-wide panel sets 13px type with roomier padding and
+   caps a line at 120ch. Phones keep the dashboard's 12px. */
+@media (min-width: 901px) {
+  body.view-chat .chat-panel {
+    font-size: 13px;
+  }
+
+  body.view-chat .chat-tabpanel {
+    padding: 10px 14px;
+  }
+
+  body.view-chat .chat-entry-msg,
+  body.view-chat .chat-entry-node {
+    max-width: 120ch;
+  }
 }
 
 .chat-panel--disabled {
@@ -1029,10 +1050,10 @@ body.view-chat .page-shell {
   align-items: center;
   justify-content: center;
   width: 28px;
-  background: #1a1a1a;
+  background: var(--bg2);
   border: none;
   cursor: pointer;
-  color: #aaa;
+  color: var(--muted);
   font-size: 10px;
   padding: 0;
   z-index: 1;
@@ -1120,20 +1141,15 @@ body.view-chat .page-shell {
 }
 
 .chat-entry-reply {
-  color: #999;
-  font-style: italic;
-  margin-right: 4px;
+  /* Contains its absolutely positioned .visually-hidden label, which would
+     otherwise escape the scrolling panel (SPEC CD4). */
+  position: relative;
+  color: var(--muted);
 }
 
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   color: var(--fg-soft);
-}
-
-.chat-entry-date {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-weight: bold;
-  color: #bbb;
 }
 
 .short-name {
@@ -2417,6 +2433,19 @@ button.legend-item[aria-pressed="true"] {
   }
 }
 
+/* Tablet split (SPEC CD7, design review rc3 C5): above the phone band the
+   stacked chat gets 40vh under a 45vh map instead of 30vh under 50vh, still
+   ordered after the map (UX13). Phones keep the split above until R1. */
+@media (min-width: 660px) and (max-width: 1024px) {
+  #map {
+    height: 45vh;
+  }
+
+  .chat-panel {
+    height: 40vh;
+  }
+}
+
 @media (max-width: 1679px) {
   .nodes-col--node-id,
   .nodes-col--frequency,
@@ -3239,22 +3268,26 @@ button.legend-item[aria-pressed="true"] {
   max-width: 40vw;
 }
 
-/* Chat hanging indent (UX11, D-033; audit follow-up a): the line prefix
-   `[HH:MM:SS][freq][MF]` is 19 characters, so the hang is 19ch — wrapped log
-   lines land under the message column instead of mid-timestamp (the old 8ch
-   stopped inside the clock). */
-.chat-entry-msg,
+/* Chat hanging indent (UX11, D-033; audit follow-up a): a Log announcement's
+   prefix `[HH:MM:SS][freq][MF]` is 19 characters, so the hang is 19ch —
+   wrapped log lines land under the message column instead of mid-timestamp
+   (the old 8ch stopped inside the clock). A message line puts its time in a
+   grid column instead (SPEC CD1, below). */
 .chat-entry-node {
   padding-left: 19ch;
   text-indent: -19ch;
+}
+
+.chat-entry-msg,
+.chat-entry-node {
   /* Break unbreakable tokens (Legend & Chat Fix): `.chat-tabpanel` is
      `overflow-y: auto`, so its x-axis computes to `auto` — a horizontal scroll
      container. Nothing else in base.css breaks long tokens, so one hex payload,
      long URL, or 39-char long name overflows the panel. `anywhere` (not
      `break-word`) also lowers the entry's min-content width, so it can never
      demand more width than the panel — wrapped fragments continue under the
-     19ch hang. No `overflow-x: hidden`, which would only mask the next
-     regression. */
+     19ch hang or in the message line's body column. No `overflow-x: hidden`,
+     which would only mask the next regression. */
   overflow-wrap: anywhere;
 }
 
@@ -3267,23 +3300,48 @@ button.legend-item[aria-pressed="true"] {
   text-indent: 0;
 }
 
-/* Route chip (SPEC SC7): hop count and flood scope after the sender badge,
-   outside the 19ch prefix (FU9). It resets the inherited hanging indent like
-   the badge above; inline-block keeps it whole in the line, and without
-   nowrap a long region name still wraps inside it on a narrow panel (LC3). */
+/* Chat message line (SPEC CD1, design review rc3 C1): the time in a 5ch
+   column and the rest of the line in one body column, so wrapped lines land
+   under the body. The node page keeps its date-bearing `[YYYY-MM-DD HH:MM]`,
+   18 characters, since it lists days without dividers. */
+.chat-entry-msg {
+  display: grid;
+  grid-template-columns: 5ch minmax(0, 1fr);
+  column-gap: 8px;
+}
+
+.chat-panel--node-detail .chat-entry-msg {
+  grid-template-columns: 18ch minmax(0, 1fr);
+}
+
+/* The time is quiet; its title carries seconds, frequency and preset. */
+.chat-entry-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Route chip (SPEC SC7, CD3): hop count and flood scope after the message
+   text, as quiet text behind a middle dot that assistive technology skips.
+   inline-block keeps it whole in the line, and without nowrap a long region
+   name still wraps inside it on a narrow panel (LC3). */
 .chat-route-chip {
   display: inline-block;
   text-indent: 0;
-  padding: 0 4px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  padding: 0;
+  border: 0;
   color: var(--muted);
-  font-size: 0.85em;
+  font-size: 0.9em;
+}
+
+.chat-route-chip::before {
+  content: "· ";
+  content: "· " / "";
 }
 
 /* Unverified-sender marker (SPEC SV3, amended 2026-10-08): an "unverified"
    chip after the sender badge of a line whose sender is named only by its
-   text, outside the 19ch prefix (FU9). The chat renders it with `hidden`, so
+   text, in the line's body (SPEC CD1). The chat renders it with `hidden`, so
    its class and title stay for inspection while nothing shows; the rule keeps
    the chip's look for a marker shown without it. It resets the inherited
    hanging indent like the route chip, and has no nowrap, so the line still
@@ -3307,9 +3365,10 @@ button.legend-item[aria-pressed="true"] {
 }
 
 /* Verified-sender tag (SPEC SV3, amended 2026-10-08): a "verified" chip after
-   the sender badge of a line served with `sender_verified: true`, outside the
-   19ch prefix (FU9). Chrome of the route chip; it resets the inherited
-   hanging indent and has no nowrap, so the line still wraps (LC3). */
+   the sender badge of a line served with `sender_verified: true`, in the
+   line's body (SPEC CD1). It keeps the chip chrome the route chip had before
+   SPEC CD3; it resets the inherited hanging indent and has no nowrap, so the
+   line still wraps (LC3). */
 .chat-sender-verified {
   display: inline-block;
   text-indent: 0;
@@ -3320,11 +3379,24 @@ button.legend-item[aria-pressed="true"] {
   font-size: 0.85em;
 }
 
-/* Chat date dividers separate days spatially (UX11, D-040). */
+/* Chat date dividers separate days spatially (UX11, D-040): a centred rule
+   with the day, such as "Thu 8 Oct" (SPEC CD5, design review rc3 C3), in
+   11px of the page's sans-serif. */
 .chat-entry-date {
-  border-top: 1px solid var(--line);
-  padding-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chat-entry-date::before,
+.chat-entry-date::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 
 /* Mobile chat channel navigation is the dropdown alone (UX11, D-025):

@@ -481,7 +481,9 @@ test('day dividers are kept and stay before the first entry of their day (DR1, #
       let lastDay = null;
       return rows.flatMap(row => {
         const day = formatDate(new Date(row.rx_time * 1000));
-        const out = day === lastDay ? [] : [`-- ${day} --`];
+        // A divider shows the day in en-GB without the year (SPEC CD5) and is keyed by the ISO day.
+        const label = new Date(row.rx_time * 1000).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        const out = day === lastDay ? [] : [label];
         lastDay = day;
         return [...out, `entry:${row.id}`];
       });

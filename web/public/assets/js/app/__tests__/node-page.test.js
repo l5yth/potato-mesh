@@ -204,7 +204,10 @@ test('additional format helpers provide table friendly output', () => {
   assert.equal(messagesHtml.includes('hello'), true);
   assert.equal(messagesHtml.includes('GAA='), false);
   assert.equal(messagesHtml.includes('😊'), true);
-  assert.match(messagesHtml, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[868\]/);
+  assert.match(
+    messagesHtml,
+    /<span class="chat-entry-time">\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]<\/span> <span class="chat-entry-body">\[868\]\[MF\]\[Primary\] /,
+  );
   assert.equal(messagesHtml.includes('[868]'), true);
   assert.equal(messagesHtml.includes('[MF]'), true);
   assert.equal(messagesHtml.includes('[Primary]'), true);
@@ -722,7 +725,8 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('ALLY'), true);
   assert.equal(html.includes('Traceroutes'), true);
   assert.match(html, /&rarr;/);
-  assert.match(html, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[/);
+  // The node page keeps its date-bearing time slot; the radio tags lead the body (SPEC CD1).
+  assert.match(html, /<span class="chat-entry-time">\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]<\/span> <span class="chat-entry-body">\[/);
   assert.equal(html.includes('data-role="CLIENT"'), true);
 });
 

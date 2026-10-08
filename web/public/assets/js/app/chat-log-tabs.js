@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { chatRadioKey } from './chat-format.js';
 import { extractModemMetadata } from './node-modem-metadata.js';
 
 /**
@@ -153,10 +154,13 @@ function resolveSnapshotList(entry) {
  *     index: number,
  *     label: string,
  *     messageCount: number,
+ *     uniform: boolean,
  *     entries: Array<{ ts: number, message: Object }>
  *   }>
  * }} Tab model data. Channels are sorted by {@code messageCount} descending (7-day activity),
- *   with alphabetical label ordering as a tiebreaker.
+ *   with alphabetical label ordering as a tiebreaker. A channel is ``uniform``
+ *   when every message names one radio ({@link chatRadioKey}): its lines then
+ *   drop the ``[freq][preset]`` tag and protocol icon (SPEC CD2).
  */
 export function buildChatTabModel({
   nodes = [],
@@ -455,6 +459,9 @@ export function buildChatTabModel({
   for (const channel of channelBuckets.values()) {
     channel.entries.sort((a, b) => a.ts - b.ts);
     channel.messageCount = channel.entries.length;
+    // A bucket holds at least the message that created it.
+    const radio = chatRadioKey(channel.entries[0].message);
+    channel.uniform = channel.entries.every(entry => chatRadioKey(entry.message) === radio);
   }
   // Sort channels into three priority tiers (SPEC F1):
   //   0. Default/primary channels (index 0 — LongFast, MediumFast, Public, …),

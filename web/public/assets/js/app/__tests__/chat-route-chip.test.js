@@ -165,16 +165,16 @@ function nodePageHtml(message) {
   );
 }
 
-test('the dashboard chat line carries the chip after the sender badge, outside the prefix', () => {
+test('the dashboard chat line carries the chip after the message text, closing its body (CD3)', () => {
   withApp((t) => {
     const html = innerHtml(
       t.createMessageChatEntry({ ...ROUTED, node: { short_name: 'ALI', role: 'COMPANION', protocol: 'meshcore' } }),
     );
     const chip = html.indexOf('class="chat-route-chip"');
     assert.ok(chip > html.indexOf('short-name'), 'chip follows the sender badge');
-    assert.ok(chip < html.indexOf('hello scope'), 'chip precedes the message text');
-    assert.match(html, /^\[[^\]]*\]\[[^\]]*\]\[[^\]]*\] /, 'the bracketed 19ch prefix is unchanged');
-    assert.ok(html.includes('>3 hops · de-be</span>'));
+    assert.ok(chip > html.indexOf('hello scope'), 'chip follows the message text');
+    assert.match(html, /^<span class="chat-entry-time" title="[^"]*">[^<]*<\/span> <span class="chat-entry-body">/, 'the line leads with its time slot (CD1)');
+    assert.ok(html.endsWith('>3 hops · de-be</span></span>'), html);
   });
 });
 
@@ -185,11 +185,11 @@ test('the dashboard chat line has no chip without hops', () => {
   });
 });
 
-test('the node page renders the same chip after the sender badge', () => {
+test('the node page renders the same chip after the message text (CD3)', () => {
   const html = nodePageHtml(ROUTED);
   const chip = html.indexOf(formatChatRouteChip(ROUTED));
   assert.ok(chip > html.indexOf('short-name'), 'chip follows the sender badge');
-  assert.ok(chip < html.indexOf('hello scope'), 'chip precedes the message text');
+  assert.ok(chip > html.indexOf('hello scope'), 'chip follows the message text');
   assert.ok(!nodePageHtml({ ...ROUTED, hops: undefined }).includes('chat-route-chip'));
 });
 

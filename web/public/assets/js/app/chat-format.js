@@ -18,12 +18,18 @@
  * Extract channel metadata from a message payload for chat display.
  *
  * @param {Object} message Raw message payload from the API.
- * @returns {{ frequency: string|null, channelName: string|null, presetCode: string|null }}
- *   Normalized metadata values.
+ * @returns {{
+ *   frequency: string|null,
+ *   channelName: string|null,
+ *   presetCode: string|null,
+ *   presetName: string|null
+ * }} Normalized metadata values. ``presetCode`` is the two-character slot,
+ *   ``presetName`` the preset as people read it (``MediumFast``, ``EU/UK
+ *   Narrow``), shown in the line's time title (SPEC CD1).
  */
 export function extractChatMessageMetadata(message) {
   if (!message || typeof message !== 'object') {
-    return { frequency: null, channelName: null, presetCode: null };
+    return { frequency: null, channelName: null, presetCode: null, presetName: null };
   }
 
   const frequency = normalizeFrequency(
@@ -43,28 +49,9 @@ export function extractChatMessageMetadata(message) {
   const modemPreset = normalizePresetString(resolveModemPresetCandidate(message));
   const numericFreq = frequency != null ? Number(frequency) : null;
   const presetCode = modemPreset ? abbreviatePreset(modemPreset, numericFreq) : null;
+  const presetName = modemPreset ? formatPresetDisplay(modemPreset, numericFreq) : null;
 
-  return { frequency, channelName, presetCode };
-}
-
-/**
- * Produce the formatted prefix for a chat message entry.
- *
- * Timestamp and frequency will each be wrapped in square brackets. Missing
- * metadata values result in empty brackets (with the frequency replaced by the
- * configured placeholder) to preserve the positional layout expected by
- * operators.
- *
- * @param {{
- *   timestamp: string,
- *   frequency: string|null
- * }} params Normalised and escaped display strings.
- * @returns {string} Prefix string suitable for HTML insertion.
- */
-export function formatChatMessagePrefix({ timestamp, frequency }) {
-  const ts = typeof timestamp === 'string' ? timestamp : '';
-  const freq = normalizeFrequencySlot(frequency);
-  return `[${ts}][${freq}]`;
+  return { frequency, channelName, presetCode, presetName };
 }
 
 /**
@@ -111,6 +98,92 @@ export function formatNodeAnnouncementPrefix({ timestamp, frequency }) {
 export function formatChatPresetTag({ presetCode }) {
   const slot = normalizePresetSlot(presetCode);
   return `[${slot}]`;
+}
+
+/**
+ * Render the time slot that leads a chat message line, the first column of
+ * its grid (SPEC CD1). Both values are escaped here.
+ *
+ * @param {string} text Visible time: the dashboard's ``08:01``, or the node
+ *   page's date-bearing ``[2026-10-08 08:01]``.
+ * @param {string} [title=''] Tooltip; none when empty.
+ * @returns {string} ``<span class="chat-entry-time">`` HTML.
+ */
+export function formatChatTimeSlot(text, title = '') {
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<span class="chat-entry-time"${titleAttr}>${escapeHtml(text)}</span>`;
+}
+
+/**
+ * Render the time slot of a dashboard chat line (SPEC CD1): ``HH:MM``, with
+ * the full ``HH:MM:SS``, the frequency and the preset in its title. A value
+ * the line does not know is left out of the title.
+ *
+ * @param {{ timestamp: string, frequency?: ?string, preset?: ?string }} params
+ *   Raw (unescaped) ``HH:MM:SS`` time (``--:--:--`` when unknown), frequency
+ *   in MHz and preset name.
+ * @returns {string} ``<span class="chat-entry-time">`` HTML.
+ */
+export function formatChatEntryTime({ timestamp, frequency = null, preset = null }) {
+  const details = [timestamp, frequency ? `${frequency} MHz` : null, preset].filter(Boolean).join(' · ');
+  return formatChatTimeSlot(timestamp.slice(0, 5), details);
+}
+
+/**
+ * Render the frequency and preset slots of a chat line, such as ``[869][MF]``
+ * (SPEC CD2). A missing value keeps its slot, filled with non-breaking
+ * spaces.
+ *
+ * @param {{ frequency: ?string, presetCode: ?string }} params Raw (unescaped)
+ *   frequency and preset abbreviation, as {@link extractChatMessageMetadata}
+ *   returns them.
+ * @returns {string} HTML-ready slots; the frequency is escaped here.
+ */
+export function formatChatRadioTag({ frequency, presetCode }) {
+  const freq = frequency ? escapeHtml(frequency) : FREQUENCY_PLACEHOLDER;
+  return `[${freq}]${formatChatPresetTag({ presetCode })}`;
+}
+
+/**
+ * Lay out a chat message line (SPEC CD1): the time slot, then the rest of the
+ * line in one ``.chat-entry-body`` span, the grid's second column, so wrapped
+ * lines land under the body.
+ *
+ * @param {string} timeHtml Time slot from {@link formatChatEntryTime} or
+ *   {@link formatChatTimeSlot}.
+ * @param {string} bodyHtml The rest of the line.
+ * @returns {string} The line's inner HTML.
+ */
+export function formatChatLine(timeHtml, bodyHtml) {
+  return `${timeHtml} <span class="chat-entry-body">${bodyHtml}</span>`;
+}
+
+/**
+ * Key of the radio a chat line names (SPEC CD2): its frequency, its preset
+ * slot and its protocol. Lines with one key render the same ``[freq][preset]``
+ * tag and protocol icon, so a tab whose lines all share a key can drop both.
+ *
+ * @param {?Object} message Message payload.
+ * @returns {string} The key.
+ */
+export function chatRadioKey(message) {
+  const { frequency, presetCode } = extractChatMessageMetadata(message);
+  return JSON.stringify([frequency, normalizePresetSlot(presetCode), messageProtocol(message)]);
+}
+
+/**
+ * Protocol of a chat line: the message's own, else its node's, trimmed, as
+ * the dashboard picks it for the line's protocol icon.
+ *
+ * @param {?Object} message Message payload.
+ * @returns {?string} The protocol, or ``null`` when neither names one.
+ */
+function messageProtocol(message) {
+  for (const source of [message, message?.node]) {
+    const protocol = normalizeString(source?.protocol);
+    if (protocol) return protocol;
+  }
+  return null;
 }
 
 /**
@@ -194,7 +267,7 @@ function firstNonNull(...candidates) {
 // utils.js; imported here so callers of chat-format.js that use them
 // directly continue to work.
 import { normalizeString, escapeHtml } from './utils.js';
-import { resolveMeshcorePresetDisplay } from './node-modem-metadata.js';
+import { formatPresetDisplay, resolveMeshcorePresetDisplay } from './node-modem-metadata.js';
 
 /**
  * Convert various frequency representations into clean strings.
@@ -361,7 +434,6 @@ export const __test__ = {
   firstNonNull,
   normalizeString,
   normalizeFrequency,
-  formatChatMessagePrefix,
   formatNodeAnnouncementPrefix,
   normalizeFrequencySlot,
   FREQUENCY_PLACEHOLDER,

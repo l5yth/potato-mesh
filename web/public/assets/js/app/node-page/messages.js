@@ -25,8 +25,9 @@ import { protocolIconPrefixHtml } from '../protocol-helpers.js';
 import {
   extractChatMessageMetadata,
   formatChatChannelTag,
-  formatChatMessagePrefix,
-  formatChatPresetTag,
+  formatChatLine,
+  formatChatRadioTag,
+  formatChatTimeSlot,
 } from '../chat-format.js';
 import { formatChatRouteChip } from '../chat-route-chip.js';
 import { formatChatSenderMarker } from '../chat-sender-marker.js';
@@ -67,7 +68,7 @@ export function renderNodeChatEmojiHtml(symbol) {
  *
  * Known tradeoff: reply targets whose source message lies outside the
  * loaded message window will not resolve via {@link resolveReplyPrefix},
- * so the rendered ``[in reply to ...]`` prefix silently degrades to the
+ * so the rendered ``↩`` reply prefix silently degrades to the
  * empty string for those rows.
  *
  * @param {Array<Object>} messages Message records.
@@ -104,7 +105,7 @@ export function buildNodesById(messages, fallbackNode, globalNodesById) {
  * Each entry is rendered through the shared {@link renderChatEntryContent}
  * helper so the node detail page mirrors the dashboard chat panel —
  * mentions resolve to badges, MeshCore leading-mention replies surface as
- * an ``[in reply to]`` prefix, emoji are wrapped in ``chat-entry-emoji``
+ * a ``↩`` reply prefix, emoji are wrapped in ``chat-entry-emoji``
  * spans, and URLs are linkified.
  *
  * @param {Array<Object>} messages Message records.
@@ -156,13 +157,12 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
         }
       }
 
-      const prefix = formatChatMessagePrefix({
-        timestamp: escapeHtml(timestamp ?? ''),
-        frequency: metadata.frequency ? escapeHtml(metadata.frequency) : null,
-      });
-      const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
+      // The time keeps its date, since the page lists days without dividers;
+      // the radio and channel tags lead the line's body (SPEC CD1).
+      const time = formatChatTimeSlot(`[${timestamp ?? ''}]`);
+      const radioTag = formatChatRadioTag(metadata);
       const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
-      // Route chip (hops + flood scope) after the sender badge (SPEC SC7).
+      // Route chip (hops + flood scope, SPEC SC7) after the text (SPEC CD3).
       const routeChip = formatChatRouteChip(message);
 
       // Render the message body through the shared chat-entry renderer so
@@ -216,7 +216,8 @@ export function renderMessages(messages, renderShortHtml, node, globalNodesById 
         senderFromText: senderNode !== null && senderNode === meshcoreSenderNode,
       });
 
-      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml}${senderMarker}${routeChip} ${bodyHtml}</div>`;
+      const body = `${radioTag}${channelTag} ${protocolIconHtml}${badgeHtml}${senderMarker} ${bodyHtml}${routeChip}`;
+      return `<div class="chat-entry-msg">${formatChatLine(time, body)}</div>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';

@@ -25,7 +25,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createChatPanelChrome } from '../chat-panel-chrome.js';
-import { formatDate } from '../format-utils.js';
 
 /**
  * Document double whose elements count text writes.
@@ -59,6 +58,17 @@ const NOON = (() => {
 })();
 const DAY = 24 * 60 * 60;
 
+/**
+ * Label a divider shows for the day of ``ts``: weekday, day and month in
+ * en-GB, without the year (SPEC CD5).
+ *
+ * @param {number} ts Unix seconds.
+ * @returns {string} Such as ``Thu 8 Oct``.
+ */
+function dayLabel(ts) {
+  return new Date(ts * 1000).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
 test('createChatPanelChrome needs a document with createElement', () => {
   assert.throws(() => createChatPanelChrome({ documentRef: {} }), TypeError);
   assert.throws(() => createChatPanelChrome({ documentRef: null }), TypeError);
@@ -72,13 +82,33 @@ test('a build hands out one divider per day, before the first entry of the day',
   const yesterday = build.divider(NOON - DAY);
   assert.equal(yesterday.tagName, 'DIV');
   assert.equal(yesterday.className, 'chat-entry-date');
-  assert.equal(yesterday.textContent, `-- ${formatDate(new Date((NOON - DAY) * 1000))} --`);
+  assert.equal(yesterday.textContent, dayLabel(NOON - DAY));
   assert.equal(build.divider(NOON - DAY + 60), null, 'the same day continues');
   const today = build.divider(NOON);
   assert.notEqual(today, yesterday);
-  assert.equal(today.textContent, `-- ${formatDate(new Date(NOON * 1000))} --`);
+  assert.equal(today.textContent, dayLabel(NOON));
   build.finish();
   assert.equal(chrome.size('channel-0'), 2);
+});
+
+test('a divider reads "Thu 8 Oct": weekday, day and month in en-GB, no year (CD5)', () => {
+  const build = createChatPanelChrome({ documentRef: makeDoc() }).begin('channel-0');
+  assert.equal(build.divider(new Date(2026, 9, 8, 12).getTime() / 1000).textContent, 'Thu 8 Oct');
+  assert.equal(build.divider(new Date(2026, 9, 9, 12).getTime() / 1000).textContent, 'Fri 9 Oct');
+});
+
+test('dividers stay keyed by the ISO day: two days with one label keep two dividers (CD5, DR1)', () => {
+  const chrome = createChatPanelChrome({ documentRef: makeDoc() });
+  // 8 Oct 2020 and 8 Oct 2026 are both Thursdays: the same label, two days.
+  const days = [new Date(2020, 9, 8, 12), new Date(2026, 9, 8, 12)].map(day => day.getTime() / 1000);
+  const first = chrome.begin('log');
+  const dividers = days.map(ts => first.divider(ts));
+  first.finish();
+  assert.notEqual(dividers[0], dividers[1]);
+  assert.deepEqual(dividers.map(node => node.textContent), ['Thu 8 Oct', 'Thu 8 Oct']);
+  assert.equal(chrome.size('log'), 2);
+  const again = chrome.begin('log');
+  assert.deepEqual(days.map(ts => again.divider(ts + 60)), dividers, 'each day keeps its own node');
 });
 
 test('a later build of the same panel reuses its dividers and writes nothing (DR1, #881)', () => {
