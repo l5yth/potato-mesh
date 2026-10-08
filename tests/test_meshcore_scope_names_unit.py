@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for the MeshCore scope-name table (SPEC SC3, amended 2026-10-08).
+"""Unit tests for the MeshCore scope-name table (SPEC SC3, amended 2026-10-08; SN1).
 
 Covers :mod:`data.mesh_ingestor.protocols.meshcore.scope_names`, the built-in
 public hashtag region names a scoped flood is named by when the radio's
@@ -64,20 +64,23 @@ def _firmware_name_char(byte: int) -> bool:
     return byte in b"-$#" or 0x30 <= byte <= 0x39 or byte >= 0x41
 
 
-def test_table_holds_the_iso_groups_and_eu():
-    """301 names: 249 ISO 3166-1 alpha-2 codes, ``eu``, 16 + 9 + 26 subdivisions."""
+def test_table_holds_its_groups():
+    """306 names: 249 ISO 3166-1 alpha-2 codes, ``eu``, 16 + 9 + 26
+    subdivisions, then 5 German community regions."""
     assert len(scope_names.ISO_3166_1_ALPHA_2) == 249
     assert len(scope_names.ISO_3166_2_DE) == 16
     assert len(scope_names.ISO_3166_2_AT) == 9
     assert len(scope_names.ISO_3166_2_CH) == 26
+    assert len(scope_names.DE_COMMUNITY_REGIONS) == 5
     assert scope_names.SCOPE_NAMES == (
         scope_names.ISO_3166_1_ALPHA_2
         + ("eu",)
         + scope_names.ISO_3166_2_DE
         + scope_names.ISO_3166_2_AT
         + scope_names.ISO_3166_2_CH
+        + scope_names.DE_COMMUNITY_REGIONS
     )
-    assert len(scope_names.SCOPE_NAMES) == 301
+    assert len(scope_names.SCOPE_NAMES) == 306
 
 
 def test_table_entries_are_unique():
@@ -112,6 +115,15 @@ def test_each_group_keeps_its_iso_form():
         assert name in scope_names.SCOPE_NAMES, name
     for name in ("de-be", "de-by", "de-nw", "at-1", "at-9", "ch-ai", "ch-zh"):
         assert name in scope_names.SCOPE_NAMES, name
+
+
+def test_table_lists_the_german_community_regions():
+    """SN1: ``de-bebb`` (Berlin and Brandenburg), ``de-nord``, ``de-ost``,
+    ``de-sued`` and ``de-west`` are listed; none is ISO 3166-2."""
+    names = ("de-bebb", "de-nord", "de-ost", "de-sued", "de-west")
+    assert [name for name in names if name not in scope_names.SCOPE_NAMES] == []
+    assert scope_names.DE_COMMUNITY_REGIONS == names
+    assert set(names).isdisjoint(scope_names.ISO_3166_2_DE)
 
 
 def test_route_precomputes_each_region_key_at_import(monkeypatch):
