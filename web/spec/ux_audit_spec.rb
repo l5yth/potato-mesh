@@ -88,10 +88,16 @@ RSpec.describe "UX audit remediation markup" do
       expect(html).to include(">Position<")
     end
 
-    it "moves units into the battery and voltage headers" do
+    it "names the unit of every numeric column in its header (DV1)" do
       html = body_of("/nodes")
-      expect(html).to include("Battery %")
-      expect(html).to include("Voltage V")
+      {
+        "Frequency" => "MHz", "Battery" => "%", "Voltage" => "V",
+        "Channel Util" => "%", "Air Util Tx" => "%", "Temperature" => "°C",
+        "Humidity" => "%", "Pressure" => "hPa", "Altitude" => "m",
+      }.each do |label, unit|
+        expect(html).to include(%(<span>#{label} <span class="nodes-col__unit">#{unit}</span></span>))
+      end
+      expect(html.scan('class="nodes-col__unit"').size).to eq(9)
     end
 
     it "adds the mobile disclosure column header" do

@@ -110,12 +110,15 @@ export function makeFakeEventSource() {
  * await the initial load, run the body, then tear the timer/stream down so the
  * Node test runner can exit cleanly.
  *
- * @param {{ configOverrides?: Object, withEventSource?: boolean, responses?: Object }} [opts]
+ * @param {{ configOverrides?: Object, withEventSource?: boolean, responses?: Object, env?: Object }} [opts]
+ *   `env` is an environment the caller already stood up (for example the
+ *   `env` of `createLiveTableDom`, whose table parses rendered rows); it is
+ *   cleaned up with the rest.
  * @param {(ctx: { calls: Array, testUtils: Object, FakeEventSource: Function }) => Promise<void>} fn Body.
  * @returns {Promise<void>}
  */
-export async function runLiveApp({ configOverrides = {}, withEventSource = true, responses } = {}, fn) {
-  const env = createDomEnvironment({ includeBody: true });
+export async function runLiveApp({ configOverrides = {}, withEventSource = true, responses, env: givenEnv } = {}, fn) {
+  const env = givenEnv || createDomEnvironment({ includeBody: true });
   env.registerElement('chat', env.createElement('div', 'chat'));
   const originalFetch = globalThis.fetch;
   const originalES = globalThis.EventSource;

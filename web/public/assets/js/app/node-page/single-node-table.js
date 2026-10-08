@@ -100,8 +100,9 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
   // "No telemetry reported." line could never render.
   const role = stringOrNull(node.role);
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
-  // The nodes table's formatter, so a level above 100 (the powered sentinel)
-  // reads `100% ⚡` here too (SPEC UX10).
+  // fmtBattery reads a level above 100 (the powered sentinel) as `100% ⚡`
+  // on the node page and the node overlay (SPEC UX10); the nodes table
+  // prints it bare, `100 ⚡`, under its `%` header (SPEC DV1).
   const battery = fmtBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
   const uptime = formatDurationSeconds(node.uptime ?? node.uptime_seconds ?? node.uptimeSeconds);

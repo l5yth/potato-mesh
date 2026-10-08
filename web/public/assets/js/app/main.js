@@ -76,7 +76,6 @@ import {
   buildTelemetryDisplayEntries,
   collectTelemetryMetrics,
   fmtAlt,
-  fmtBattery,
   fmtHumidity,
   fmtPressure,
   fmtTemperature,
@@ -259,6 +258,7 @@ import { createNodeMarker, nodeMarkerShapeForProtocol } from './main/node-marker
 import { colocatedHubIconDefinition } from './main/colocated-hub-icon.js';
 import { syncNodesEmptyRow } from './main/table-empty-state.js';
 import { formatTableCell } from './main/table-cell-format.js';
+import { tableBattery, tableNumber, tableVoltage } from './main/table-number-format.js';
 import {
   NODES_TABLE_COLUMN_GROUPS,
   NODES_TABLE_TOTAL_COLUMNS,
@@ -4541,23 +4541,23 @@ export function initializeApp(config) {
         <td class="mono nodes-col nodes-col--node-id">${escapeHtml(n.node_id || "")}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
-        <td class="nodes-col nodes-col--frequency num">${formatTableCell(loraFrequencyDisplay)}</td>
+        <td class="nodes-col nodes-col--frequency num">${formatTableCell(tableNumber(modemMetadata.loraFreq, 0))}</td>
         <td class="nodes-col nodes-col--modem-preset">${formatTableCell(modemPresetDisplay)}</td>
         `;
       const cellsMiddle = `
         <td class="nodes-col nodes-col--role">${roleCellHtml}</td>
         <td class="nodes-col nodes-col--hw-model">${formatTableCell(escapeHtml(fmtHw(n.hw_model)))}</td>
-        <td class="nodes-col nodes-col--battery num">${formatTableCell(fmtBattery(n.battery_level))}</td>
-        <td class="nodes-col nodes-col--voltage num">${formatTableCell(fmtVoltage(n.voltage))}</td>
+        <td class="nodes-col nodes-col--battery num">${formatTableCell(tableBattery(n.battery_level))}</td>
+        <td class="nodes-col nodes-col--voltage num">${formatTableCell(tableVoltage(n.voltage))}</td>
         <td class="nodes-col nodes-col--uptime num">${formatTableCell(timeHum(n.uptime_seconds))}</td>
-        <td class="nodes-col nodes-col--channel-util num">${formatTableCell(fmtTx(n.channel_utilization))}</td>
-        <td class="nodes-col nodes-col--air-util-tx num">${formatTableCell(fmtTx(n.air_util_tx))}</td>
-        <td class="nodes-col nodes-col--temperature num">${formatTableCell(fmtTemperature(n.temperature))}</td>
-        <td class="nodes-col nodes-col--humidity num">${formatTableCell(fmtHumidity(n.relative_humidity))}</td>
-        <td class="nodes-col nodes-col--pressure num">${formatTableCell(fmtPressure(n.barometric_pressure))}</td>
+        <td class="nodes-col nodes-col--channel-util num">${formatTableCell(tableNumber(n.channel_utilization, 1))}</td>
+        <td class="nodes-col nodes-col--air-util-tx num">${formatTableCell(tableNumber(n.air_util_tx, 1))}</td>
+        <td class="nodes-col nodes-col--temperature num">${formatTableCell(tableNumber(n.temperature, 1))}</td>
+        <td class="nodes-col nodes-col--humidity num">${formatTableCell(tableNumber(n.relative_humidity, 1))}</td>
+        <td class="nodes-col nodes-col--pressure num">${formatTableCell(tableNumber(n.barometric_pressure, 1))}</td>
         <td class="nodes-col nodes-col--latitude num">${formatTableCell(latitudeDisplay)}</td>
         <td class="nodes-col nodes-col--longitude num">${formatTableCell(longitudeDisplay)}</td>
-        <td class="nodes-col nodes-col--altitude num">${formatTableCell(fmtAlt(n.altitude, "m"))}</td>
+        <td class="nodes-col nodes-col--altitude num">${formatTableCell(tableNumber(n.altitude, 0))}</td>
         `;
       const cellsTail = `
         <td class="nodes-col nodes-col--more">${disclosureHtml}<button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
