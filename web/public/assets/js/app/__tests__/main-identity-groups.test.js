@@ -202,7 +202,7 @@ test('a Reticulum parent keeps its protocol tile and gains role chips', async ()
       'the protocol tile must survive alongside the caret');
     assert.equal(occurrences(parent.innerHTML, 'class="role-chip"'), 3,
       'one chip per distinct aspect role');
-    assert.match(parent.innerHTML, />NODE</);
+    assert.match(parent.innerHTML, /title="NODE">Node</);
   } finally {
     cleanup();
   }

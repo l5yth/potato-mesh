@@ -710,7 +710,7 @@ h1 {
 
 #map .map-placeholder-message {
   text-align: center;
-  color: #ddd;
+  color: var(--fg);
   font-size: 14px;
   line-height: 1.5;
   padding: 0 16px;
@@ -739,20 +739,32 @@ h1 {
   line-height: 1.2;
   backdrop-filter: blur(6px);
   pointer-events: none;
-  border: 1px solid rgba(0, 0, 0, 0.15);
-  background: rgba(0, 0, 0, 0.65);
-  color: #eee;
+  border: 1px solid var(--overlay-line);
+  background: var(--overlay-bg);
+  color: var(--fg);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   z-index: 1200;
-  border-color: rgba(255, 255, 255, 0.16);
 }
 
 
-
+/* Toolbar pills in the map overlay chrome (SPEC ML5). The generic button
+   reset skips them, so this rule carries the whole pill and its pointer. */
 .map-toolbar button {
-  background: rgba(36, 36, 36, 0.88);
-  color: #f1f1f1;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--overlay-line);
+  background: var(--overlay-bg);
+  color: var(--fg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease;
+  pointer-events: auto;
 }
 
 .map-toolbar button:hover {
@@ -964,26 +976,6 @@ body.view-chat .page-shell {
   gap: 8px;
   z-index: 1300;
   pointer-events: none;
-}
-
-.map-toolbar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 0, 0, 0.2);
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  font-size: 13px;
-  line-height: 1.2;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease,
-    box-shadow 160ms ease;
-  pointer-events: auto;
-}
-
-.map-toolbar button:hover {
-  background: rgba(245, 245, 245, 0.95);
 }
 
 .map-toolbar button svg {
@@ -1773,7 +1765,7 @@ body.view-chat .page-shell {
   outline-offset: 2px;
 }
 
-button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure) {
+button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure):not(.legend-item):not(.map-toolbar button) {
   padding: 6px 10px;
   border: 1px solid var(--line-strong);
   background: var(--input-bg);
@@ -1827,7 +1819,7 @@ button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-di
   transition: filter 0.15s ease;
 }
 
-button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure):hover {
+button:not(.chat-tab):not(.sort-button):not(.node-extra-toggle):not(.identity-disclosure):not(.legend-item):not(.map-toolbar button):hover {
   background: var(--line-strong);
 }
 
@@ -1921,16 +1913,17 @@ input[type="radio"] {
 
 .legend {
   position: relative;
-  background: #333;
-  color: #eee;
+  background: var(--overlay-bg);
+  color: var(--fg);
   padding: 8px 10px 10px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--overlay-line);
   border-radius: 8px;
   font-size: 12px;
   line-height: 18px;
   min-width: 160px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-  border-color: #444;
+  /* fitLegendToMap caps the height to the map's; the rest scrolls (SPEC ML3). */
+  overflow-y: auto;
 }
 
 /* Mesh activity card (SPEC MA-F1…MA-F6): a bottom-left map overlay, sibling to
@@ -1945,10 +1938,10 @@ input[type="radio"] {
 }
 
 .map-activity-card {
-  background: #333;
-  color: #eee;
+  background: var(--overlay-bg);
+  color: var(--fg);
   padding: 8px 10px 10px;
-  border: 1px solid #444;
+  border: 1px solid var(--overlay-line);
   border-radius: 8px;
   font-size: 12px;
   line-height: 18px;
@@ -2031,7 +2024,7 @@ input[type="radio"] {
 
 .map-activity-card__row-name {
   flex: 1 1 auto;
-  color: #ccc;
+  color: var(--fg-soft);
 }
 
 .map-activity-card__row-bar {
@@ -2217,6 +2210,10 @@ input[type="radio"] {
   border-radius: 4px;
   padding: 3px 6px;
   cursor: pointer;
+  /* Full width including padding and border, as a <button> already is: the
+     Federation legend's <div> items overflowed the scrolling panel by 4 px,
+     which drew a horizontal scrollbar there (SPEC ML3). */
+  box-sizing: border-box;
   width: 100%;
   justify-content: flex-start;
   text-align: left;
@@ -2231,17 +2228,27 @@ input[type="radio"] {
   outline-offset: 2px;
 }
 
-/* The `button` prefix is required (Legend & Chat Fix): a role chip is a
-   <button>, and the reset `button:not(.chat-tab):not(.sort-button)` is
-   specificity (0,2,1). The bare `.legend-item[aria-pressed="true"]` is (0,2,0)
-   and lost to it, so the selected state never painted (every chip computed to
-   #333, only font-weight surviving). `button.legend-item[aria-pressed="true"]`
-   is (0,2,1) and, later in source, wins. */
+/* Quiet default (SPEC ML1): a shown chip (`aria-pressed="true"`) is plain
+   text, so the swatches carry the key; a hidden one is muted and struck
+   through, its swatch faded. The generic button reset skips `.legend-item`,
+   so `.legend-item` and these rules paint the chip. */
 button.legend-item[aria-pressed="true"] {
-  border-color: #70b3f0;
-  background: rgba(91, 155, 213, 0.48);
-  color: #c8e8ff;
-  font-weight: 600;
+  font-weight: 400;
+}
+
+button.legend-item[aria-pressed="false"] {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+button.legend-item[aria-pressed="false"] .legend-swatch {
+  opacity: 0.35;
+}
+
+/* Clear filters turns accent while a role filter or a protocol toggle is
+   active: updateLegendRoleFiltersUI sets the attribute on the panel. */
+#mapLegend[data-has-active-filters] .legend-reset {
+  color: var(--accent);
 }
 
 /* Role swatch = the marker at legend size (Legend & Chat Fix): colour keys
@@ -2304,9 +2311,14 @@ button.legend-item[aria-pressed="true"] {
 
 .legend-toggle-button {
   font-size: 12px;
-  color: #eee;
-  background: #333;
-  border-color: #444;
+}
+
+/* Overlay chrome (SPEC ML5). The generic button reset outranks a bare class,
+   so `#map` lifts the colours over it; the reset still sets the box. */
+#map .legend-toggle-button {
+  color: var(--fg);
+  background: var(--overlay-bg);
+  border-color: var(--overlay-line);
 }
 
 /*
@@ -2340,11 +2352,55 @@ button.legend-item[aria-pressed="true"] {
   -webkit-filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
 }
 
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: #333;
-  color: #eee;
+/* Popups in the map overlay chrome (SPEC ML5). leaflet.css loads after this
+   file, so a bare `.leaflet-*` rule loses to it (the Federation popups painted
+   white); `#map` outranks it. Its link colour (#0078A8) is too dark here. */
+#map .leaflet-popup-content-wrapper,
+#map .leaflet-popup-tip {
+  background: var(--overlay-bg);
+  color: var(--fg);
   box-shadow: 0 3px 14px rgba(0, 0, 0, 0.8);
+}
+
+#map .leaflet-popup-content a {
+  color: var(--accent);
+}
+
+/* Leaflet zoom control as an overlay pill on every map (SPEC ML2): 36 px
+   buttons, 44 px on a coarse pointer. The focus ring sits inside the pill,
+   which clips anything outside it. */
+#map .leaflet-bar {
+  border: 1px solid var(--overlay-line);
+  border-radius: 999px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  background-clip: border-box;
+}
+
+#map .leaflet-bar a {
+  background-color: var(--overlay-bg);
+  color: var(--fg);
+  width: 36px;
+  height: 36px;
+  font: 600 18px/36px system-ui;
+  border-bottom-color: var(--overlay-line);
+}
+
+#map .leaflet-bar a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+#map .leaflet-bar a.leaflet-disabled {
+  color: var(--muted);
+}
+
+@media (pointer: coarse) {
+  #map .leaflet-bar a {
+    width: 44px;
+    height: 44px;
+    line-height: 44px;
+  }
 }
 
 #nodes {
@@ -2590,8 +2646,8 @@ button.legend-item[aria-pressed="true"] {
 
 
 
-.legend-toggle-button:hover {
-  background: #444;
+#map .legend-toggle-button:hover {
+  background: var(--line-strong);
 }
 
 

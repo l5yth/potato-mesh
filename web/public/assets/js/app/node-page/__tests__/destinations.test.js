@@ -82,7 +82,7 @@ test('the transport row shows no aspect but keeps its role (RA7)', () => {
   // The stored aspect is never printed…
   assert.doesNotMatch(html, new RegExp(TRANSPORT_ASPECT));
   // …but the role it maps to still is.
-  assert.match(html, />TRANSPORT</);
+  assert.match(html, /title="TRANSPORT">Transport</);
 });
 
 test('a nameless destination renders the muted dash, not an empty cell', () => {

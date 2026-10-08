@@ -15,6 +15,7 @@
  */
 
 import { isMeshcoreProtocol, isReticulumProtocol } from './protocol-helpers.js';
+import { escapeHtml } from './utils.js';
 
 /**
  * Mapping of numeric Meshtastic role identifiers to their canonical names.
@@ -316,6 +317,34 @@ export function normalizeRole(role, protocol = null) {
   if (translated == null) return fallback;
   const str = String(translated).trim();
   return str.length ? str : fallback;
+}
+
+/**
+ * Spell a role as a sentence-case label: `ROUTER_LATE` reads `Router late`.
+ *
+ * Every surface that names a role shows this label (SPEC ML4); the enum stays
+ * in `title`, `data-role`, the filter keys, the sort and the API.
+ *
+ * @param {*} role Raw role value from the API, possibly a numeric id.
+ * @param {string|null|undefined} [protocol] Protocol whose base role applies
+ *   when the value is absent.
+ * @returns {string} Human-readable role label.
+ */
+export function humanRole(role, protocol = null) {
+  const text = normalizeRole(role, protocol).replace(/_/g, ' ').toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Render a role as its {@link humanRole} label with the enum in `title`.
+ *
+ * @param {*} role Raw role value from the API, possibly a numeric id.
+ * @param {string|null|undefined} [protocol] Protocol whose base role applies
+ *   when the value is absent.
+ * @returns {string} `<span title="ROUTER_LATE">Router late</span>`, escaped.
+ */
+export function humanRoleHtml(role, protocol = null) {
+  return `<span title="${escapeHtml(normalizeRole(role, protocol))}">${escapeHtml(humanRole(role, protocol))}</span>`;
 }
 
 /**

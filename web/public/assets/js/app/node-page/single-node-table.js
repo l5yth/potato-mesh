@@ -37,6 +37,7 @@ import {
   formatVoltage,
 } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
+import { humanRole, normalizeRole } from '../role-helpers.js';
 import { identitySummary } from './destinations.js';
 import { formatTableCell } from '../main/table-cell-format.js';
 import { isReportedField } from '../main/nodes-table-ia.js';
@@ -99,6 +100,9 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
   // reachable -- with a default, Activity always survived and the honest
   // "No telemetry reported." line could never render.
   const role = stringOrNull(node.role);
+  // The sheet reads the role as a word and keeps the enum in title (SPEC ML4).
+  const roleLabel = role ? humanRole(role, node.protocol) : null;
+  const roleAttrs = role ? `title="${escapeHtml(normalizeRole(role, node.protocol))}"` : '';
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
   // fmtBattery reads a level above 100 (the powered sentinel) as `100% ⚡`
   // on the node page and the node overlay (SPEC UX10); the nodes table
@@ -140,7 +144,7 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
     ['Activity', [
       specField('First Heard', firstHeardTs == null ? null : formatRelativeSeconds(firstHeardTs, referenceSeconds)),
       specField('Last Seen', lastSeen, lastSeenAttrs),
-      specField('Role', role),
+      specField('Role', roleLabel, roleAttrs),
     ]],
     ['Health', [
       specField('Battery', battery),

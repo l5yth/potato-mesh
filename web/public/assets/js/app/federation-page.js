@@ -20,7 +20,7 @@ import {
   resolveFederationSiteName,
   resolveFederationSiteNameForDisplay
 } from './federation-instance-display.js';
-import { resolveLegendVisibility } from './map-legend-visibility.js';
+import { fitLegendToMap, resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
 import { meshcoreIconHtml, meshtasticIconHtml, reticulumIconHtml } from './protocol-helpers.js';
@@ -403,6 +403,8 @@ export async function initializeFederationPage(options = {}) {
   let markersLayer = null;
   let legendContainer = null;
   let legendToggleButton = null;
+  /** The legend toggle's control, stacked above the legend in its corner (SPEC ML3). */
+  let legendToggleRow = null;
   let legendVisible = true;
   const legendCollapsedValue = mapPanel ? mapPanel.getAttribute('data-legend-collapsed') : null;
   const legendDefaultCollapsed = legendCollapsedValue == null
@@ -716,6 +718,15 @@ export async function initializeFederationPage(options = {}) {
           const label = leaflet.DomUtil.create('span', 'legend-label', item);
           label.textContent = stop.label;
         });
+        // A capped legend scrolls (SPEC ML3): the wheel and a drag over it
+        // must reach the panel, not zoom or pan the map, as the dashboard
+        // legend's wrapper already does.
+        if (leaflet.DomEvent && typeof leaflet.DomEvent.disableClickPropagation === 'function') {
+          leaflet.DomEvent.disableClickPropagation(container);
+        }
+        if (leaflet.DomEvent && typeof leaflet.DomEvent.disableScrollPropagation === 'function') {
+          leaflet.DomEvent.disableScrollPropagation(container);
+        }
         legendContainer = container;
         return container;
       };
@@ -733,6 +744,7 @@ export async function initializeFederationPage(options = {}) {
           setLegendVisibility(!legendVisible);
         });
         legendToggleButton = button;
+        legendToggleRow = container;
         updateLegendToggleState();
         if (leaflet.DomEvent && typeof leaflet.DomEvent.disableClickPropagation === 'function') {
           leaflet.DomEvent.disableClickPropagation(container);
@@ -743,6 +755,12 @@ export async function initializeFederationPage(options = {}) {
         return container;
       };
       legendToggleControl.addTo(map);
+      // Cap the panel to the room under the toolbar (SPEC ML3). The toggle
+      // stacks above this legend in the same corner, so its row stays free.
+      fitLegendToMap(map, legendContainer, {
+        toolbar: mapPanel ? mapPanel.querySelector('.map-toolbar') : null,
+        stacked: legendToggleRow,
+      });
 
       setLegendVisibility(initialLegendVisible);
       if (legendMediaQuery) {

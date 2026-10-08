@@ -217,13 +217,13 @@ test('a role-less destination takes its protocol base role, never CLIENT (SPEC R
   // reintroduced exactly the defect RA9 fixed -- CLIENT is a Meshtastic role
   // absent from these ramps, so it resolved to grey and mislabelled the chip.
   const reticulum = roleChipsHtml([{ role: null, last_heard: 1 }], 'reticulum');
-  assert.match(reticulum, />PEER</);
+  assert.match(reticulum, /title="PEER">Peer</);
   assert.match(reticulum, new RegExp(reticulumRoleColors.PEER));
   assert.doesNotMatch(reticulum, /CLIENT/);
   assert.doesNotMatch(reticulum, /#ccc/);
 
   const meshcore = roleChipsHtml([{ role: null, last_heard: 1 }], 'meshcore');
-  assert.match(meshcore, />COMPANION</);
+  assert.match(meshcore, /title="COMPANION">Companion</);
   assert.match(meshcore, new RegExp(meshcoreRoleColors.COMPANION));
   assert.doesNotMatch(meshcore, /CLIENT/);
 });
@@ -290,7 +290,7 @@ test('a sub-row spans exactly as many columns as a parent row', () => {
 test('the transport sub-row shows no aspect but keeps its role (RA7)', () => {
   const html = subRowCellsHtml(FIELD.transport, '!27716218', '<td class="ts"></td>', badge);
   assert.doesNotMatch(html, new RegExp(TRANSPORT_ASPECT));
-  assert.match(html, />TRANSPORT</);
+  assert.match(html, /title="TRANSPORT">Transport</);
 });
 
 test('a sub-row escapes a hostile destination name', () => {
@@ -310,7 +310,7 @@ test('a sub-row renders its role as a coloured chip, like its parent', () => {
   const html = subRowCellsHtml(FIELD.nomadnet, '!27716218', '<td class="ts"></td>', badge);
   assert.match(html, /class="role-chip"/);
   assert.match(html, new RegExp(reticulumRoleColors.NODE));
-  assert.match(html, />NODE</);
+  assert.match(html, /title="NODE">Node</);
 });
 
 test('a sub-row with no role dashes rather than rendering an empty chip', () => {

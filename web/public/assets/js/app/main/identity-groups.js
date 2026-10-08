@@ -32,6 +32,7 @@ import {
   defaultRoleFor,
   getRoleColor,
   getRoleTextColor,
+  humanRole,
   normalizeRole,
 } from '../role-helpers.js';
 
@@ -147,7 +148,8 @@ export function newestLastHeard(destinations) {
 }
 
 /**
- * Render one role chip in its protocol's role colour.
+ * Render one role chip in its protocol's role colour, reading the role as a
+ * word with the enum in `title` (SPEC ML4).
  *
  * @param {string} role Role identifier.
  * @param {?string} protocol Protocol whose ramp to use.
@@ -162,8 +164,8 @@ function roleChipHtml(role, protocol) {
   const background = getRoleColor(role, protocol);
   const textColor = getRoleTextColor(role, protocol);
   return (
-    `<span class="role-chip" style="background:${background};color:${textColor}">` +
-    `${escapeHtml(key)}</span>`
+    `<span class="role-chip" style="background:${background};color:${textColor}" title="${escapeHtml(key)}">` +
+    `${escapeHtml(humanRole(role, protocol))}</span>`
   );
 }
 
