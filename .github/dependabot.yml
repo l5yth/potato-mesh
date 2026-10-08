@@ -37,7 +37,3 @@ updates:
     directory: "/web"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "pub"
-    directory: "/app"
-    schedule:
-      interval: "weekly"

@@ -27,7 +27,6 @@ _No MQTT clutter, just local LoRa aether._
   * Supports multiple ingestors per instance.
   * Supports Meshtastic, Meshcore, and Reticulum (experimental, announce-only).
 * Matrix bridge posts Meshtastic messages to a Matrix channel (no radio required).
-* Mobile app to _read_ messages on your local aether (no radio required).
 
 Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
 
@@ -39,7 +38,6 @@ Jump to Contents:
 - [Nix](#nix) - nix deployment
 - [Docker](#docker) - docker deployment
 - [Matrix Bridge](#matrix-bridge) - configuration and deployment
-- [Mobile App](#mobile-app) - reader app
 
 ## Web App
 
@@ -600,11 +598,6 @@ Work in progress. Forwards messages from a PotatoMesh instance to a Matrix
 channel (no radio required). See [matrix/README.md](./matrix/README.md).
 
 ![matrix bridge](./scrot-0.6.png)
-
-## Mobile App
-
-Work in progress. A read-only reader app for Android and iOS. See
-[app/README.md](./app/README.md).
 
 ## Demos
 
