@@ -397,19 +397,23 @@ def _parse_mesh_udp_groups(raw: str) -> tuple[str, ...]:
         if not entry:
             continue
         try:
-            is_multicast = ipaddress.IPv4Address(entry).is_multicast
+            address = ipaddress.IPv4Address(entry)
         except ValueError:  # not an IPv4 address at all
-            is_multicast = False
-        if not is_multicast:
+            address = None
+        if address is None or not address.is_multicast:
             raise ValueError(
                 f"MESH_UDP_GROUP entry {entry!r} is not an IPv4 multicast address "
                 "(224.0.0.0/4). Set one address or a comma-separated list, "
                 'e.g. "239.0.0.69,224.0.0.69".'
             )
-        # IPv4Address accepts only canonical dotted-decimal (no leading
-        # zeros), so the raw entry is already the normalised spelling.
-        if entry not in groups:
-            groups.append(entry)
+        # Keep the parsed address rather than the raw fragment.  IPv4Address
+        # accepts only canonical dotted-decimal (no leading zeros), so the text
+        # is the same, but only a validated group can reach ``bind``: CodeQL
+        # (py/bind-socket-all-network-interfaces) traced the blank that
+        # ``_clean_env_fragment`` returns through ``entry`` (SPEC CQ1).
+        group = str(address)
+        if group not in groups:
+            groups.append(group)
     return tuple(groups) or DEFAULT_MESH_UDP_GROUPS
 
 

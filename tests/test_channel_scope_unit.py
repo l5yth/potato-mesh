@@ -73,7 +73,7 @@ SENDER_ID = "!a1b2c3d4"
 PRIMARY = 0
 """Index of the probe radio's primary channel, ``LongFast``."""
 
-SECRET = 1
+SECONDARY = 1
 """Index of the probe radio's secondary channel, ``Secret``."""
 
 MODES = {
@@ -178,7 +178,7 @@ class _ChannelTable:
                     settings=channel_pb2.ChannelSettings(name="LongFast"),
                 ),
                 channel_pb2.Channel(
-                    index=SECRET,
+                    index=SECONDARY,
                     role=role.SECONDARY,
                     settings=channel_pb2.ChannelSettings(name="Secret"),
                 ),
@@ -304,12 +304,12 @@ class TestIngestFilterReason:
     def test_excluded_channel_names_the_reason(self, scope, mode):
         """Each mode drops ``Secret`` with its own reason and admits ``LongFast``."""
         scope.apply(mode)
-        assert channels.ingest_filter_reason(SECRET) == MODE_REASONS[mode]
+        assert channels.ingest_filter_reason(SECONDARY) == MODE_REASONS[mode]
         assert channels.ingest_filter_reason(PRIMARY) is None
 
     def test_no_filter_admits_every_channel(self, scope):
         """With nothing configured every channel, named or not, is admitted."""
-        assert channels.ingest_filter_reason(SECRET) is None
+        assert channels.ingest_filter_reason(SECONDARY) is None
         assert channels.ingest_filter_reason(7) is None
 
     def test_unnamed_channel_is_dropped_by_an_allowlist(self, scope):
@@ -330,7 +330,9 @@ class TestIngestFilterReason:
         assert channels.ingest_filter_reason(None, via_mqtt=True) == "via_mqtt"
         assert channels.ingest_filter_reason(PRIMARY) is None
         scope.apply("hidden")
-        assert channels.ingest_filter_reason(SECRET, via_mqtt=True) == "hidden-channel"
+        assert (
+            channels.ingest_filter_reason(SECONDARY, via_mqtt=True) == "hidden-channel"
+        )
 
     @pytest.mark.parametrize(
         "modes, expected",
@@ -345,7 +347,7 @@ class TestIngestFilterReason:
         ``PRIMARY_CHANNEL_ONLY``, ``ALLOWED_CHANNELS``, ``HIDDEN_CHANNELS``
         names the reason."""
         scope.apply(*modes)
-        assert channels.ingest_filter_reason(SECRET) == expected
+        assert channels.ingest_filter_reason(SECONDARY) == expected
 
     def test_unnamed_primary_channel_matches_primary_channel_name(self, scope):
         """With no names captured (the passive UDP transport), channel 0 is
@@ -355,7 +357,7 @@ class TestIngestFilterReason:
         assert channels.ingest_filter_reason(PRIMARY) == "disallowed-channel"
         scope.apply(PRIMARY_CHANNEL_NAME="MediumFast")
         assert channels.ingest_filter_reason(PRIMARY) is None
-        assert channels.ingest_filter_reason(SECRET) == "disallowed-channel"
+        assert channels.ingest_filter_reason(SECONDARY) == "disallowed-channel"
         scope.apply(ALLOWED_CHANNELS=(), HIDDEN_CHANNELS=("MediumFast",))
         assert channels.ingest_filter_reason(PRIMARY) == "hidden-channel"
 
@@ -378,7 +380,7 @@ class TestStorePacketDictChannelScope:
     def test_filtered_channel_packet_not_forwarded(self, radio, mode, port):
         """A packet heard on ``Secret`` queues nothing, whatever its port."""
         radio.apply(mode)
-        radio.hear(port, channel=SECRET)
+        radio.hear(port, channel=SECONDARY)
         assert (
             radio.posts == []
         ), f"{mode}: {port} heard on 'Secret' was queued to {_routes(radio.posts)}"
@@ -408,7 +410,7 @@ class TestStorePacketDictChannelScope:
         """DEBUG keeps each filter's log line and fields, now for every port."""
         radio.apply(mode, DEBUG=True)
         capsys.readouterr()
-        radio.hear("POSITION_APP", channel=SECRET)
+        radio.hear("POSITION_APP", channel=SECONDARY)
         out = capsys.readouterr().out
         assert line in out and field in out
 
@@ -453,7 +455,7 @@ class TestStorePacketDictChannelScope:
         """A handler-stamped ``decoded.channel`` is the attribution used."""
         scope.apply("hidden")
         packet = _position_packet(channel=PRIMARY)
-        packet["decoded"]["channel"] = SECRET
+        packet["decoded"]["channel"] = SECONDARY
         handlers.store_packet_dict(packet)
         assert scope.posts == [] and scope.reasons == ["hidden-channel"]
 
@@ -526,7 +528,7 @@ class TestSnapshotChannelScope:
     def node_db(self, radio):
         """Load a primary, a ``Secret`` and a via_mqtt node into the library nodeDB."""
         radio.iface._handleFromRadio(_node_info_frame(0x0A0A0A0A))
-        radio.iface._handleFromRadio(_node_info_frame(0x0B0B0B0B, channel=SECRET))
+        radio.iface._handleFromRadio(_node_info_frame(0x0B0B0B0B, channel=SECONDARY))
         radio.iface._handleFromRadio(_node_info_frame(0x0C0C0C0C, via_mqtt=True))
         return radio
 
@@ -589,7 +591,7 @@ class TestSnapshotChannelScope:
         (here a text the live path dropped) stays out of the upsert body."""
         radio.apply("hidden")
         radio.iface._handleFromRadio(_node_info_frame(SENDER))
-        radio.hear("TEXT_MESSAGE_APP", channel=SECRET)
+        radio.hear("TEXT_MESSAGE_APP", channel=SECONDARY)
         assert radio.reasons == ["hidden-channel"]
         assert "lastReceived" in radio.iface.nodes[SENDER_ID]
         upserts = _snapshot(radio)
@@ -620,7 +622,7 @@ class TestMeshtasticSnapshotHooks:
         """``channel`` (absent = 0) and ``viaMqtt`` drive the shared policy."""
         scope.apply("hidden", DROP_VIA_MQTT=True)
         provider = MeshtasticProvider()
-        assert provider.snapshot_filter_reason("!1", {"channel": SECRET}) == (
+        assert provider.snapshot_filter_reason("!1", {"channel": SECONDARY}) == (
             "hidden-channel"
         )
         assert provider.snapshot_filter_reason("!2", {"viaMqtt": True}) == "via_mqtt"

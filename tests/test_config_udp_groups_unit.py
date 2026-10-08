@@ -25,6 +25,7 @@ there would keep every such deployment deaf to one firmware line.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import sys
 from pathlib import Path
@@ -81,6 +82,21 @@ class TestParseMeshUdpGroups:
         (see ``test_config_unit.TestComposeDefaults``); it carries no address.
         """
         assert config._parse_mesh_udp_groups(raw) == EXPECTED_GROUPS
+
+    def test_every_group_is_the_parsed_multicast_address(self):
+        """Each group is the canonical text of a validated address (SPEC CQ1).
+
+        Quote-only and blank fragments around the addresses yield no group.
+        """
+        groups = config._parse_mesh_udp_groups(" '' ,239.0.0.69,\"\", 224.0.0.69 ")
+        assert groups == EXPECTED_GROUPS
+        for group in groups:
+            address = ipaddress.IPv4Address(group)
+            assert (type(group), str(address), address.is_multicast) == (
+                str,
+                group,
+                True,
+            )
 
     @pytest.mark.parametrize("group", ["224.0.0.0", "239.255.255.255"])
     def test_multicast_block_boundaries_are_accepted(self, group):
