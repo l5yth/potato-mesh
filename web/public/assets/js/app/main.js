@@ -60,7 +60,7 @@ import {
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
-import { resolveLegendVisibility, legendToggleLabel } from './map-legend-visibility.js';
+import { resolveLegendVisibility, legendToggleLabel, fitLegendToMap } from './map-legend-visibility.js';
 import { legendProtocolsInView } from './map-legend-protocols.js';
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
 import { createMapCenterResetHandler } from './map-center-reset.js';
@@ -171,7 +171,7 @@ import {
   mergePositionsIntoNodes,
   mergeTelemetryIntoNodes,
 } from './main/data-merge.js';
-import { defaultRoleFor } from './role-helpers.js';
+import { defaultRoleFor, humanRole, humanRoleHtml } from './role-helpers.js';
 import { renderShortHtml } from './main/short-html-renderer.js';
 import { loadDestinationIndex } from './main/destination-index.js';
 import {
@@ -2133,7 +2133,10 @@ export function initializeApp(config) {
       const label = document.createElement('span');
       label.className = 'legend-label';
       item.appendChild(label);
-      label.textContent = role;
+      // The chip reads the role as a word; the enum stays in its title, its
+      // data-role and its filter key (SPEC ML4).
+      label.textContent = humanRole(role, protocol);
+      item.setAttribute('title', role);
       item.addEventListener('click', legendClickHandler(event => {
         const exclusive = event.metaKey || event.ctrlKey;
         if (exclusive) {
@@ -2259,6 +2262,9 @@ export function initializeApp(config) {
       return wrapper;
     };
     legendControl.addTo(map);
+    // Cap the panel to the room under the toolbar, so it scrolls instead of
+    // running past the map's top edge (SPEC ML3).
+    fitLegendToMap(map, legendContainer, { toolbar: mapPanel ? mapPanel.querySelector('.map-toolbar') : null });
 
     // Mesh activity card (SPEC MA-F1): a bottom-left overlay mirroring the roles
     // legend at bottom-right; populated from /api/stats packets rates in
@@ -2612,7 +2618,7 @@ export function initializeApp(config) {
 
     const roleValue = node?.role || defaultRoleFor(node?.protocol);
     if (roleValue) {
-      lines.push(`Role: ${escapeHtml(roleValue)}`);
+      lines.push(`Role: ${humanRoleHtml(roleValue, node?.protocol)}`);
     }
 
     const batteryParts = [];
@@ -2861,7 +2867,7 @@ export function initializeApp(config) {
     }
     const roleValue = shortInfoValueOrDash(overlayInfo.role || defaultRoleFor(overlayInfo.protocol));
     if (roleValue !== '—') {
-      lines.push(`Role: ${escapeHtml(roleValue)}`);
+      lines.push(`Role: ${humanRoleHtml(roleValue, overlayInfo.protocol)}`);
     }
     let neighborLineHtml = '';
     const neighborEntries = Array.isArray(overlayInfo.neighbors) && overlayInfo.neighbors.some(entry => entry && entry.node)
@@ -4532,10 +4538,11 @@ export function initializeApp(config) {
         ? disclosureCellHtml(planned.isExpanded, n.node_id)
         : '';
       // Role cell carries one chip per aspect for a group; everything else
-      // keeps the plain role text it always had (Invariant IV).
+      // shows its role label as plain text, the enum in title (Invariant IV,
+      // SPEC ML4).
       const roleCellHtml = planned.isGroup
         ? roleChipsHtml(planned.destinations, n.protocol)
-        : escapeHtml(n.role || defaultRoleFor(n.protocol));
+        : humanRoleHtml(n.role, n.protocol);
       // Measurement cells render the muted dash for absent values (SPEC UX4)
       // and honest numbers (SPEC UX10); `num` columns right-align in the mono
       // face via CSS. The cells are split around the two timestamp cells, so
@@ -4673,7 +4680,7 @@ export function initializeApp(config) {
           { label: 'Node ID', valueHtml: formatTableCell(escapeHtml(n.node_id || '')) },
           { label: 'Frequency', valueHtml: formatTableCell(loraFrequencyDisplay) },
           { label: 'LoRa Preset', valueHtml: formatTableCell(modemPresetDisplay) },
-          { label: 'Role', valueHtml: escapeHtml(n.role || defaultRoleFor(n.protocol)) },
+          { label: 'Role', valueHtml: humanRoleHtml(n.role, n.protocol) },
           { label: 'HW Model', valueHtml: formatTableCell(escapeHtml(fmtHw(n.hw_model))) },
           { label: 'Voltage', valueHtml: formatTableCell(fmtVoltage(n.voltage)) },
           { label: 'Uptime', valueHtml: formatTableCell(timeHum(n.uptime_seconds)) },

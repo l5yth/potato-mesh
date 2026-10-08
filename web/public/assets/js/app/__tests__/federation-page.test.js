@@ -1068,3 +1068,115 @@ test('the count rule is protocol-agnostic', async () => {
     assert.match(renderProtocolCountCell(2, tile), new RegExp(`${name}\\.svg">\\s2$`), name);
   }
 });
+
+// --- SPEC ML3: the legend fits its map ---
+
+/**
+ * Federation page harness for the legend tests (SPEC ML3): a `#mapPanel` with
+ * the map toolbar, ending 44 px below the map's top, and a Leaflet stub whose
+ * controls mount, whose elements report a box (the toggle's control is 28 px
+ * tall) and whose map container is `height` px tall.
+ *
+ * @param {number} height Map container height in px.
+ * @returns {{leafletStub: Object, created: Array<Object>, propagation: Array<[string, Object]>, container: Object, resizeHandlers: Array<Function>, cleanup: Function}}
+ *   The stub and what it recorded: every created element and every
+ *   `DomEvent.disable*Propagation` call.
+ */
+function createLegendFitHarness(height) {
+  const { createElement, registerElement, cleanup } = createBasicFederationPageHarness();
+  const mapPanel = createElement('div', 'mapPanel');
+  const toolbar = createElement('div');
+  toolbar.classList.add('map-toolbar');
+  toolbar.getBoundingClientRect = () => ({ top: 12, bottom: 44, height: 32 });
+  mapPanel.appendChild(toolbar);
+  registerElement('mapPanel', mapPanel);
+  const container = {
+    clientTop: 0,
+    clientHeight: height,
+    getBoundingClientRect: () => ({ top: 0, bottom: container.clientHeight, height: container.clientHeight }),
+  };
+  const resizeHandlers = [];
+  const created = [];
+  const propagation = [];
+  const leafletStub = {
+    ...createBasicLeafletStub(),
+    map() {
+      return {
+        setView() {},
+        getPane() {
+          return null;
+        },
+        getContainer: () => container,
+        on(event, handler) {
+          if (event === 'resize') resizeHandlers.push(handler);
+        }
+      };
+    },
+    control: () => ({
+      addTo(map) {
+        this.onAdd(map);
+        return this;
+      }
+    }),
+    DomUtil: {
+      create(tag, className, parent) {
+        const el = {
+          className,
+          style: {},
+          children: [],
+          setAttribute() {},
+          appendChild(child) {
+            this.children.push(child);
+            return child;
+          },
+          addEventListener() {},
+          getBoundingClientRect: () => ({ top: 0, bottom: 28, height: 28 })
+        };
+        if (parent) parent.appendChild(el);
+        created.push(el);
+        return el;
+      }
+    },
+    DomEvent: {
+      disableClickPropagation(el) {
+        propagation.push(['click', el]);
+      },
+      disableScrollPropagation(el) {
+        propagation.push(['scroll', el]);
+      }
+    }
+  };
+  return { leafletStub, created, propagation, container, resizeHandlers, cleanup };
+}
+
+/** A fetch stub answering `/api/instances` with no instances. */
+const noInstances = async () => ({ ok: true, json: async () => [] });
+
+test('the federation legend is capped under the toolbar and its stacked toggle, and refits on a resize (ML3)', async () => {
+  const { leafletStub, created, container, resizeHandlers, cleanup } = createLegendFitHarness(400);
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl: noInstances, leaflet: leafletStub });
+    const legend = created.find(el => el.className.includes('legend--instances'));
+    // 400 px less the 44 px toolbar band, 40 px of edges and the 28 px
+    // toggle's row with its 18 px of margins.
+    assert.equal(legend.style.maxHeight, '270px');
+    container.clientHeight = 300;
+    resizeHandlers.forEach(handler => handler());
+    assert.equal(legend.style.maxHeight, '170px');
+  } finally {
+    cleanup();
+  }
+});
+
+test('the federation legend keeps the wheel and a drag to itself, as its toggle does (ML3)', async () => {
+  const { leafletStub, created, propagation, cleanup } = createLegendFitHarness(400);
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl: noInstances, leaflet: leafletStub });
+    const legend = created.find(el => el.className.includes('legend--instances'));
+    const toggle = created.find(el => el.className === 'leaflet-control legend-toggle');
+    // A capped legend scrolls: unstopped, the wheel zoomed and a drag panned the map.
+    assert.deepEqual(propagation, [['click', legend], ['scroll', legend], ['click', toggle], ['scroll', toggle]]);
+  } finally {
+    cleanup();
+  }
+});

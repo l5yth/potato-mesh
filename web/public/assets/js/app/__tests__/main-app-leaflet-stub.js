@@ -266,6 +266,17 @@ export function makeLeafletStub() {
    */
   function makeMap() {
     let zoom = 14;
+    // The map's container, borderless at the viewport's top: the legend's
+    // height cap reads its box (SPEC ML3).
+    const container = {
+      clientTop: 0,
+      clientWidth: 800,
+      clientHeight: 600,
+      getBoundingClientRect() {
+        const { clientWidth: width, clientHeight: height } = container;
+        return { top: 0, left: 0, right: width, bottom: height, width, height };
+      },
+    };
     const eventHandlers = new Map();
     const map = {
       // Layers added via ``layer.addTo(map)``; ``hasLayer`` / ``removeLayer``
@@ -316,6 +327,33 @@ export function makeLeafletStub() {
       on(event, handler) {
         if (!eventHandlers.has(event)) eventHandlers.set(event, []);
         eventHandlers.get(event).push(handler);
+        return map;
+      },
+      getContainer() {
+        return container;
+      },
+      /**
+       * Test helper: resize the map container, as a reflow or a window resize does.
+       *
+       * @param {number} x Width in px.
+       * @param {number} y Height in px.
+       * @returns {Object} The map stub (chainable).
+       */
+      _setSize(x, y) {
+        container.clientWidth = x;
+        container.clientHeight = y;
+        return map;
+      },
+      /**
+       * Test helper: run every handler registered for ``event``, as Leaflet
+       * fires ``resize`` after ``invalidateSize`` or a window resize.
+       *
+       * @param {string} event Event name.
+       * @param {*} [payload] Event payload.
+       * @returns {Object} The map stub (chainable).
+       */
+      _fire(event, payload) {
+        (eventHandlers.get(event) || []).slice().forEach(handler => handler(payload));
         return map;
       },
       whenReady(cb) {

@@ -508,7 +508,11 @@ test('buildRoleButtons creates label child with role text', () => {
     // label is the second child of the button
     const label = btn.childNodes[1];
     assert.ok(label, 'label element should exist');
-    assert.equal(label.textContent, 'ROUTER');
+    // The chip reads the role as a word; the enum stays in its title, its
+    // data-role and its filter key (SPEC ML4).
+    assert.equal(label.textContent, 'Router');
+    assert.equal(btn.getAttribute('title'), 'ROUTER');
+    assert.equal(btn.dataset.role, 'ROUTER');
   });
 });
 

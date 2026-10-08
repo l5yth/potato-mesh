@@ -136,9 +136,10 @@ function makeMountingLeafletStub() {
 }
 
 /**
- * Initialise the app over the mounting Leaflet stub, with a `#map` container,
- * the three meta-row protocol toggles and, unless `searchBox` is false, the
- * search input and its clear button.
+ * Initialise the app over the mounting Leaflet stub, with a `#map` container
+ * in a `#mapPanel` holding the map toolbar, the three meta-row protocol
+ * toggles and, unless `searchBox` is false, the search input and its clear
+ * button.
  *
  * @param {{searchBox: boolean}} options Whether the view has a search box.
  * @returns {{testUtils: Object, env: Object, leaflet: Object, created: Array<Object>, cleanup: Function}}
@@ -147,6 +148,14 @@ function makeMountingLeafletStub() {
 function setupAppWithLegendPanel({ searchBox }) {
   const env = createDomEnvironment({ includeBody: true });
   env.registerElement('map', env.createElement('div', 'map'));
+  // The map panel and its toolbar (`shared/_map_panel.erb`): the legend's cap
+  // reads the toolbar's bottom edge, 44 px below the map's top (SPEC ML3).
+  const mapPanel = env.createElement('div', 'mapPanel');
+  const toolbar = env.createElement('div');
+  toolbar.classList.add('map-toolbar');
+  toolbar.getBoundingClientRect = () => ({ top: 12, bottom: 44, height: 32 });
+  mapPanel.appendChild(toolbar);
+  env.registerElement('mapPanel', mapPanel);
   const ids = ['protocolToggleMeshcore', 'protocolToggleMeshtastic', 'protocolToggleReticulum'];
   if (searchBox) ids.push('filterInput', 'filterClear');
   for (const id of ids) env.registerElement(id, env.createElement(id === 'filterInput' ? 'input' : 'button', id));
@@ -224,7 +233,9 @@ function legendElementsByProtocol(row) {
  *   without the search input.
  * @returns {Promise<{
  *   testUtils: Object,
+ *   legend: ?Object,
  *   legendRow: ?Object,
+ *   map: ?Object,
  *   protocolElements: Object<string, Object>,
  *   input: ?Object,
  *   clearButton: ?Object,
@@ -236,8 +247,9 @@ function legendElementsByProtocol(row) {
  *   markersOnMap: function(): number,
  *   shown: function(): Array<string>,
  *   cleanup: function(): Promise<void>
- * }>} Harness for one test. `legendRow` is the mounted
- *   `.legend-items--columns` element, null without `leaflet`;
+ * }>} Harness for one test. `legend` is the mounted `#mapLegend` panel and
+ *   `legendRow` its `.legend-items--columns` element, `map` the stub Leaflet
+ *   map (see `_setSize` and `_fire`), all null without `leaflet`;
  *   `protocolElements` maps each protocol to the legend element its
  *   visibility drives. The click helpers past `clickClear` and
  *   `markersOnMap` need `leaflet`.
@@ -282,7 +294,9 @@ export async function bootLegendApp({ leaflet = false, searchBox = true } = {}) 
 
   return {
     testUtils,
+    legend: leaflet ? harness.created.find(element => element.id === 'mapLegend') : null,
     legendRow,
+    map: leaflet ? harness.leaflet._map : null,
     protocolElements,
     input,
     clearButton,

@@ -34,6 +34,7 @@ import { escapeHtml } from '../utils.js';
 import { EMPTY_CELL_HTML } from '../main/table-cell-format.js';
 import { formatRelativeSeconds } from '../node-page-charts.js';
 import { sortDestinations, aspectLabel } from '../main/identity-groups.js';
+import { humanRoleHtml } from '../role-helpers.js';
 
 /**
  * Render an em-dash for an absent value, matching the sheet's voice.
@@ -47,6 +48,17 @@ function cell(value) {
   // property (--muted) and matches no selector, so those dashes rendered at
   // full foreground weight.
   return text ? escapeHtml(text) : EMPTY_CELL_HTML;
+}
+
+/**
+ * Render a destination's role as its label with the enum in `title` (SPEC
+ * ML4), or the muted dash when it reports none.
+ *
+ * @param {*} role Role identifier from the destination row.
+ * @returns {string} Role markup, or the muted dash.
+ */
+function roleCell(role) {
+  return role == null || String(role).trim() === '' ? EMPTY_CELL_HTML : humanRoleHtml(role);
 }
 
 /**
@@ -112,7 +124,7 @@ export function renderDestinationsSection(destinations, { nowSeconds = Date.now(
           : EMPTY_CELL_HTML
       }</td>` +
       `<td class="destinations__name">${cell(row?.name)}</td>` +
-      `<td class="destinations__role">${cell(row?.role)}</td>` +
+      `<td class="destinations__role">${roleCell(row?.role)}</td>` +
       `<td class="destinations__interface">${cell(row?.interface)}</td>` +
       `<td class="destinations__first num">${cell(formatRelativeSeconds(row?.first_heard, nowSeconds))}</td>` +
       `<td class="destinations__last num">${cell(formatRelativeSeconds(row?.last_heard, nowSeconds))}</td>` +
