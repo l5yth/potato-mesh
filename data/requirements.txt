@@ -10,4 +10,4 @@ protobuf==7.36.2
 # image's Alpine (3.24: Rust 1.96); a release needing a newer Rust breaks that
 # build (DK-A2), so check its rust-version before bumping.
 cryptography==50.0.2  # UDP transport AES-CTR, MeshCore RX-log advert signatures
-rns==1.5.6  # Reticulum announce listener (PROTOCOL=reticulum)
+rns==1.5.7  # Reticulum announce listener (PROTOCOL=reticulum)
