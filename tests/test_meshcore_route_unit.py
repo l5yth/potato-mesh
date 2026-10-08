@@ -15,8 +15,9 @@
 
 Covers :mod:`data.mesh_ingestor.protocols.meshcore.route` and its wiring into
 the runner and the event handlers: the bounded RX-log index (SPEC SC2), the
-default-flood-scope read and resolution (SC3/SC4), the redacted ``DEBUG``
-capture and the hidden-channel gate (SC8), and the degradations (SC9).
+default-flood-scope read and the resolution by the default region and then the
+built-in scope table (SC3/SC4), the redacted ``DEBUG`` capture and the
+hidden-channel gate (SC8), and the degradations (SC9).
 """
 
 from __future__ import annotations
@@ -52,6 +53,9 @@ _REGION = "#de-be"
 
 _SCOPE_KEY_HEX = frames.region_key(_REGION).hex()
 """The region key a radio reports alongside the name; never to be logged."""
+
+_UNLISTED = "#rhein-main"
+"""A public hashtag region the built-in scope table does not list."""
 
 
 class _Clock:
@@ -298,10 +302,11 @@ def test_resolve_scope_names_the_default_region(region):
     assert route.resolve_scope(_copy(0, code0), region) == "de-be"
 
 
-@pytest.mark.parametrize("region", [None, "#eu", "*", "$de-be"])
+@pytest.mark.parametrize("region", [None, "#eu", "*", "$rhein-main"])
 def test_resolve_scope_of_an_unmatched_scoped_flood_is_unknown(region):
-    """Any other scoped flood reads the reserved ``?``."""
-    code0 = frames.transport_code(frames.region_key("de-be"), 5, b"pp")
+    """A scoped flood no candidate reproduces reads the reserved ``?``: an
+    unlisted region, or a private ``$`` one, is never named."""
+    code0 = frames.transport_code(frames.region_key(_UNLISTED), 5, b"pp")
     assert route.resolve_scope(_copy(0, code0), region) == "?"
     assert route.resolve_scope(_copy(0, b""), region) == "?"
 
@@ -316,6 +321,98 @@ def test_reserved_scope_values():
     """``*`` is unscoped and ``?`` is scoped-unknown (CONTRACTS)."""
     assert route.SCOPE_UNSCOPED == "*"
     assert route.SCOPE_UNKNOWN == "?"
+
+
+# ---------------------------------------------------------------------------
+# Scope table fallback (SC3, amended 2026-10-08)
+# ---------------------------------------------------------------------------
+
+_OM_DE_BE = (161).to_bytes(4, "big")
+"""Payload on which the table's ``om`` and ``de-be`` share one transport code.
+
+Found offline: the first 4-byte counter on which ``de-be``'s code is
+reproduced by exactly one other table name.
+"""
+
+_RHEIN_MAIN_BT = (186).to_bytes(4, "big")
+"""Payload on which the unlisted ``rhein-main`` shares its code with ``bt``.
+
+Found offline: the first 4-byte counter on which exactly one table name
+reproduces the code of :data:`_UNLISTED`.
+"""
+
+
+def _scoped(region: str, payload: bytes) -> route.RxCopy:
+    """Return a delivered copy of *payload* that a sender scoped to *region*.
+
+    Parameters:
+        region: Public hashtag region, with or without its ``#``.
+        payload: Packet payload.
+
+    Returns:
+        A ``TRANSPORT_FLOOD`` :class:`route.RxCopy` carrying the region's code.
+    """
+    code0 = frames.transport_code(frames.region_key(region), 5, payload)
+    return _copy(0, code0, payload)
+
+
+@pytest.mark.parametrize("name", ["fr", "eu", "de-by", "at-9", "ch-zh"])
+@pytest.mark.parametrize("region", [None, _UNLISTED, "$ops"])
+def test_resolve_scope_names_a_table_region(name, region):
+    """A default region that misses, or none, leaves the table to name the
+    one listed region that reproduces the code."""
+    assert route.resolve_scope(_scoped(name, b"pp"), region) == name
+
+
+def test_resolve_scope_prefers_the_default_region_over_the_table():
+    """The default region names every copy it reproduces, whatever the table
+    holds; without it, an unlisted region takes a lone table match."""
+    assert frames.transport_code(
+        frames.region_key("om"), 5, _OM_DE_BE
+    ) == frames.transport_code(frames.region_key("de-be"), 5, _OM_DE_BE)
+    assert route.resolve_scope(_scoped("de-be", _OM_DE_BE), "#de-be") == "de-be"
+    assert route.resolve_scope(_scoped("de-be", _OM_DE_BE), "#om") == "om"
+    rhein_main = _scoped(_UNLISTED, _RHEIN_MAIN_BT)
+    assert rhein_main.code0 == frames.transport_code(
+        frames.region_key("bt"), 5, _RHEIN_MAIN_BT
+    )
+    assert route.resolve_scope(rhein_main, _UNLISTED) == "rhein-main"
+    # The false match SC3 states: about N in 65,536 messages of a region the
+    # table does not list read the one table name that shares their code.
+    assert route.resolve_scope(rhein_main, None) == "bt"
+
+
+@pytest.mark.parametrize("region", [None, "#eu", "$om", _UNLISTED])
+def test_resolve_scope_of_two_matching_table_names_is_unknown(region):
+    """Two table names reproduce the code: neither is stored, the copy reads
+    ``?`` and a later copy may still name it (SC6)."""
+    copy = _scoped("de-be", _OM_DE_BE)
+    assert copy.code0 == frames.transport_code(frames.region_key("om"), 5, _OM_DE_BE)
+    assert route.resolve_scope(copy, region) == "?"
+
+
+def test_resolve_scope_costs_one_hmac_per_candidate(monkeypatch):
+    """A scoped copy costs one HMAC per table name, plus one for a default
+    region; a default match costs one, a plain flood none; nothing is logged."""
+    calls: list = []
+    logs: list = []
+    real_transport_code = route.transport_code
+    monkeypatch.setattr(
+        route,
+        "transport_code",
+        lambda *args: calls.append(1) or real_transport_code(*args),
+    )
+    monkeypatch.setattr(route.config, "_debug_log", lambda *a, **k: logs.append(k))
+    table_size = len(route.SCOPE_TABLE)
+    unlisted = _scoped(_UNLISTED, b"pp")
+    for region, cost in [(_UNLISTED, 1), (None, table_size), ("#eu", table_size + 1)]:
+        calls.clear()
+        route.resolve_scope(unlisted, region)
+        assert len(calls) == cost, region
+    calls.clear()
+    assert route.resolve_scope(_copy(1), "#eu") == "*"
+    assert calls == []
+    assert logs == []
 
 
 # ---------------------------------------------------------------------------
@@ -669,7 +766,24 @@ def test_scoped_message_names_the_default_region(monkeypatch):
 
 @pytest.mark.parametrize("region", [None, "#eu"])
 def test_scoped_message_of_another_region_is_scoped_unknown(monkeypatch, region):
-    """SC4: a scoped flood the default region cannot reproduce reads ``?``."""
+    """SC4: a scoped flood neither the default region nor the table
+    reproduces reads ``?``."""
+    captured = _deliver(
+        monkeypatch,
+        [
+            _scoped_copy(_UNLISTED, bytes.fromhex("f0bf44")),
+            frames.channel_msg_v3_frame(path_len=3),
+        ],
+        region=region,
+    )
+    assert captured[0]["scope"] == "?"
+    assert captured[0]["path"] == "f0bf44"
+
+
+@pytest.mark.parametrize("region", [None, "#eu"])
+def test_scoped_message_of_a_listed_region_is_named_by_the_table(monkeypatch, region):
+    """SC3: a flood scoped to a listed region reads its name without the
+    radio's default naming it."""
     captured = _deliver(
         monkeypatch,
         [
@@ -678,8 +792,30 @@ def test_scoped_message_of_another_region_is_scoped_unknown(monkeypatch, region)
         ],
         region=region,
     )
-    assert captured[0]["scope"] == "?"
-    assert captured[0]["path"] == "f0bf44"
+    assert (captured[0]["path"], captured[0]["scope"]) == ("f0bf44", "de-be")
+
+
+@pytest.mark.parametrize(
+    ("region", "scope"),
+    [(None, "?"), ("#eu", "?"), ("#de-by", "de-by"), ("#li", "li")],
+)
+def test_scoped_message_matched_by_two_table_names_is_scoped_unknown(
+    monkeypatch, region, scope
+):
+    """SC3: ``de-by`` and ``li`` share this message's transport code, so the
+    table names neither; a default region that reproduces it still wins."""
+    assert frames.transport_code(
+        frames.region_key("de-by"), 5, _payload()
+    ) == frames.transport_code(frames.region_key("li"), 5, _payload())
+    captured = _deliver(
+        monkeypatch,
+        [
+            _scoped_copy("#de-by", bytes.fromhex("f0bf44")),
+            frames.channel_msg_v3_frame(path_len=3),
+        ],
+        region=region,
+    )
+    assert captured[0]["scope"] == scope
 
 
 def test_plain_flood_message_is_unscoped(monkeypatch):

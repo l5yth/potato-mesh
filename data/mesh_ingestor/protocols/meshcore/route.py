@@ -30,9 +30,11 @@ message to the earliest copy whose hop count equals the message's
 ``path_len`` (:meth:`RouteTracker.channel_route`).  From that copy it takes
 the repeater path, the RSSI, and the flood scope: ``transport_codes[0]`` of a
 scoped flood is an HMAC keyed by the region, so the region can only be named
-by recomputing the code for a candidate - here the radio's own default flood
-scope (:func:`read_default_flood_scope`), and nothing else.  No region key is
-ever posted or logged.
+by recomputing the code for a candidate - first the radio's own default flood
+scope (:func:`read_default_flood_scope`), then the built-in public names of
+:mod:`.scope_names` (:data:`SCOPE_TABLE`), of which exactly one must
+reproduce the code (:func:`resolve_scope`).  No region key is ever posted or
+logged.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from dataclasses import dataclass
 
 from ... import config
 from .messages import _normalize_path
+from .scope_names import SCOPE_NAMES
 
 RX_LOG_INDEX_MAX_ENTRIES = 256
 """Most ``GRP_TXT`` copies the index holds; the oldest is evicted first."""
@@ -281,6 +284,16 @@ def region_key(name: object) -> bytes | None:
     return hashlib.sha256(hashtag.encode("utf-8")).digest()[:_REGION_KEY_BYTES]
 
 
+SCOPE_TABLE: tuple[tuple[str, bytes], ...] = tuple(
+    (name, region_key(name)) for name in SCOPE_NAMES
+)
+"""The fallback scope candidates (SC3): each built-in name with its key.
+
+Derived once, at import, from :data:`.scope_names.SCOPE_NAMES`, so a lookup
+costs one HMAC per name and derives no key.
+"""
+
+
 def transport_code(key: bytes, payload_type: int, payload: bytes) -> bytes:
     """Recompute the on-air bytes of ``transport_codes[0]`` for a region key.
 
@@ -306,30 +319,72 @@ def transport_code(key: bytes, payload_type: int, payload: bytes) -> bytes:
     return code.to_bytes(2, "little")
 
 
+def _reproduces(copy: RxCopy, key: bytes) -> bool:
+    """Return whether a region key recomputes the copy's ``transport_codes[0]``.
+
+    Parameters:
+        copy: A delivered ``TRANSPORT_FLOOD`` copy.
+        key: Region key from :func:`region_key`.
+
+    Returns:
+        ``True`` when :func:`transport_code` equals :attr:`RxCopy.code0`.
+    """
+    return transport_code(key, _PAYLOAD_TYPE_GRP_TXT, copy.payload) == copy.code0
+
+
+def _table_scope(copy: RxCopy) -> str:
+    """Name a scoped copy from :data:`SCOPE_TABLE`, or leave it unknown (SC3).
+
+    Every name tried costs one HMAC.  A name is returned only when no other
+    table name reproduces the same code: two matches of a 16-bit code mean at
+    least one is false, and nothing tells which.  A guess would stay for good, as a
+    stored name is never overwritten (SC6), while ``?`` stays open for a later
+    copy that names the region.
+
+    Parameters:
+        copy: A delivered ``TRANSPORT_FLOOD`` copy the default region did not
+            reproduce.
+
+    Returns:
+        The one matching table name, or :data:`SCOPE_UNKNOWN` when none or
+        several match.
+    """
+    found: str | None = None
+    for name, key in SCOPE_TABLE:
+        if _reproduces(copy, key):
+            if found is not None:
+                # A second match: the code names no single region.
+                return SCOPE_UNKNOWN
+            found = name
+    return found if found is not None else SCOPE_UNKNOWN
+
+
 def resolve_scope(copy: RxCopy, region: str | None) -> str | None:
-    """Name the flood scope of a delivered copy (SC4).
+    """Name the flood scope of a delivered copy (SC3/SC4).
+
+    The candidates, in order: the radio's default flood scope *region*, which
+    names every copy it reproduces; then :data:`SCOPE_TABLE`, whose name is
+    taken only when exactly one entry reproduces the copy's code
+    (:func:`_table_scope`).
 
     Parameters:
         copy: The delivered copy.
-        region: The radio's default flood scope, the only candidate (SC3).
+        region: The radio's default flood scope, the first candidate (SC3).
 
     Returns:
         :data:`SCOPE_UNSCOPED` for a plain flood; the region name without its
-        ``#`` when *region* reproduces the copy's transport code;
-        :data:`SCOPE_UNKNOWN` for any other scoped flood; ``None`` for a route
-        type that is not a flood.
+        ``#`` when *region* reproduces the copy's transport code; otherwise
+        the one table name that reproduces it, or :data:`SCOPE_UNKNOWN` when
+        none or several do; ``None`` for a route type that is not a flood.
     """
     if copy.route_type == _ROUTE_TYPE_FLOOD:
         return SCOPE_UNSCOPED
     if copy.route_type != _ROUTE_TYPE_TRANSPORT_FLOOD:
         return None
     key = region_key(region)
-    if (
-        key is not None
-        and transport_code(key, _PAYLOAD_TYPE_GRP_TXT, copy.payload) == copy.code0
-    ):
+    if key is not None and _reproduces(copy, key):
         return scope_label(region)
-    return SCOPE_UNKNOWN
+    return _table_scope(copy)
 
 
 def message_hash(sender_ts: object, text: object) -> int | None:
@@ -355,7 +410,9 @@ def message_hash(sender_ts: object, text: object) -> int | None:
 
 
 class RouteTracker:
-    """Per-connection route state: the RX-log index and the scope candidate.
+    """Per-connection route state: the RX-log index and the default scope.
+
+    The table candidates are module-wide (:data:`SCOPE_TABLE`).
 
     Attributes:
         index: The :class:`RxLogIndex` fed by ``RX_LOG_DATA``.
@@ -487,6 +544,7 @@ async def read_default_flood_scope(mc: object) -> str | None:
 __all__ = [
     "RX_LOG_INDEX_MAX_AGE_SECS",
     "RX_LOG_INDEX_MAX_ENTRIES",
+    "SCOPE_TABLE",
     "SCOPE_UNKNOWN",
     "SCOPE_UNSCOPED",
     "RouteTracker",
