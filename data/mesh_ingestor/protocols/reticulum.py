@@ -113,7 +113,7 @@ import RNS
 from RNS.vendor import umsgpack
 
 from .. import config, handlers
-from . import reticulum_interfaces, reticulum_position
+from . import reticulum_diagnostics, reticulum_interfaces, reticulum_position
 
 _ASPECT_ROLES: dict[str, str] = {
     "lxmf.propagation": "PROPAGATION",
@@ -674,7 +674,8 @@ class _ReticulumAnnounceHandler:
         node dict in the interface snapshot, which the daemon's node snapshot
         reads once per connection, and queues an immediate ``POST /api/nodes``.
         Errors are logged and suppressed — a malformed announce must never
-        kill the RNS callback thread or the transport.
+        kill the RNS callback thread or the transport.  Every outcome, a drop
+        included, is also counted in the interface's tally (SPEC RG2).
 
         Parameters:
             destination_hash: 16-byte destination hash of the announcer.
@@ -690,6 +691,7 @@ class _ReticulumAnnounceHandler:
             hops = _announce_hops(destination_hash)
             interface_name = _announce_interface_name(destination_hash)
             if not _announce_admitted(hops, interface_name):
+                self._iface.tally.out_of_scope(self.aspect_filter, interface_name)
                 config._debug_log(
                     "Skipped Reticulum announce from a non-allowlisted interface",
                     context="reticulum.announce",
@@ -708,6 +710,7 @@ class _ReticulumAnnounceHandler:
             # per-destination row split unnecessary.
             node_id = _announce_node_id(identity, destination_hash)
             if node_id is None:
+                self._iface.tally.dropped(self.aspect_filter, "unusable_hash")
                 config._debug_log(
                     "Skipped Reticulum announce with an unusable destination hash",
                     context="reticulum.announce",
@@ -734,7 +737,9 @@ class _ReticulumAnnounceHandler:
                 role=node["user"].get("role"),
                 long_name=node["user"]["longName"],
             )
+            self._iface.tally.admitted(self.aspect_filter)
         except Exception as exc:
+            self._iface.tally.dropped(self.aspect_filter, "error")
             config._debug_log(
                 "Failed to ingest Reticulum announce",
                 context="reticulum.announce",
@@ -769,6 +774,7 @@ class _ReticulumInterface:
         self._announce_handlers: list[_ReticulumAnnounceHandler] = []
         self._nodes_lock = threading.Lock()
         self._nodes: dict[str, dict] = {}
+        self.tally = reticulum_diagnostics.AnnounceTally()  # connect shares one (RG2)
         self.isConnected: bool = False
 
     def _update_node(self, node_id: str | None, node: dict) -> None:
@@ -1322,6 +1328,12 @@ class ReticulumProvider:
 
     name = "reticulum"
 
+    def __init__(self) -> None:
+        """Start with fresh stack diagnostics, kept across reconnects (SPEC RG2)."""
+        self._diagnostics = reticulum_diagnostics.StackDiagnostics(
+            lambda: getattr(RNS.Transport, "interfaces", None)
+        )
+
     def subscribe(self) -> list[str]:
         """Return subscribed topic names.
 
@@ -1385,6 +1397,7 @@ class ReticulumProvider:
             )
 
         iface = _ReticulumInterface(target=target)
+        iface.tally = self._diagnostics.tally
         rns_instance = RNS.Reticulum.get_instance()
         if rns_instance is None:
             rns_instance = RNS.Reticulum(configdir=configdir)
@@ -1395,44 +1408,53 @@ class ReticulumProvider:
             RNS.Transport.register_announce_handler(handler)
             iface._announce_handlers.append(handler)
 
-        iface.isConnected = True
-        # Radio metadata (SPEC RL1): Reticulum has no equivalent of the
-        # Meshtastic localConfig read, so the shared RNS config supplies the
-        # frequency and preset the heartbeat and every downstream column need.
-        radio_freq, radio_preset = _read_reticulum_radio_metadata()
-        if radio_freq is not None and getattr(config, "LORA_FREQ", None) is None:
-            config.LORA_FREQ = radio_freq
-        if radio_preset is not None and getattr(config, "MODEM_PRESET", None) is None:
-            config.MODEM_PRESET = radio_preset
-        # The host position (SPEC RP1/RP2): read once per connect, from the
-        # same RNodeInterface block as the radio metadata.
-        iface.host_position = reticulum_position.read_host_position(configdir)
-        # Resolve the host id for the log rather than reading
-        # +iface.host_node_id+, which is a constant None: the startup line
-        # printed node_id=None on every run regardless of what discovery would
-        # have found, which reads as a failure rather than a pending lookup.
-        host_node_id = self.extract_host_node_id(iface)
-        config._debug_log(
-            "Reticulum announce listener registered",
-            context="reticulum.connect",
-            severity="info",
-            aspects=list(_ANNOUNCE_ASPECTS),
-            interfaces=_interface_scope(),
-            node_id=host_node_id or "pending",
-        )
-        _check_rnode_scope()
-        if not host_node_id:
-            # Say so explicitly: a fresh stack has nothing 0-hop in its path
-            # table yet, the daemon retries every loop, and an operator reading
-            # only the line above would otherwise think it had failed.
+        # Any raise closes the interface, or its handlers outlive it (SPEC RG5).
+        try:
+            iface.isConnected = True
+            # Radio metadata (SPEC RL1): Reticulum has no equivalent of the
+            # Meshtastic localConfig read, so the shared RNS config supplies the
+            # frequency and preset the heartbeat and every downstream column need.
+            radio_freq, radio_preset = _read_reticulum_radio_metadata()
+            if radio_freq is not None and getattr(config, "LORA_FREQ", None) is None:
+                config.LORA_FREQ = radio_freq
+            if (
+                radio_preset is not None
+                and getattr(config, "MODEM_PRESET", None) is None
+            ):
+                config.MODEM_PRESET = radio_preset
+            # The host position (SPEC RP1/RP2): read once per connect, from the
+            # same RNodeInterface block as the radio metadata.
+            iface.host_position = reticulum_position.read_host_position(configdir)
+            # Resolve the host id for the log rather than reading
+            # +iface.host_node_id+, which is a constant None: the startup line
+            # printed node_id=None on every run regardless of what discovery would
+            # have found, which reads as a failure rather than a pending lookup.
+            host_node_id = self.extract_host_node_id(iface)
             config._debug_log(
-                "Host node id not resolved yet; retrying until a local "
-                "destination is heard. Set INGESTOR_NODE_ID to pin it if two "
-                "local identities tie or nothing on this RNS stack announces "
-                "(e.g. Docker's default volume).",
+                "Reticulum announce listener registered",
                 context="reticulum.connect",
                 severity="info",
+                aspects=list(_ANNOUNCE_ASPECTS),
+                interfaces=_interface_scope(),
+                node_id=host_node_id or "pending",
             )
+            self._diagnostics.connected(rns_instance)
+            _check_rnode_scope()
+            if not host_node_id:
+                # Say so explicitly: a fresh stack has nothing 0-hop in its path
+                # table yet, the daemon retries every loop, and an operator reading
+                # only the line above would otherwise think it had failed.
+                config._debug_log(
+                    "Host node id not resolved yet; retrying until a local "
+                    "destination is heard. Set INGESTOR_NODE_ID to pin it if two "
+                    "local identities tie or nothing on this RNS stack announces "
+                    "(e.g. Docker's default volume).",
+                    context="reticulum.connect",
+                    severity="info",
+                )
+        except BaseException:
+            iface.close()
+            raise
         return iface, target, active_candidate
 
     def extract_host_node_id(self, iface: object) -> str | None:
@@ -1600,6 +1622,14 @@ class ReticulumProvider:
             if node["nodeId"] == host_id
         ]
         return reticulum_position.report_host_position(items, iface, _bare_host_record)
+
+    def log_diagnostics(self, iface: object) -> None:
+        """Log the hourly announce summary once due; the daemon calls it each loop.
+
+        Parameters:
+            iface: The active interface, whose stack is read (SPEC RG2-RG4).
+        """
+        self._diagnostics.tick(getattr(iface, "_rns", None))
 
 
 __all__ = [

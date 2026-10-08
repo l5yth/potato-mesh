@@ -729,6 +729,10 @@ def _loop_iteration(state: _DaemonState) -> bool:
         or _now - state.last_self_node_report >= config._SELF_NODE_REPORT_INTERVAL_SECS
     ):
         _try_send_self_node(state)
+    # Optional, duck-typed diagnostics hook; the provider rate-limits it (SPEC RG4).
+    log_diagnostics = getattr(state.provider, "log_diagnostics", None)
+    if callable(log_diagnostics):
+        log_diagnostics(state.iface)
     state.last_announce = _process_announcements(state)
     state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
     return False

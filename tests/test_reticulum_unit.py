@@ -1398,6 +1398,43 @@ def test_close_deregisters_announce_handlers(monkeypatch):
     assert state["deregistered"] == registered
 
 
+@pytest.mark.parametrize(
+    "raised",
+    [BrokenPipeError(32, "Broken pipe"), KeyboardInterrupt()],
+    ids=["closed_stdout", "interrupt"],
+)
+def test_connect_failure_after_registration_deregisters_its_handlers(
+    monkeypatch, tmp_path, raised
+):
+    """A connect that raises after registering closes its interface (SPEC RG5).
+
+    The daemon never receives the interface of a connect that raised, so
+    nothing else would deregister its three handlers: the next connect adds
+    three more, and every announce then posts twice and counts twice (MA1).
+    The raise here is the startup line's print hitting a closed stdout, and a
+    ``KeyboardInterrupt``, which ``except Exception`` would let through.
+    Against 1dbcdc3 this fails with ``assert 3 == 0``.
+    """
+    fake, state = _fake_rns()
+    monkeypatch.setattr(_mod, "RNS", fake)
+    _no_ingestor_node_id(monkeypatch, tmp_path)
+
+    def _print_fails(message, **_kwargs):
+        if message == "Reticulum announce listener registered":
+            raise raised
+
+    monkeypatch.setattr(_mod.config, "_debug_log", _print_fails)
+
+    with pytest.raises(type(raised)):
+        ReticulumProvider().connect(active_candidate=None)
+
+    assert len(state["registered"]) == 3
+    orphans = [h for h in state["registered"] if h not in state["deregistered"]]
+    assert len(orphans) == 0
+    assert len(state["deregistered"]) == 3  # each handler exactly once
+    assert all(h._iface.isConnected is False for h in state["registered"])
+
+
 def test_close_swallows_deregistration_errors(monkeypatch):
     """A deregistration failure must not escape close()."""
     fake, _state = _fake_rns()
