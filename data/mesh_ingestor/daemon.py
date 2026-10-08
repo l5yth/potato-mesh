@@ -413,7 +413,12 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
     ``snapshot_filter_reason(node_id, node)`` hook (SPEC CF3): an entry it
     names a reason for is skipped, not upserted.  Skipped entries still count
     as processed, so a nodeDB whose every entry is filtered still latches
-    ``initial_snapshot_sent``.
+    ``initial_snapshot_sent``.  Each entry it lets through passes the
+    optional ``snapshot_entry(node_id, node)`` hook, inside the same per-node
+    error handling, and what that returns is upserted: the Meshtastic
+    provider shifts ``lastHeard`` off a wrong radio clock there (SPEC RK4).
+    A provider whose ``snapshot_clock_warning`` then names fields gets one
+    ``warn`` line per snapshot with them.
 
     Returns:
         ``True`` when the snapshot succeeded (or no nodes exist yet); ``False``
@@ -423,6 +428,7 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
     try:
         node_items = state.provider.node_snapshot_items(state.iface)
         filter_reason = getattr(state.provider, "snapshot_filter_reason", None)
+        snapshot_entry = getattr(state.provider, "snapshot_entry", None)
         processed_any = False
         for node_id, node in node_items:
             processed_any = True
@@ -438,6 +444,8 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
                         reason=reason,
                     )
                     continue
+                if callable(snapshot_entry):
+                    node = snapshot_entry(node_id, node)
                 handlers.upsert_node(node_id, node)
             except Exception as exc:
                 config._debug_log(
@@ -456,6 +464,16 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
                     )
         if processed_any:
             state.initial_snapshot_sent = True
+        # Read once every entry is handled, so the counts are this snapshot's.
+        clock_warning = getattr(state.provider, "snapshot_clock_warning", None)
+        if isinstance(clock_warning, dict):
+            config._debug_log(
+                "Radio clock is off; posting snapshot lastHeard shifted to the "
+                "ingestor clock",
+                context="daemon.snapshot",
+                severity="warn",
+                **clock_warning,
+            )
         return True
     except Exception as exc:
         config._debug_log(
