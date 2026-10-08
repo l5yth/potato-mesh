@@ -448,7 +448,12 @@ def report_host_position(
         return items
     now = int(time.time())
     positioned = with_host_position(items, iface, bare_record, report_time=now)
-    _queue._queue_post_json("/api/positions", position_row(host_id, position, now))
+    # The position class of every protocol (SPEC UR2, invariant IV).
+    _queue._queue_post_json(
+        "/api/positions",
+        position_row(host_id, position, now),
+        priority=_queue._POSITION_POST_PRIORITY,
+    )
     return positioned
 
 

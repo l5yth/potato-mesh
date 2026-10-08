@@ -283,7 +283,7 @@ Configure with the environment variables below.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
-| `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. |
+| `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. To feed several instances, list them comma-separated and set `API_TOKEN` to one token for all of them or to a comma-separated token per instance, in the same order. |
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
 | `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint - see [Reticulum](#reticulum). |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |

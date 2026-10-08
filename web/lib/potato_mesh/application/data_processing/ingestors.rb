@@ -91,6 +91,11 @@ module PotatoMesh
       # swallowed rather than propagated — the supplementary activity write must
       # never sink a heartbeat whose liveness upsert has already committed.
       #
+      # A heartbeat whose +ingestor_id+, +at+ and +packets+ all match a stored
+      # row adds none (SPEC UR7): the ingestor re-sends a heartbeat whose reply
+      # it never got, and a second row would count its packets twice. The
+      # lookup runs on the +at+ index.
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param ingestor_id [String] canonical ingestor node id.
       # @param at [Integer] heartbeat timestamp used as the activity bucket time.
@@ -102,10 +107,14 @@ module PotatoMesh
         return if packets.nil? || packets.negative?
 
         with_busy_retry do
-          db.execute(
-            "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES(?,?,?,?)",
-            [ingestor_id, at, packets, protocol],
-          )
+          db.execute(<<~SQL, [ingestor_id, at, packets, protocol, ingestor_id, at, packets])
+            INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol)
+            SELECT ?, ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM ingestor_activity
+                WHERE ingestor_id = ? AND at = ? AND packets = ?
+             )
+          SQL
         end
       rescue SQLite3::SQLException => e
         warn_log(
