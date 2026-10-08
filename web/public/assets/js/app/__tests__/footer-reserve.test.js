@@ -45,8 +45,8 @@ test('at <= 600px only the shells that render a footer drop the 96px reserve (SH
     declarationsFor('.page-shell:not(.page-shell--full-screen)', PHONE)['padding-bottom'],
     'var(--pad)'
   );
-  // An unscoped `.page-shell` padding here would come after
-  // `.page-shell--full-screen { padding: 0 }` and shrink the full-screen chat panel.
+  // An unscoped `.page-shell` padding here would come after the full-screen
+  // shell's zero bottom padding and shrink the full-screen chat panel.
   for (const selector of ['.page-shell', '.page-shell--full-screen']) {
     const phone = declarationsFor(selector, PHONE);
     assert.equal(phone['padding-bottom'], undefined, selector);
@@ -65,5 +65,6 @@ test('above 600px the footer stays pinned over the 96px reserve, with its lift s
   assert.equal(footer.position, 'fixed');
   assert.equal(footer['box-shadow'], '0 -8px 24px rgba(0, 0, 0, 0.35)');
   assert.equal(declarationsFor('.page-shell')['padding-bottom'], 'calc(96px + var(--pad))');
-  assert.equal(declarationsFor('.page-shell--full-screen').padding, '0');
+  // The full-screen shell's padding (no bottom reserve) is SR1's:
+  // full-screen-gutter.test.js.
 });

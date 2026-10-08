@@ -340,6 +340,25 @@ RSpec.describe "UX audit remediation markup" do
       # wrapping .footer-links box stranded on line one is gone.
       expect(html).to match(%r{<span class="footer-separator"[^>]*>·</span>})
       expect(html).not_to match(%r{<span class="footer-separator"[^>]*>—</span>})
+      # Every separator is a dot hidden from assistive technology.
+      separators = footer_of(html).scan(%r{<span class="footer-separator[ "][^>]*>[^<]*</span>})
+      expect(separators).not_to be_empty
+      separators.each do |separator|
+        expect(separator).to match(%r{ aria-hidden="true">·</span>\z})
+      end
+    end
+  end
+
+  describe "footer brand group (SR2)" do
+    it "groups the brand, its separator and the version ahead of the links, with no separator between" do
+      # Above 1024 px the group is one flex item beside the links, divided by
+      # a gap, so no dot follows the version.
+      group = [
+        '<span class="footer-brand-group">\s*<span class="footer-brand">PotatoMesh</span>\s*',
+        '<span class="footer-separator" aria-hidden="true">·</span>\s*<span class="mono">[^<]+</span>\s*',
+        '</span>\s*<span class="footer-links">',
+      ].join
+      expect(footer_of(body_of("/"))).to match(Regexp.new(group))
     end
   end
 

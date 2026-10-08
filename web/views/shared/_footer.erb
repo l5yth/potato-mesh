@@ -33,14 +33,19 @@
     <% end %>
   </div>
   <div class="footer-content">
-    <span class="footer-brand">PotatoMesh</span>
-    <% if version && !version.empty? %>
-      <span class="footer-separator" aria-hidden="true">·</span>
-      <span class="mono"><%= version %></span>
-    <% end %>
+    <%# The brand group (SPEC SR2): one row item above 1024 px, no box below. %>
+    <span class="footer-brand-group">
+      <span class="footer-brand">PotatoMesh</span>
+      <% if version && !version.empty? %>
+        <span class="footer-separator" aria-hidden="true">·</span>
+        <span class="mono"><%= version %></span>
+      <% end %>
+    </span>
     <%# The links are their own footer tier (Post-Deploy review 02): flex-basis
         100% drops them to their own line so the row can't strand a separator
-        on line one. Dot separators, not em dashes (Post-Deploy review 03). %>
+        on line one. Dot separators, not em dashes (Post-Deploy review 03).
+        Above 1024 px they share the brand group's row when both fit, past a
+        gap and no separator (SPEC SR2). %>
     <span class="footer-links">
       <%# Static operator pages live in the footer tier (SPEC UX11): the
           primary nav carries only the product views. The phone menu's Pages
