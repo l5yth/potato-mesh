@@ -383,8 +383,8 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     assert.ok(html.includes(`>${group}</h3>`), `group ${group} present`);
   }
   assert.ok(html.includes('<dt>Battery</dt>'), 'fields render as dt/dd rows');
-  // The nodes table's battery format (fmtBattery, SPEC UX10).
-  assert.ok(html.includes('<dt>Battery</dt><dd>66%</dd>'), 'battery renders as in the nodes table');
+  // fmtBattery's format (SPEC UX10), as on the node overlay.
+  assert.ok(html.includes('<dt>Battery</dt><dd>66%</dd>'), 'battery renders with fmtBattery');
   assert.equal(html.includes('1.230%'), true);
   assert.equal(html.includes('52.52000'), true);
   assert.equal(html.includes('1m 40s'), true);

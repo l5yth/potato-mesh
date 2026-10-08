@@ -1348,15 +1348,19 @@ body.view-chat .page-shell {
   color: var(--danger);
 }
 
+/* One gutter (SPEC DV4): the node page is a full-screen view without the
+   shell's padding, so it pads itself with the shell's --pad, inside its width.
+   No block inside it, here or in the overlay and on /charts, adds another. */
 .node-detail {
+  box-sizing: border-box;
   width: 100%;
   margin: 0;
-  padding: 24px 0 40px;
+  padding: 24px var(--pad) 40px;
 }
 
 .node-detail__header {
   margin-bottom: 12px;
-  padding: 0 20px;
+  padding-inline: 0;
 }
 
 .node-detail__title {
@@ -1382,7 +1386,7 @@ body.view-chat .page-shell {
 }
 
 .node-detail__charts {
-  padding: 0 20px;
+  padding-inline: 0;
   margin: 12px 0 24px;
 }
 
@@ -1400,6 +1404,8 @@ body.view-chat .page-shell {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* A <figure>: drop the browser's 40px inline margin (SPEC DV4). */
+  margin: 0;
 }
 
 .node-detail__chart-header {
@@ -1411,14 +1417,16 @@ body.view-chat .page-shell {
   margin: 0;
 }
 
+/* Chart HTML text at the app's sizes (SPEC DV6). The SVG axis text below is
+   in viewBox units and is left to RD8's deferred axis restyle. */
 .node-detail__chart-header h4 {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 15px;
 }
 
 .node-detail__chart-header span {
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 12px;
 }
 
 .node-detail__chart svg {
@@ -1458,7 +1466,7 @@ body.view-chat .page-shell {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 1rem;
+  font-size: 12px;
 }
 
 .node-detail__chart-legend-swatch {
@@ -1495,11 +1503,24 @@ body.view-chat .page-shell {
   text-decoration-thickness: 2px;
 }
 
+/* One click affordance per table row (SPEC DV2): the row already shows hover
+   and a pointer, so its long name underlines only while the row is hovered or
+   the link has keyboard focus. Long names elsewhere (overlays, popups, chat)
+   keep the underline. Longhands, so the 1px / 2px thickness above holds. */
+#nodes .node-long-link {
+  text-decoration-line: none;
+}
+
+#nodes tbody tr:hover .node-long-link,
+#nodes .node-long-link:focus-visible {
+  text-decoration-line: underline;
+}
+
 .node-detail__status,
 .node-detail__error,
 .node-detail__noscript {
   margin: 16px 0;
-  padding: 0 20px;
+  padding-inline: 0;
 }
 
 .node-detail__error {
@@ -1509,7 +1530,7 @@ body.view-chat .page-shell {
 .node-detail__content {
   display: grid;
   gap: 24px;
-  padding: 0 20px;
+  padding-inline: 0;
 }
 
 .node-detail__neighbors-grid {
@@ -2570,15 +2591,19 @@ button.legend-item[aria-pressed="true"] {
   overflow-x: auto;
 }
 
+/* The nodes table's density (SPEC DV5): 12px type, 5px 8px cells. Zebra rows
+   come from the shared `tbody tr:nth-child(even)` rule. The sticky header
+   below never pins: the wrapper's `overflow-x: auto` makes it the scrollport,
+   and it does not scroll vertically. */
 #instances {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.95rem;
+  font-size: 12px;
 }
 
 #instances th,
 #instances td {
-  padding: 10px 12px;
+  padding: 5px 8px;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
@@ -2664,6 +2689,14 @@ button.legend-item[aria-pressed="true"] {
   padding: 32px 16px;
 }
 
+/* Fill the column, padding included (SPEC DV8): with `margin: 0 auto` in the
+   column-flex `.page-main` the page shrank to fit its widest `pre` line and
+   widened the phone viewport; at full width the `pre` scrolls inside. */
+.static-page {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .static-page__content.markdown-body {
   color: var(--fg);
   line-height: 1.7;
@@ -2730,7 +2763,8 @@ button.legend-item[aria-pressed="true"] {
 }
 
 .markdown-body code {
-  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  /* The app's one monospace stack, as `.mono` (SPEC DV7). */
+  font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.9em;
   background: var(--bg2);
   padding: 0.15em 0.4em;
@@ -2876,6 +2910,21 @@ button.legend-item[aria-pressed="true"] {
   padding: 3px 8px;
 }
 
+/* Phone density (SPEC DV9): at <= 659px the five surviving columns and the
+   `+` column needed 373px in the dashboard's 343px column, so the page scrolled
+   sideways. 4px inline padding fits them, also with the battery sort glyph
+   shown. The wrapper stays a plain block: a scrolling wrapper would become the
+   sticky header's scrollport (FU10) and take the page scroll that the
+   reader-place fallback adjusts (DR-A8). Same specificity as the rules above,
+   so this block must follow them. */
+@media (max-width: 659px) {
+  #nodes thead th,
+  #nodes tbody td,
+  #nodes .nodes-group-header th {
+    padding-inline: 4px;
+  }
+}
+
 /* The waiting row keeps generous padding. It is inside #nodes tbody, so the
    tight `#nodes tbody td` rule above would otherwise apply — an id-scoped
    selector is needed to outrank it (a bare `.nodes-empty-row td` class would
@@ -2953,6 +3002,11 @@ button.legend-item[aria-pressed="true"] {
 #nodes td.num {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
+}
+
+/* The unit of a numeric column, named once in its header (SPEC DV1). */
+#nodes .nodes-col__unit {
+  color: var(--muted);
 }
 
 /* Grouped header row (UX9, D-006): quiet group scent above the columns.

@@ -32,9 +32,9 @@ function batteryValue(html) {
   return match ? match[1].trim() : null;
 }
 
-test('the spec sheet renders the powered sentinel as the nodes table does (SPEC UX10)', () => {
-  // Meshtastic reports battery_level 101 for externally powered nodes; the
-  // nodes table renders it as "100% ⚡" (fmtBattery), the detail page must too.
+test('the spec sheet renders the powered sentinel as 100% ⚡ (SPEC UX10)', () => {
+  // Meshtastic reports battery_level 101 for externally powered nodes;
+  // fmtBattery renders it as "100% ⚡" on the node page and the node overlay.
   const node = { node_id: '!f9ae6de0', role: 'CLIENT', last_heard: NOW - 46, battery_level: 101 };
   assert.equal(batteryValue(renderSingleNodeTable(node, () => '', NOW)), '100% ⚡');
 });
@@ -44,9 +44,9 @@ test('the spec sheet keeps a real battery percentage', () => {
   assert.match(batteryValue(renderSingleNodeTable(node, () => '', NOW)) ?? '', /^95(\.0)?%$/);
 });
 
-test('the spec sheet renders a full battery as the nodes table does (SPEC UX10)', () => {
+test('the spec sheet renders a full battery as a plain percentage (SPEC UX10)', () => {
   // Only a level above 100 is the powered sentinel; exactly 100 stays a plain
-  // percentage, as fmtBattery renders it in the nodes table.
+  // percentage in fmtBattery.
   const node = { node_id: '!f0acbfba', role: 'ROUTER_LATE', last_heard: NOW - 46, battery_level: 100 };
   assert.equal(batteryValue(renderSingleNodeTable(node, () => '', NOW)), '100%');
 });
