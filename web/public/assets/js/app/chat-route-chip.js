@@ -15,14 +15,15 @@
  */
 
 /**
- * Route chip for chat lines (SPEC SC7, #765).
+ * Route chip for chat lines (SPEC SC7, #765; amended 2026-10-08).
  *
  * A message carrying a ``hops`` count gets a small chip after its sender
- * badge: the hop count, then the MeshCore flood-scope label. Its ``title``
- * and ``aria-label`` list the repeater path hashes in travel order, then the
- * SNR and RSSI. The dashboard chat and the node page share it. Any protocol
- * with ``hops`` gets one, Meshtastic included; path hashes are shown as
- * received, never resolved to node names.
+ * badge: the hop count, then the MeshCore flood-scope label. The reserved
+ * unknown scope shows as ``??`` with its own "unknown scope" tooltip. The
+ * chip's ``title`` and ``aria-label`` list the repeater path hashes in travel
+ * order, then the SNR and RSSI. The dashboard chat and the node page share
+ * it. Any protocol with ``hops`` gets one, Meshtastic included; path hashes
+ * are shown as received, never resolved to node names.
  *
  * @module chat-route-chip
  */
@@ -50,7 +51,14 @@ export const SCOPE_UNKNOWN = '?';
  *
  * @type {string}
  */
-export const SCOPE_UNKNOWN_LABEL = 'scoped';
+export const SCOPE_UNKNOWN_LABEL = '??';
+
+/**
+ * Tooltip of {@link SCOPE_UNKNOWN_LABEL}.
+ *
+ * @type {string}
+ */
+export const SCOPE_UNKNOWN_TITLE = 'unknown scope';
 
 /**
  * Read a hop count: a non-negative integer, or ``null``.
@@ -68,7 +76,7 @@ export function routeHopCount(value) {
  * Map a message ``scope`` to its chip label.
  *
  * @param {*} scope Raw ``scope`` field.
- * @returns {?string} The region name, ``"scoped"`` for the reserved unknown
+ * @returns {?string} The region name, ``"??"`` for the reserved unknown
  *   value, or ``null`` for an unscoped flood or an absent scope.
  */
 export function routeScopeLabel(scope) {
@@ -137,6 +145,23 @@ export function formatRouteDetails(message) {
 }
 
 /**
+ * Render the scope part of the route chip, after the hop count.
+ *
+ * @param {*} scope Raw ``scope`` field.
+ * @returns {string} Escaped HTML: ``" · <name>"`` for a region name,
+ *   ``" · ??"`` wrapped in a span titled "unknown scope" for the reserved
+ *   unknown value, or ``''`` for an unscoped flood or an absent scope.
+ */
+function formatRouteScope(scope) {
+  const label = routeScopeLabel(scope);
+  if (label == null) return '';
+  if (scope !== SCOPE_UNKNOWN) return escapeHtml(` · ${label}`);
+  // Its own title, so hovering "??" names it while the rest of the chip
+  // keeps the route details.
+  return ` · <span title="${escapeHtml(SCOPE_UNKNOWN_TITLE)}">${escapeHtml(label)}</span>`;
+}
+
+/**
  * Render the route chip of a chat line, placed right after the sender badge
  * and outside the 19ch prefix (FU9).
  *
@@ -147,13 +172,12 @@ export function formatRouteDetails(message) {
 export function formatChatRouteChip(message) {
   const hops = routeHopCount(message?.hops);
   if (hops == null) return '';
-  const label = routeScopeLabel(message.scope);
-  const text = `${hops} ${hops === 1 ? 'hop' : 'hops'}${label ? ` · ${label}` : ''}`;
+  const text = `${hops} ${hops === 1 ? 'hop' : 'hops'}`;
   const details = formatRouteDetails(message);
   // A labelled group announces the details and keeps the visible text
   // readable to assistive technology (unlike role="img").
   const attrs = details
     ? ` role="group" title="${escapeHtml(details)}" aria-label="${escapeHtml(details)}"`
     : '';
-  return ` <span class="chat-route-chip"${attrs}>${escapeHtml(text)}</span>`;
+  return ` <span class="chat-route-chip"${attrs}>${escapeHtml(text)}${formatRouteScope(message.scope)}</span>`;
 }

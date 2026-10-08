@@ -47,6 +47,9 @@ const ROUTED = Object.freeze({
 
 const DETAILS = 'Path f0 → bf → 44 · SNR 10 dB · RSSI -96 dBm';
 
+/** The scope part of the chip for the reserved unknown scope ``?`` (SPEC SC7, amended 2026-10-08). */
+const UNKNOWN_SCOPE = '<span title="unknown scope">??</span>';
+
 // --- value helpers ---
 
 test('routeHopCount accepts non-negative integers only', () => {
@@ -58,12 +61,12 @@ test('routeHopCount accepts non-negative integers only', () => {
   assert.equal(routeHopCount('4'), 4);
 });
 
-test('routeScopeLabel names a region, says "scoped" for the unknown value, and hides unscoped', () => {
+test('routeScopeLabel names a region, shows "??" for the unknown value, and hides unscoped', () => {
   assert.equal(SCOPE_UNSCOPED, '*');
   assert.equal(SCOPE_UNKNOWN, '?');
-  assert.equal(SCOPE_UNKNOWN_LABEL, 'scoped');
+  assert.equal(SCOPE_UNKNOWN_LABEL, '??');
   assert.equal(routeScopeLabel('de-be'), 'de-be');
-  assert.equal(routeScopeLabel('?'), 'scoped');
+  assert.equal(routeScopeLabel('?'), '??');
   for (const value of ['*', '', null, undefined, 7]) {
     assert.equal(routeScopeLabel(value), null);
   }
@@ -107,10 +110,20 @@ test('formatChatRouteChip shows hops and the region name, with the route in titl
   );
 });
 
-test('formatChatRouteChip says "scoped" for the unknown region and nothing for unscoped', () => {
-  assert.match(formatChatRouteChip({ ...ROUTED, scope: '?' }), />3 hops · scoped</);
-  assert.match(formatChatRouteChip({ ...ROUTED, scope: '*' }), />3 hops</);
-  assert.match(formatChatRouteChip({ ...ROUTED, scope: undefined }), />3 hops</);
+test('formatChatRouteChip shows "??" for the unknown region, titled "unknown scope"', () => {
+  assert.equal(
+    formatChatRouteChip({ ...ROUTED, scope: '?' }),
+    ` <span class="chat-route-chip" role="group" title="${DETAILS}" aria-label="${DETAILS}">3 hops · ${UNKNOWN_SCOPE}</span>`,
+  );
+  // Without route details the scope's own title is the chip's only tooltip.
+  assert.equal(formatChatRouteChip({ hops: 2, scope: '?' }), ` <span class="chat-route-chip">2 hops · ${UNKNOWN_SCOPE}</span>`);
+});
+
+test('formatChatRouteChip shows no scope for an unscoped flood or an absent scope', () => {
+  const plain = ` <span class="chat-route-chip" role="group" title="${DETAILS}" aria-label="${DETAILS}">3 hops</span>`;
+  for (const scope of ['*', undefined, null, '']) {
+    assert.equal(formatChatRouteChip({ ...ROUTED, scope }), plain, `scope ${String(scope)}`);
+  }
 });
 
 test('formatChatRouteChip shows for any protocol with hops, Meshtastic included', () => {
@@ -178,6 +191,17 @@ test('the node page renders the same chip after the sender badge', () => {
   assert.ok(chip > html.indexOf('short-name'), 'chip follows the sender badge');
   assert.ok(chip < html.indexOf('hello scope'), 'chip precedes the message text');
   assert.ok(!nodePageHtml({ ...ROUTED, hops: undefined }).includes('chat-route-chip'));
+});
+
+test('the dashboard and the node page show "??" with its tooltip for the unknown scope', () => {
+  const unknown = { ...ROUTED, scope: '?' };
+  assert.ok(nodePageHtml(unknown).includes(`>3 hops · ${UNKNOWN_SCOPE}</span>`), 'node page');
+  withApp((t) => {
+    const html = innerHtml(
+      t.createMessageChatEntry({ ...unknown, node: { short_name: 'ALI', role: 'COMPANION', protocol: 'meshcore' } }),
+    );
+    assert.ok(html.includes(`>3 hops · ${UNKNOWN_SCOPE}</span>`), html);
+  });
 });
 
 test('base.css keeps the chip out of the hanging indent', () => {

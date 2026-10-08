@@ -21,8 +21,10 @@
  * with the real legend panel mounted and one node per protocol, each active
  * this week, then reads the panel's element tree while the meta-row protocol
  * toggles and the search box change what is in view. The DOM stub lays
- * nothing out, so the 8 px gap and the top alignment are checked where they
- * are decided: which groups are laid out, and the base.css rules.
+ * nothing out, so the 8 px gap, the Reticulum sub-headline's 12 px top margin
+ * and the top alignment are checked where they are decided: which groups are
+ * laid out, whether the stack is marked `legend-column--lone`, and the
+ * base.css rules.
  *
  * @module app/__tests__/main-legend-stack
  */
@@ -37,6 +39,17 @@ import { meshcoreRoleColors, reticulumRoleColors, roleColors } from '../role-hel
 
 /** The dashboard stylesheet. */
 const CSS = readFileSync(fileURLToPath(new URL('../../../styles/base.css', import.meta.url)), 'utf8');
+
+/**
+ * Selector of the Reticulum sub-headline's top margin (SPEC LS1, amended
+ * 2026-10-08): the header of the group under another group, in a stack not
+ * marked `legend-column--lone`.
+ */
+const SUB_HEADLINE_SELECTOR =
+  '.legend-column--stack:not(.legend-column--lone) > .legend-group + .legend-group > .legend-column-header';
+
+/** Class `applyProtocolVisibility` sets on the stack while fewer than two of its groups are in view. */
+const LONE = 'legend-column--lone';
 
 /**
  * Locate the base.css rule whose selector is exactly `selector`.
@@ -208,6 +221,44 @@ test('the search text drives the groups and the first column as the toggles do (
   }
 });
 
+test('the Reticulum sub-headline keeps its top margin only under a laid-out MeshCore group (LS1)', async () => {
+  const app = await bootLegendApp({ leaflet: true });
+  try {
+    const { stack, meshcore, reticulum } = legendParts(app);
+    // The margin rule's target is the Reticulum header: the stack holds two
+    // groups, MeshCore then Reticulum, and a group opens with its header.
+    assert.deepEqual(stack.children, [meshcore, reticulum], 'the stack holds the two groups, nothing else');
+    assert.equal(reticulum.children[0].className, 'legend-column-header');
+    assert.equal(headerLabel(reticulum), 'Reticulum', 'the group under another group is Reticulum');
+    assert.equal(stack.classList.contains(LONE), false, 'both groups in view: the sub-headline keeps its margin');
+
+    await app.clickToggle('Meshcore');
+    assert.equal(stack.classList.contains(LONE), true, 'Reticulum alone drops it and keeps the column top (FU12)');
+    await app.clickToggle('Meshcore');
+    assert.equal(stack.classList.contains(LONE), false, 'MeshCore back: the margin is back');
+
+    await app.clickToggle('Reticulum');
+    assert.equal(stack.classList.contains(LONE), true, 'MeshCore alone: no group under it');
+    await app.clickToggle('Reticulum');
+    assert.equal(stack.classList.contains(LONE), false);
+
+    await app.typeFilter('bravo');
+    assert.equal(stack.classList.contains(LONE), true, 'the search text drives it as the toggles do');
+    await app.typeFilter('');
+    assert.equal(stack.classList.contains(LONE), false);
+  } finally {
+    await app.cleanup();
+  }
+});
+
+test('base.css gives the Reticulum sub-headline a 12 px top margin only in a stack that is not lone (LS1, FU12)', () => {
+  const rule = cssRule(SUB_HEADLINE_SELECTOR);
+  assert.match(rule.body, /\bmargin-top: 12px;/, '12 px on top of the 8 px gap');
+  assert.doesNotMatch(rule.body.replace(/margin-top: 12px;/, ''), /margin|padding/, 'nothing else moves');
+  // Every other header, the first group's and a lone group's, keeps its place.
+  assert.doesNotMatch(cssRule('.legend-column-header').body, /margin/);
+});
+
 test('base.css puts the 8 px only between laid-out groups (LS1)', () => {
   const column = cssRule('.legend-column');
   const stack = cssRule('.legend-column--stack');
@@ -216,7 +267,8 @@ test('base.css puts the 8 px only between laid-out groups (LS1)', () => {
   assert.match(stack.body, /\bgap: 8px;/, 'the groups sit 8 px apart, as the columns do');
   assert.ok(stack.start > column.start, 'the stack gap comes after the column gap it overrides');
   // A flex gap is laid out only between items in the flow, so a group hidden
-  // with `display: none` takes its gap with it. A margin would stay behind.
+  // with `display: none` takes its gap with it. A margin would stay behind,
+  // which is why the Reticulum sub-headline's margin needs the lone class.
   assert.match(group.body, /display: flex;/);
   assert.match(group.body, /flex-direction: column;/);
   assert.doesNotMatch(group.body, /margin/);

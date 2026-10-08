@@ -3638,8 +3638,9 @@ export function initializeApp(config) {
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
-    // A sender named only by the text gets a marker right after its badge
-    // (SPEC SV3), then the route chip (hops + flood scope, SPEC SC7).
+    // A sender named only by the text gets a hidden marker right after its
+    // badge, a verified one a tag (SPEC SV3), then the route chip (hops +
+    // flood scope, SPEC SC7).
     const senderMarker = formatChatSenderMarker(m, { senderFromText });
     const routeChip = formatChatRouteChip(m);
     return {
@@ -6109,8 +6110,10 @@ export function initializeApp(config) {
    * Hides the Charts nav link when meshtastic has no active nodes, shows a
    * protocol's meta-row toggle only while two or more protocols are active,
    * and lists in the map legend only the protocols in view (SPEC LP1, decided
-   * by {@link legendProtocolsInView}). Runs from {@link applyFilter}'s stats
-   * callback, so the legend follows the toggles and the filter text.
+   * by {@link legendProtocolsInView}), marking the first column
+   * `legend-column--lone` while fewer than two of its groups are in view
+   * (SPEC LS1). Runs from {@link applyFilter}'s stats callback, so the legend
+   * follows the toggles and the filter text.
    *
    * @param {{meshcore?: {week: number}, meshtastic?: {week: number}, reticulum?: {week: number}}} stats Stats from /api/stats.
    * @returns {void}
@@ -6168,8 +6171,17 @@ export function initializeApp(config) {
       if (element) element.style.display = legendProtocols.has(protocol) ? '' : 'none';
     }
     // The first column leaves the row with both of its groups (SPEC LS1):
-    // kept empty, it would leave the gap between the columns behind.
-    if (legendStackColEl) legendStackColEl.style.display = legendStackInView(legendProtocols) ? '' : 'none';
+    // kept empty, it would leave the gap between the columns behind. With
+    // fewer than two groups in view it is `legend-column--lone`, which drops
+    // the Reticulum sub-headline's top margin, so a lone group keeps the
+    // column top and top-aligns with Meshtastic (FU12).
+    if (legendStackColEl) {
+      legendStackColEl.style.display = legendStackInView(legendProtocols) ? '' : 'none';
+      legendStackColEl.classList.toggle(
+        'legend-column--lone',
+        !(legendProtocols.has('meshcore') && legendProtocols.has('reticulum')),
+      );
+    }
     if (unstranded) {
       // Re-run the same sync path a chip click uses so the nodes reappear.
       // Bounded: the dropped protocols are no longer in the set, so the

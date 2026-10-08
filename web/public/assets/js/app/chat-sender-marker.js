@@ -15,32 +15,48 @@
  */
 
 /**
- * Unverified-sender marker for chat lines (SPEC SV3).
+ * Sender marker for chat lines (SPEC SV3, amended 2026-10-08).
  *
  * A MeshCore channel message names its sender only in the ``Name:`` prefix of
  * its text, which no key backs. The web app serves such a row with
- * ``sender_verified: false`` (SPEC SV2), and the dashboard chat and the node
- * page mark the line with an "unverified" chip after the sender badge, titled
- * "Sender not verified". Visible text, not a glyph: a tooltip never shows on a
- * touch screen, and ``?`` already marks a badge whose node is unknown. A line
- * whose sender comes from an id the packet carries gets no marker.
+ * ``sender_verified: false`` (SPEC SV2). The dashboard chat and the node page
+ * keep an "unverified" element, titled "Sender not verified", right after the
+ * sender badge of such a line, but with the ``hidden`` attribute: its class
+ * and title stay in the DOM for inspection, while nothing shows and nothing
+ * takes space. A row served with ``sender_verified: true`` gets a small
+ * visible "verified" tag in the same place instead. The API sends no such
+ * row today, so no tag shows yet. A row without the key gets nothing.
  *
  * @module chat-sender-marker
  */
 
 /**
- * Tooltip and accessible description of the marker.
+ * Title of the marker, kept for inspection while the marker is hidden.
  *
  * @type {string}
  */
 export const SENDER_UNVERIFIED_LABEL = 'Sender not verified';
 
 /**
- * Visible text of the marker.
+ * Text of the marker, kept for inspection while the marker is hidden.
  *
  * @type {string}
  */
 export const SENDER_UNVERIFIED_TEXT = 'unverified';
+
+/**
+ * Tooltip of the verified tag.
+ *
+ * @type {string}
+ */
+export const SENDER_VERIFIED_LABEL = 'Sender verified';
+
+/**
+ * Visible text of the verified tag.
+ *
+ * @type {string}
+ */
+export const SENDER_VERIFIED_TEXT = 'verified';
 
 /**
  * Whether a chat line's sender was attributed by name rather than by an id
@@ -60,16 +76,26 @@ export function isSenderUnverified(message, { senderFromText = false } = {}) {
 }
 
 /**
- * Render the unverified-sender marker of a chat line, placed right after the
- * sender badge and outside the 19ch prefix (FU9).
+ * Render the sender marker of a chat line, placed right after the sender
+ * badge and outside the 19ch prefix (FU9).
+ *
+ * An unverified sender ({@link isSenderUnverified}) gets the "unverified"
+ * marker with the ``hidden`` attribute and no leading space, so the line
+ * reads and spaces exactly as without it. A row with ``sender_verified:
+ * true`` gets the visible "verified" tag, unless the badge was named from the
+ * text: such a sender is unverified whatever the row says.
  *
  * @param {?Object} message Message payload.
  * @param {{ senderFromText?: boolean }} [options] See
  *   {@link isSenderUnverified}.
- * @returns {string} HTML for the marker with a leading space, or ``''`` for a
- *   sender that came from an id the packet carries.
+ * @returns {string} HTML for the hidden marker, the verified tag with a
+ *   leading space, or ``''`` for a row without the key.
  */
 export function formatChatSenderMarker(message, options = {}) {
-  if (!isSenderUnverified(message, options)) return '';
-  return ` <span class="chat-sender-unverified" title="${SENDER_UNVERIFIED_LABEL}">${SENDER_UNVERIFIED_TEXT}</span>`;
+  if (isSenderUnverified(message, options)) {
+    return `<span class="chat-sender-unverified" title="${SENDER_UNVERIFIED_LABEL}" hidden>${SENDER_UNVERIFIED_TEXT}</span>`;
+  }
+  // Only the literal true counts; the API serves no such value yet (SPEC SV2).
+  if (message?.sender_verified !== true) return '';
+  return ` <span class="chat-sender-verified" title="${SENDER_VERIFIED_LABEL}">${SENDER_VERIFIED_TEXT}</span>`;
 }
