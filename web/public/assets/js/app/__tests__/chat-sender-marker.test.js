@@ -125,14 +125,14 @@ test('formatChatSenderMarker renders nothing for a row without the key', () => {
 
 // --- the dashboard chat line ---
 
-test('the dashboard chat line keeps the hidden marker after the badge and before the route chip, outside the prefix', () => {
+test('the dashboard chat line keeps the hidden marker after the badge and before the route chip, in the body', () => {
   withApp((t) => {
     const html = innerHtml(t.createMessageChatEntry({ ...NAMED, node: ALICE_NODE }));
     const marker = html.indexOf(MARKER);
     assert.ok(marker > html.indexOf('short-name'), 'marker follows the sender badge');
     assert.ok(marker < html.indexOf('class="chat-route-chip"'), 'marker precedes the route chip');
     assert.ok(marker < html.indexOf('see you at the hut'), 'marker precedes the text');
-    assert.match(html, /^\[[^\]]*\]\[[^\]]*\]\[[^\]]*\] /, 'the bracketed 19ch prefix is unchanged');
+    assert.match(html, /^<span class="chat-entry-time" title="[^"]*">[^<]*<\/span> <span class="chat-entry-body">/, 'the line leads with its time slot (CD1)');
     // The hidden element is the only difference from the same line without the flag.
     const unflagged = innerHtml(t.createMessageChatEntry({ ...NAMED, sender_verified: undefined, node: ALICE_NODE }));
     assert.equal(html.replace(MARKER, ''), unflagged, 'the marker adds no text and no space');

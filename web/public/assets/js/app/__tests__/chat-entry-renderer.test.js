@@ -63,6 +63,13 @@ test('renderChatEntryContent: MeshCore channel leading @[Name] becomes reply pre
   assert.ok(html.includes('chat-entry-reply'), 'should include reply prefix span');
   assert.ok(html.includes('ESC(in reply to)'), 'reply prefix label should be escaped');
   assert.ok(html.includes('SHORT(AL|CLIENT|Alice)'), 'reply target should be rendered as short name badge');
+  // The reply reads "↩ BADGE"; "in reply to" stays hidden text and the title (SPEC CD4).
+  assert.ok(
+    html.startsWith('<span class="chat-entry-reply" title="ESC(in reply to Alice)"><span class="visually-hidden">ESC(in reply to) </span>'
+      + '<span aria-hidden="true">↩</span> SHORT(AL|CLIENT|Alice)</span> '),
+    html,
+  );
+  assert.ok(!html.includes('[ESC(in reply to)'), 'no bracketed label');
   // The @[Alice] should NOT appear inline as a mention badge — it has been
   // consumed into the reply prefix.  The remaining text is "thanks!".
   assert.ok(html.includes('ESC(thanks!)'), 'remaining text should appear');

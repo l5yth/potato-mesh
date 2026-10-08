@@ -15,10 +15,10 @@
  */
 
 /**
- * Route chip for chat lines (SPEC SC7, #765; amended 2026-10-08).
+ * Route chip for chat lines (SPEC SC7, #765; amended 2026-10-08; CD3).
  *
- * A message carrying a ``hops`` count gets a small chip after its sender
- * badge: the hop count, then the MeshCore flood-scope label. The reserved
+ * A message carrying a ``hops`` count gets a chip after its text, styled as
+ * quiet text: the hop count, then the MeshCore flood-scope label. The reserved
  * unknown scope shows as ``??`` with its own "unknown scope" tooltip. The
  * chip's ``title`` and ``aria-label`` list the repeater path hashes in travel
  * order, then the SNR and RSSI. The dashboard chat and the node page share
@@ -162,8 +162,8 @@ function formatRouteScope(scope) {
 }
 
 /**
- * Render the route chip of a chat line, placed right after the sender badge
- * and outside the 19ch prefix (FU9).
+ * Render the route chip of a chat line, placed after the message text (SPEC
+ * CD3).
  *
  * @param {?Object} message Message payload.
  * @returns {string} HTML for the chip with a leading space, or ``''`` when the

@@ -148,7 +148,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
   // ``@[Name]`` mentions and reply targets that reference nodes other than
   // the page's own node — without it, mention badges silently degrade to
   // plain ``@[Name]`` text and leading-mention replies don't surface as
-  // ``[in reply to ...]`` prefixes.
+  // ``↩`` reply prefixes.
   const [messages, traces, waypoints, nodesById, destinations] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,

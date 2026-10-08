@@ -64,7 +64,8 @@ test('resolveReplyPrefix renders reply badge and buildMessageBody joins emoji', 
 
   assert.equal(
     prefix,
-    '<span class="chat-entry-reply">[ESC(in reply to) SHORT(BEEF|CLIENT|Parent Node)]</span>'
+    '<span class="chat-entry-reply" title="ESC(in reply to Parent Node)"><span class="visually-hidden">ESC(in reply to) </span>'
+      + '<span aria-hidden="true">↩</span> SHORT(BEEF|CLIENT|Parent Node)</span>'
   );
 
   const body = buildMessageBody({

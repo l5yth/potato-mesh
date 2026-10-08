@@ -17,8 +17,9 @@
 /**
  * Day dividers and empty-state notes of the chat panels (#881, SPEC DR1).
  *
- * Besides its entries, a chat panel holds a ``-- YYYY-MM-DD --`` divider before
- * the first entry of each day and, when it has no entries, a note saying so.
+ * Besides its entries, a chat panel holds a divider before the first entry of
+ * each day, labelled like ``Thu 8 Oct`` and keyed by the ISO date (SPEC CD5),
+ * and, when it has no entries, a note saying so.
  * The entry cache ({@link module:main/chat-entry-cache}) keeps entry nodes
  * across refreshes; this module does the same for these structural nodes,
  * keyed per panel, so a refresh that changes nothing in a panel hands back the
@@ -28,6 +29,25 @@
  */
 
 import { formatDate } from './format-utils.js';
+
+/**
+ * Parts of a divider's day label: weekday, day and month (SPEC CD5).
+ *
+ * @type {Readonly<Intl.DateTimeFormatOptions>}
+ */
+const DIVIDER_LABEL_OPTIONS = Object.freeze({ weekday: 'short', day: 'numeric', month: 'short' });
+
+/**
+ * Label of a day divider in en-GB, such as ``Thu 8 Oct`` (SPEC CD5). It has
+ * no year: the chat spans seven days, and a kept divider never rewrites its
+ * text (DR1).
+ *
+ * @param {Date} date Any moment of the day.
+ * @returns {string} The label.
+ */
+function formatDividerLabel(date) {
+  return date.toLocaleDateString('en-GB', DIVIDER_LABEL_OPTIONS);
+}
 
 /**
  * One panel build: hands out the panel's dividers and empty note while the
@@ -103,7 +123,8 @@ export function createChatPanelChrome({ documentRef } = {}) {
         if (!ts) {
           return null;
         }
-        const day = formatDate(new Date(ts * 1000));
+        const date = new Date(ts * 1000);
+        const day = formatDate(date);
         if (day === lastDay) {
           return null;
         }
@@ -116,7 +137,7 @@ export function createChatPanelChrome({ documentRef } = {}) {
         if (!node) {
           node = doc.createElement('div');
           node.className = 'chat-entry-date';
-          node.textContent = `-- ${day} --`;
+          node.textContent = formatDividerLabel(date);
           state.dividers.set(key, node);
         }
         return node;

@@ -77,7 +77,7 @@ export function isSenderUnverified(message, { senderFromText = false } = {}) {
 
 /**
  * Render the sender marker of a chat line, placed right after the sender
- * badge and outside the 19ch prefix (FU9).
+ * badge, in the line's body (SPEC CD1).
  *
  * An unverified sender ({@link isSenderUnverified}) gets the "unverified"
  * marker with the ``hidden`` attribute and no leading space, so the line

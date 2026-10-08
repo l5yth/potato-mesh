@@ -154,7 +154,7 @@ export function buildSyntheticChatNode(name, protocol) {
  * sender's client prepends ``@[Author]`` to the body when quoting a previous
  * message.  When the body starts with exactly one mention and no other
  * mentions appear in the text, we treat that as a reply and surface it as an
- * ``[in reply to BADGE]`` prefix, similar to Meshtastic's reply rendering.
+ * ``↩ BADGE`` reply prefix, similar to Meshtastic's reply rendering.
  *
  * Names captured from ``@[...]`` are trimmed so that ``@[ Timo +]`` or
  * ``@[T-deck NK ]`` resolve correctly against the registry.

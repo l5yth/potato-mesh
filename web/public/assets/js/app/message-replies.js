@@ -212,6 +212,33 @@ function deriveRoleCandidate(message, node) {
 }
 
 /**
+ * Words a screen reader says before a reply's badge; the line shows ``↩``
+ * in their place (SPEC CD4).
+ *
+ * @type {string}
+ */
+export const REPLY_LABEL = 'in reply to';
+
+/**
+ * Render the reply prefix of a chat line (SPEC CD4): ``↩`` and the badge of
+ * the sender replied to. "in reply to " stays in the line as visually hidden
+ * text for assistive technology, the glyph is hidden from it, and the title
+ * names the sender. The dashboard and the node page share it through
+ * {@link resolveReplyPrefix} and the MeshCore leading-mention reply.
+ *
+ * @param {{ badgeHtml: string, name?: ?string, escapeHtml: Function }} params
+ *   Rendered badge, the replied-to sender's name for the title, and the
+ *   HTML-escape helper.
+ * @returns {string} ``<span class="chat-entry-reply">`` HTML.
+ */
+export function formatReplyPrefixHtml({ badgeHtml, name = null, escapeHtml }) {
+  const label = escapeHtml(REPLY_LABEL);
+  const title = name ? escapeHtml(`${REPLY_LABEL} ${name}`) : label;
+  return `<span class="chat-entry-reply" title="${title}"><span class="visually-hidden">${label} </span>`
+    + `<span aria-hidden="true">↩</span> ${badgeHtml}</span>`;
+}
+
+/**
  * Render the reply prefix for a message when the parent is known.
  *
  * @param {{
@@ -255,8 +282,7 @@ export function resolveReplyPrefix({
   if (typeof shortHtml !== 'string' || shortHtml.length === 0) {
     return '';
   }
-  const label = escapeHtml('in reply to');
-  return `<span class="chat-entry-reply">[${label} ${shortHtml}]</span>`;
+  return formatReplyPrefixHtml({ badgeHtml: shortHtml, name: longName ?? shortName, escapeHtml });
 }
 
 /**

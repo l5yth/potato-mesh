@@ -168,7 +168,8 @@ function createTabSelect(document) {
  * @property {?function(string, { scrollActiveIntoView?: boolean }=): void} activate
  *   The latest render's tab switch; tab clicks route through it.
  * @property {function(): void} updateArrows Show each arrow only while the
- *   strip can scroll that way.
+ *   strip can scroll that way, and the select only while the strip overflows
+ *   (SPEC CD6).
  */
 
 /**
@@ -219,6 +220,7 @@ function createTabBar(document) {
   // Channel dropdown selector (LV8): a native <select> listing every tab so
   // the user can jump to a channel regardless of the horizontal scroll
   // position (the native control supplies the downward-triangle affordance).
+  // It shows only while the strip overflows (SPEC CD6, see updateArrows).
   const select = createTabSelect(document);
   const panelWrapper = document.createElement('div');
   panelWrapper.className = 'chat-tabpanels';
@@ -229,17 +231,28 @@ function createTabBar(document) {
 
   /**
    * Refresh the hidden state of the scroll arrow buttons from the current
-   * scroll position of the tab list.
+   * scroll position of the tab list, and of the select from whether the tabs
+   * fit (SPEC CD6).
    *
    * @returns {void}
    */
   const updateArrows = () => {
+    // Every width is read before anything is written: one layout per call (LR-A3).
     const scrollLeft = tabList.scrollLeft || 0;
     const clientWidth = tabList.clientWidth || 0;
     const scrollWidth = tabList.scrollWidth || 0;
-    prevBtn.hidden = scrollLeft <= 0;
-    // Allow 1 px rounding tolerance.
-    nextBtn.hidden = scrollLeft + clientWidth >= scrollWidth - 1;
+    // The tabs fit when they are no wider than the whole bar, the strip's
+    // width with no select and no arrow beside it. Measuring the strip itself
+    // would flip: hiding the select widens it, showing the select narrows it.
+    // A strip that is not laid out (≤ 900 px, UX11) never fits, so the select
+    // stays the channel control there. Allow 1 px rounding tolerance.
+    const fits = clientWidth > 0 && scrollWidth <= (wrapper.clientWidth || 0) + 1;
+    prevBtn.hidden = fits || scrollLeft <= 0;
+    nextBtn.hidden = fits || scrollLeft + clientWidth >= scrollWidth - 1;
+    // Written only on a change, so an idle render leaves the select alone (MS3).
+    if (select.hidden !== fits) {
+      select.hidden = fits;
+    }
   };
   // Recalculate arrow visibility on scroll and on container resize.
   if (typeof tabList.addEventListener === 'function') {
@@ -381,7 +394,8 @@ function clearChatContainer(container) {
  * When the tab list overflows its container, ◀ / ▶ scroll buttons are
  * rendered on either side of the list.  They are hidden via the
  * {@code hidden} attribute while the corresponding scroll direction is
- * not available.
+ * not available. The channel ``<select>`` is hidden the same way while the
+ * tabs fit the bar without it (SPEC CD6).
  *
  * The first call builds the tab bar; later calls update it in place (SPEC
  * DR1, #881). The bar wrapper, the arrows, the tab strip, the channel

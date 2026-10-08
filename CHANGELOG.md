@@ -16,6 +16,11 @@
 ### Fixes
 * Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)
 * Web: a live refresh no longer moves the chat: a scrolled-up reader keeps their place, the channel tab strip stops sliding back, and tab focus and text selection survive (#881, SPEC DR1/DR3)
+* Web: chat lines lead with `HH:MM` and the message: seconds, frequency and preset move to the time's tooltip, channel tabs whose messages share one radio drop the `[freq][preset]` tag and protocol icon, the hop count and scope follow the text, and a reply shows an arrow and the replied-to badge (SPEC CD1-CD4)
+* Web: the chat tab bar shows the channel dropdown only when the tabs do not fit (SPEC CD6)
+* Web: chat day dividers read like "Thu 8 Oct" on a centred rule (SPEC CD5)
+* Web: on screens 660 to 1024 px wide the dashboard chat takes 40% of the height under a 45% map (SPEC CD7)
+* Web: above 900 px the full-screen chat uses 13 px type in lines of at most 120 characters and shows its right border (SPEC CD8)
 * Web: a MeshCore channel message stays on its sender's node and no longer moves to, or revives, a same-name node; a sender named by a stale roster is credited to the current key (#883)
 * Web/Matrix: MeshCore channel messages, whose sender is matched by the name in the text, carry `sender_verified: false` in `GET /api/messages`; the Matrix bridge posts them as its appservice user instead of the node's puppet. In an invite-only room, invite the appservice user (SPEC SV1-SV5)
 * Web: the chat no longer shows "unverified" on a MeshCore channel line whose sender is matched by name (SPEC SV3)

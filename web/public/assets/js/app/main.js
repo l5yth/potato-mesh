@@ -86,7 +86,9 @@ import { renderSatsInViewBadge } from './short-info-satellites.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
-  formatChatMessagePrefix,
+  formatChatEntryTime,
+  formatChatLine,
+  formatChatRadioTag,
   formatNodeAnnouncementPrefix,
   formatChatPresetTag
 } from './chat-format.js';
@@ -3581,9 +3583,12 @@ export function initializeApp(config) {
    * parse can be memoised per message (issue: chat-log render).
    *
    * @param {Object} m Message payload.
+   * @param {{ uniform?: boolean }} [options] ``uniform``: the line sits on a
+   *   tab whose lines all name one radio (SPEC CD2), so it drops the
+   *   ``[freq][preset]`` tag and the protocol icon.
    * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
-  function buildMessageChatEntryParts(m) {
+  function buildMessageChatEntryParts(m, { uniform = false } = {}) {
     let plainText = '';
     if (m?.text != null) {
       plainText = String(m.text).trim();
@@ -3633,19 +3638,18 @@ export function initializeApp(config) {
       short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     }
     const metadata = extractChatMessageMetadata(m);
-    const prefix = formatChatMessagePrefix({
-      timestamp: escapeHtml(ts),
-      frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
-    });
-    const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
+    // HH:MM leads the line; seconds, frequency and preset sit in its title (SPEC CD1).
+    const time = formatChatEntryTime({ timestamp: ts, frequency: metadata.frequency, preset: metadata.presetName });
+    // A one-radio tab drops the radio tag and the protocol icon its tab shows (SPEC CD2).
+    const radio = uniform ? '' : `${formatChatRadioTag(metadata)} ${nodeProtocolPrefix}`;
     // A sender named only by the text gets a hidden marker right after its
-    // badge, a verified one a tag (SPEC SV3), then the route chip (hops +
-    // flood scope, SPEC SC7).
+    // badge, a verified one a tag (SPEC SV3); the route chip (hops + flood
+    // scope, SPEC SC7) follows the text (SPEC CD3).
     const senderMarker = formatChatSenderMarker(m, { senderFromText });
     const routeChip = formatChatRouteChip(m);
     return {
       className: 'chat-entry-msg',
-      html: `${prefix}${presetTag} ${nodeProtocolPrefix}${short}${senderMarker}${routeChip} ${text}`
+      html: formatChatLine(time, `${radio}${short}${senderMarker} ${text}${routeChip}`)
     };
   }
 
@@ -3655,10 +3659,11 @@ export function initializeApp(config) {
    * the render path uses the parts form directly so it can memoise the parse.
    *
    * @param {Object} m Message payload.
+   * @param {{ uniform?: boolean }} [options] See {@link buildMessageChatEntryParts}.
    * @returns {HTMLElement|null} Chat log element, or null for hidden blobs.
    */
-  function createMessageChatEntry(m) {
-    const parts = buildMessageChatEntryParts(m);
+  function createMessageChatEntry(m, options) {
+    const parts = buildMessageChatEntryParts(m, options);
     return parts ? materializeEntryNode(parts) : null;
   }
 
@@ -3831,7 +3836,7 @@ export function initializeApp(config) {
         content: buildChatPanelContent({
           namespace: tabId,
           entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
-          renderParts: entry => buildMessageChatEntryParts(entry.item),
+          renderParts: entry => buildMessageChatEntryParts(entry.item, { uniform: channel.uniform }),
           keyOf: entry => chatMessageEntryKey(entry.item),
           emptyLabel: 'No messages on this channel.',
           limit: Infinity

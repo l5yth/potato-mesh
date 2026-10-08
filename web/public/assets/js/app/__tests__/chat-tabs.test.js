@@ -1005,3 +1005,78 @@ test('syncTabSelectOptions rebuilds the options, not the select, when the channe
   );
   assert.ok(select.children[0] !== logOption, 'a reorder rebuilds the option nodes');
 });
+
+/**
+ * Count writes to ``element.hidden`` from now on, keeping its value.
+ *
+ * @param {MockElement} element Element whose ``hidden`` is watched.
+ * @returns {function(): number} Reads the number of writes so far.
+ */
+function countHiddenWrites(element) {
+  let value = element.hidden;
+  let writes = 0;
+  Object.defineProperty(element, 'hidden', {
+    configurable: true,
+    get: () => value,
+    set: next => {
+      writes += 1;
+      value = next;
+    }
+  });
+  return () => writes;
+}
+
+test('renderChatTabs shows the channel select only while the strip overflows, measured without it (LV8, CD6)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const wrapper = container.children[0];
+  const [prevBtn, tabList, nextBtn, select] = wrapper.children;
+  assert.equal(select.hidden, false, 'a strip that is not laid out (≤ 900 px) leaves the select in place');
+
+  // Dashboard at 1024 px: the select and the ▶ arrow leave the strip 804 px for
+  // 943 px of tabs, but the bar is 960 px wide, so the tabs fit without them.
+  wrapper.clientWidth = 960;
+  tabList.clientWidth = 804;
+  tabList.scrollWidth = 943;
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  assert.equal(select.hidden, true, 'the tabs fit once the select is gone');
+  assert.equal(prevBtn.hidden, true);
+  assert.equal(nextBtn.hidden, true, 'and the strip needs no arrow either');
+
+  // The strip widens into the room the select left: still fits, no flip back.
+  tabList.clientWidth = 960;
+  tabList.dispatch('scroll');
+  assert.equal(select.hidden, true, 'measuring the bar, not the strip, cannot flip');
+
+  // Dashboard at 1366 px: 943 px of tabs in a 407 px bar overflow.
+  wrapper.clientWidth = 407;
+  tabList.clientWidth = 264;
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  assert.equal(select.hidden, false, 'an overflowing strip shows the select');
+  assert.equal(nextBtn.hidden, false, 'and the ▶ arrow');
+
+  // ≤ 900 px hides the strip: it is not laid out, and the select stays (UX11).
+  tabList.clientWidth = 0;
+  tabList.scrollWidth = 0;
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  assert.equal(select.hidden, false);
+});
+
+test('renderChatTabs writes the select\'s hidden only when it changes (MS3, CD6)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  const wrapper = container.children[0];
+  const [, tabList, , select] = wrapper.children;
+  const writes = countHiddenWrites(select);
+  wrapper.clientWidth = 900;
+  tabList.clientWidth = 900;
+  tabList.scrollWidth = 600;
+  for (let render = 0; render < 3; render += 1) {
+    renderChatTabs({ document, container, tabs: liveTabs(), defaultActiveTabId: 'c0' });
+  }
+  tabList.dispatch('scroll');
+  assert.equal(select.hidden, true);
+  assert.equal(writes(), 1, 'one write when the strip came to fit, none on the idle renders');
+});

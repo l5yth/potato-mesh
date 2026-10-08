@@ -19,9 +19,9 @@ import assert from 'node:assert/strict';
 
 import {
   extractChatMessageMetadata,
-  formatChatMessagePrefix,
   formatChatChannelTag,
   formatChatPresetTag,
+  formatChatRadioTag,
   formatNodeAnnouncementPrefix,
   __test__
 } from '../chat-format.js';
@@ -48,7 +48,7 @@ test('extractChatMessageMetadata prefers explicit region_frequency and channel_n
     channelName: 'Ignored'
   };
   const result = extractChatMessageMetadata(payload);
-  assert.deepEqual(result, { frequency: '868', channelName: 'Test Channel', presetCode: null });
+  assert.deepEqual(result, { frequency: '868', channelName: 'Test Channel', presetCode: null, presetName: null });
 });
 
 test('extractChatMessageMetadata falls back to LoRa metadata', () => {
@@ -58,12 +58,13 @@ test('extractChatMessageMetadata falls back to LoRa metadata', () => {
     modem_preset: 'MediumFast'
   };
   const result = extractChatMessageMetadata(payload);
-  assert.deepEqual(result, { frequency: '915', channelName: 'SpecChannel', presetCode: 'MF' });
+  assert.deepEqual(result, { frequency: '915', channelName: 'SpecChannel', presetCode: 'MF', presetName: 'MediumFast' });
 });
 
 test('extractChatMessageMetadata returns null metadata for invalid input', () => {
-  assert.deepEqual(extractChatMessageMetadata(null), { frequency: null, channelName: null, presetCode: null });
-  assert.deepEqual(extractChatMessageMetadata(undefined), { frequency: null, channelName: null, presetCode: null });
+  const empty = { frequency: null, channelName: null, presetCode: null, presetName: null };
+  assert.deepEqual(extractChatMessageMetadata(null), empty);
+  assert.deepEqual(extractChatMessageMetadata(undefined), empty);
 });
 
 test('extractChatMessageMetadata inspects nested node payloads for modem presets', () => {
@@ -97,19 +98,10 @@ test('normalizeFrequency handles numeric and string inputs', () => {
   assert.equal(normalizeFrequency(null), null);
 });
 
-test('formatChatMessagePrefix preserves bracket placeholders', () => {
-  assert.equal(
-    formatChatMessagePrefix({ timestamp: '11:46:48', frequency: '868' }),
-    '[11:46:48][868]'
-  );
-  assert.equal(
-    formatChatMessagePrefix({ timestamp: '16:19:19', frequency: null }),
-    `[16:19:19][${FREQUENCY_PLACEHOLDER}]`
-  );
-  assert.equal(
-    formatChatMessagePrefix({ timestamp: '09:00:00', frequency: '' }),
-    `[09:00:00][${FREQUENCY_PLACEHOLDER}]`
-  );
+test('formatChatRadioTag renders the frequency and preset slots, escaped, with placeholders (CD2)', () => {
+  assert.equal(formatChatRadioTag({ frequency: '869', presetCode: 'MF' }), '[869][MF]');
+  assert.equal(formatChatRadioTag({ frequency: null, presetCode: null }), `[${FREQUENCY_PLACEHOLDER}][${PRESET_PLACEHOLDER}]`);
+  assert.equal(formatChatRadioTag({ frequency: '<b>', presetCode: 'Na' }), '[&lt;b&gt;][NA]');
 });
 
 test('formatChatChannelTag wraps channel names after the short name slot', () => {

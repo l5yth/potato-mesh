@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { buildMessageBody, resolveReplyPrefix } from './message-replies.js';
+import { buildMessageBody, formatReplyPrefixHtml, resolveReplyPrefix } from './message-replies.js';
 import {
   buildSyntheticChatNode,
   extractLeadingMentionAsReply,
@@ -61,18 +61,6 @@ function renderNodeBadge(renderShortHtml, node) {
 }
 
 /**
- * Build a reply prefix HTML fragment for a resolved reply target node.
- *
- * @param {string} label Label text (already raw, will be escaped).
- * @param {string} badgeHtml Rendered badge for the reply target.
- * @param {Function} escapeHtml HTML-escape helper.
- * @returns {string} ``<span class="chat-entry-reply">...</span>`` HTML.
- */
-function formatReplyPrefixHtml(label, badgeHtml, escapeHtml) {
-  return `<span class="chat-entry-reply">[${escapeHtml(label)} ${badgeHtml}]</span>`;
-}
-
-/**
  * Render the text content of a chat entry (reply prefix + body) using shared
  * message formatting helpers.
  *
@@ -84,8 +72,8 @@ function formatReplyPrefixHtml(label, badgeHtml, escapeHtml) {
  *
  *   1. Resolution of the standard ``reply_id``-based reply prefix.
  *   2. MeshCore ``"SenderName: body"`` prefix parsing for channel messages.
- *   3. MeshCore leading-``@[Name]`` detection, surfacing it as an ``[in reply
- *      to BADGE]`` prefix when no structured reply is already present.
+ *   3. MeshCore leading-``@[Name]`` detection, surfacing it as a ``↩ BADGE``
+ *      reply prefix when no structured reply is already present.
  *   4. Mention rendering for MeshCore messages, mapping ``@[Name]`` to a badge.
  *      Name resolution is restricted to nodes of the message's own protocol so
  *      a MeshCore message never quotes a same-named Meshtastic node; when no
@@ -206,7 +194,7 @@ export function renderChatEntryContent({
         findNodeByLongName(leading.mentionName, nodesById, protocol) ??
         buildSyntheticChatNode(leading.mentionName, protocol);
       const badgeHtml = renderNodeBadge(renderShortHtml, replyNode);
-      meshcoreReplyPrefix = formatReplyPrefixHtml('in reply to', badgeHtml, escapeHtml);
+      meshcoreReplyPrefix = formatReplyPrefixHtml({ badgeHtml, name: leading.mentionName, escapeHtml });
       effectiveBodyText = leading.remainingText ?? '';
     }
   }
