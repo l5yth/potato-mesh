@@ -156,6 +156,8 @@
 * Web: on /map, /chat, /nodes and node pages the announcement banner, the header and the filter and live controls sit on the dashboard's 16 px page margin (SPEC SR1)
 * Web: on screens wider than 1024 px the footer shows PotatoMesh and the version on the same row as the page links when both fit; otherwise the links keep their own row (SPEC SR2)
 * Web: map overlays keep their dark background in browsers without `color-mix()` (Chrome before 111, Safari before 16.2, Firefox before 113) (SPEC SR3)
+* Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
+* Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

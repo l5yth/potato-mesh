@@ -16,6 +16,7 @@
 
 require "kramdown"
 require "kramdown-parser-gfm"
+require "nokogiri"
 require "sanitize"
 require "yaml"
 
@@ -101,6 +102,10 @@ module PotatoMesh
         ul ol li dl dt dd blockquote table thead tbody tfoot tr th td
         img span div sup sub abbr mark small details summary
       ]).freeze
+
+      # Box each rendered table is wrapped in, so a table wider than the page
+      # column scrolls inside it while the page keeps its width (SPEC PO3).
+      TABLE_WRAPPER = '<div class="markdown-table-wrapper"></div>'
 
       @pages_cache = nil
       @pages_cache_mutex = Mutex.new
@@ -357,9 +362,33 @@ module PotatoMesh
         content = File.read(page_entry.path, encoding: "utf-8")
         body = strip_frontmatter(content)
         raw_html = Kramdown::Document.new(body, **KRAMDOWN_OPTIONS).to_html
-        strip_unsafe_html(raw_html)
+        wrap_tables(strip_unsafe_html(raw_html))
       rescue SystemCallError
         nil
+      end
+
+      # Wrap every +table+ in {TABLE_WRAPPER}, after sanitising, so the
+      # stylesheet can give the wrapper the sideways scroll while the table
+      # keeps its table display and fills the column when it fits (SPEC PO3).
+      # Nested tables get a wrapper each. A table an operator already put in
+      # such a wrapper keeps it as its one box, so the wrapper's font size
+      # cannot compound. HTML without a table is returned as the same
+      # string, unparsed.
+      #
+      # @param html [String] sanitised HTML from {strip_unsafe_html}.
+      # @return [String] the HTML with each table inside its own wrapper.
+      def wrap_tables(html)
+        return html unless html.include?("<table")
+
+        fragment = Nokogiri::HTML5.fragment(html)
+        fragment.css("table").each do |table|
+          parent = table.parent
+          next if parent.name == "div" && parent.classes.include?("markdown-table-wrapper")
+
+          table.wrap(TABLE_WRAPPER)
+        end
+        # The serialisation Sanitize uses, so the rest of the markup is kept.
+        fragment.to_html(preserve_newline: true)
       end
 
       # Remove HTML tags not present in {ALLOWED_TAGS} and strip dangerous

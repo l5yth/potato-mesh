@@ -15,10 +15,11 @@
  */
 
 /**
- * Nodes-table stylesheet rules from design review rc3 (SPEC DV1, DV2, DV9):
- * the muted header unit, the long-name underline scoped to row hover and
- * keyboard focus, and the phone density that keeps the table inside its
- * column without making its wrapper a scroll container.
+ * Nodes-table stylesheet rules from design review rc3 (SPEC DV1, DV2, DV9)
+ * and the rc4 phone-overflow fix (SPEC PO1): the muted header unit, the
+ * long-name underline scoped to row hover and keyboard focus, the phone
+ * density, and the identifier cells that may break inside a word, which keep
+ * the table inside its column without making its wrapper a scroll container.
  *
  * @module app/__tests__/nodes-table-css
  */
@@ -27,12 +28,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { BASE_CSS_RULES, cssRules, cssValue } from './base-css-rules.js';
+import { SQUEEZED_CLASS } from '../main/nodes-table-fit.js';
 
 /** The selector list of the phone density rule. */
 const PHONE_CELLS = '#nodes thead th, #nodes tbody td, #nodes .nodes-group-header th';
 
 /** The row-hover and keyboard-focus selector list of the long-name underline. */
 const LINK_SHOWN = '#nodes tbody tr:hover .node-long-link, #nodes .node-long-link:focus-visible';
+
+/** The cells whose words may break inside a word while the table is squeezed (SPEC PO1). */
+const IDENTIFIER_CELLS = [
+  `#nodes.${SQUEEZED_CLASS} td.nodes-col--long-name`,
+  `#nodes.${SQUEEZED_CLASS} td.nodes-col--hw-model`,
+];
+
+/**
+ * Whether a rule styles the nodes table or one of its columns.
+ *
+ * @param {import('./base-css-rules.js').CssRule} rule Parsed rule.
+ * @returns {boolean} True when a selector starts at `#nodes` or names a column.
+ */
+function isNodesTableRule(rule) {
+  return rule.selectors.some(selector => selector.startsWith('#nodes') || selector.includes('nodes-col'));
+}
 
 test('the unit in a numeric column header is muted (DV1)', () => {
   assert.equal(cssValue('#nodes .nodes-col__unit', 'color'), 'var(--muted)');
@@ -57,6 +75,19 @@ test('at <= 659px the table cells take 4px inline padding, after the density rul
     const [density] = cssRules(selector);
     assert.ok(BASE_CSS_RULES.indexOf(density) < BASE_CSS_RULES.indexOf(phone), `${selector} precedes the phone rule`);
   }
+});
+
+test('long names and hardware models may break inside a word only while the table is squeezed, and no other nodes-table cell (PO1)', () => {
+  // `anywhere`, not `break-word`: only `anywhere` lowers the cells' min-content
+  // width, so the auto-layout table can shrink into its column. No width media
+  // query: main/nodes-table-fit.js sets the class while the unbroken table is
+  // wider than its column, so a table that fits keeps every column width.
+  const wrapping = BASE_CSS_RULES.filter(rule => isNodesTableRule(rule) && 'overflow-wrap' in rule.declarations);
+  assert.deepEqual(
+    wrapping.map(rule => ({ media: rule.media, selectors: rule.selectors, value: rule.declarations['overflow-wrap'] })),
+    [{ media: null, selectors: IDENTIFIER_CELLS, value: 'anywhere' }],
+  );
+  assert.equal(BASE_CSS_RULES.some(rule => isNodesTableRule(rule) && 'word-break' in rule.declarations), false, 'no nodes-table rule sets word-break');
 });
 
 test('the nodes-table wrapper never becomes a scroll container (FU10, DR-A8)', () => {
