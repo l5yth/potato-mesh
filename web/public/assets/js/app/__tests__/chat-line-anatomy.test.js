@@ -17,8 +17,8 @@
 /**
  * The chat message line of the design review rc3 (C1, SPEC CD1-CD4): the
  * time leads in a 5ch column with seconds, frequency and preset in its title,
- * a tab whose lines share one radio drops their `[freq][preset]` tag and
- * protocol icon, the route follows the text as quiet text, and a reply reads
+ * a tab whose lines share one radio drops their radio tag (a mixed tab shows
+ * the preset code since SPEC LA5), the route follows the text as quiet text, and a reply reads
  * `↩ BADGE`. A tab that turns mixed rebuilds its lines once through the entry
  * cache. The node page keeps its date-bearing time.
  *
@@ -56,6 +56,9 @@ const LINE = Object.freeze({
 
 /** The time slot of {@link LINE}. */
 const TIME = '<span class="chat-entry-time" title="08:01:12 · 869 MHz · MediumFast">08:01</span>';
+
+/** The radio code of {@link LINE}'s radio (SPEC LA5). */
+const MF = '<span class="chat-entry-radio" title="869 MHz · MediumFast · Meshtastic">MF</span>';
 
 /** The hidden unverified marker of SPEC SV3. */
 const MARKER = '<span class="chat-sender-unverified" title="Sender not verified" hidden>unverified</span>';
@@ -151,11 +154,11 @@ test('a line on a one-radio tab leads with HH:MM, its title carrying seconds, fr
   });
 });
 
-test('a Log or mixed-tab line keeps its radio tag and protocol icon at the start of its body (CD2, RL3)', () => {
+test('a mixed Log or tab line leads its body with the preset code, and no protocol icon (CD2, LA5)', () => {
   withApp((t) => {
     const html = innerHtml(t.createMessageChatEntry(LINE));
-    assert.ok(html.startsWith(`${TIME} <span class="chat-entry-body">[869][MF] <img `), html);
-    assert.match(bodyOf(html), /^\[869\]\[MF\] <img [^>]*protocol-icon--meshtastic[^>]*> <span class="short-name"/);
+    assert.ok(html.startsWith(`${TIME} <span class="chat-entry-body">${MF} <span class="short-name"`), html);
+    assert.ok(!html.includes('protocol-icon'), 'the badge\'s shape names the protocol');
   });
 });
 
@@ -269,14 +272,16 @@ test('extractChatMessageMetadata names the preset for the time title (CD1)', () 
   assert.equal(chatFormat.extractChatMessageMetadata({ lora_freq: 869 }).presetName, null);
 });
 
-test('chatRadioKey is equal for lines that render the same radio tag and protocol icon (CD2)', () => {
+test('chatRadioKey is equal for lines that render the same preset code for the same protocol (CD2)', () => {
   const { chatRadioKey } = chatFormat;
   assert.equal(typeof chatRadioKey, 'function', 'chat-format.js exports chatRadioKey');
   const key = chatRadioKey(LINE);
   assert.equal(chatRadioKey({ ...LINE, id: 8, text: 'other' }), key);
   assert.equal(chatRadioKey({ ...LINE, modem_preset: 'MEDIUM_FAST' }), key, 'same MF tag');
   assert.equal(chatRadioKey({ ...LINE, protocol: undefined }), key, 'protocol from the node');
-  assert.notEqual(chatRadioKey({ ...LINE, lora_freq: 868 }), key);
+  assert.equal(chatRadioKey({ ...LINE, lora_freq: 868 }), key, 'the frequency only titles the code');
+  const bare = { ...LINE, lora_freq: null, modem_preset: null, node: { ...LINE.node, lora_freq: 869, modem_preset: 'MediumFast' } };
+  assert.equal(chatRadioKey(bare), key, 'no frequency of its own: its node\'s preset renders the same code');
   assert.notEqual(chatRadioKey({ ...LINE, modem_preset: 'LongFast' }), key);
   assert.notEqual(chatRadioKey({ ...LINE, protocol: 'meshcore', node: null }), key);
   assert.equal(chatRadioKey({ text: 'a' }), chatRadioKey({ text: 'b', protocol: ' ' }), 'neither knows its radio');
@@ -284,7 +289,7 @@ test('chatRadioKey is equal for lines that render the same radio tag and protoco
 
 // --- the tab model ---
 
-test('buildChatTabModel marks a tab uniform when every line shares frequency, preset and protocol (CD2)', () => {
+test('buildChatTabModel marks a tab uniform when every line that renders a code renders the same code for the same protocol (CD2)', () => {
   const now = RX_TIME + 60;
   const message = (id, channel, overrides = {}) => ({
     id,
@@ -308,21 +313,29 @@ test('buildChatTabModel marks a tab uniform when every line shares frequency, pr
       message(5, 3),
       message(6, 3, { protocol: 'meshcore' }),
       message(7, 4, { lora_freq: 868 }),
+      message(8, 5),
+      message(9, 5, { lora_freq: 868 }),
+      // No frequency or preset of its own: its node's record gives MF (SPEC LA1).
+      message(10, 6),
+      message(11, 6, { lora_freq: null, modem_preset: null, node: { lora_freq: 869, modem_preset: 'MediumFast' } }),
     ],
     nowSeconds: now,
     windowSeconds: 3600,
   });
   const uniform = Object.fromEntries(channels.map(channel => [channel.label, channel.uniform]));
-  assert.deepEqual(uniform, { ch1: true, ch2: false, ch3: false, ch4: true });
+  assert.deepEqual(uniform, { ch1: true, ch2: false, ch3: false, ch4: true, ch5: true, ch6: true });
 });
 
-test('the dashboard drops the radio tag on a one-radio tab and keeps it on a mixed tab and in the Log (CD2)', async () => {
+test('the dashboard drops the radio tag on a one-radio tab and keeps it on a mixed tab and in a mixed Log (CD2, LA1)', async () => {
   const messages = [
     dashboardRow(1, 0, 'one radio a'),
     dashboardRow(2, 0, 'one radio b'),
     dashboardRow(3, 1, 'mixed a'),
     dashboardRow(4, 1, 'mixed b', { modem_preset: 'LongFast' }),
     dashboardRow(5, 2, 'q83vEjRWeJA=', { encrypted: true }),
+    // A second radio in the Log: the node record names none, so without it the
+    // Log would hold one radio and drop the tag (SPEC LA1).
+    dashboardRow(6, 2, 'c2Vjb25k', { encrypted: true, modem_preset: 'LongFast' }),
   ];
   await withDashboard(messages, async ({ bodiesOf }) => {
     const lineWith = text => {
@@ -332,9 +345,9 @@ test('the dashboard drops the radio tag on a one-radio tab and keeps it on a mix
     };
     assert.ok(lineWith('one radio a').startsWith('<span class="short-name"'), 'one radio: no tag, no icon');
     assert.ok(lineWith('one radio b').startsWith('<span class="short-name"'));
-    assert.ok(lineWith('mixed a').startsWith('[869][MF] <img '), 'mixed tab keeps the tag and icon');
-    assert.ok(lineWith('mixed b').startsWith('[869][LF] <img '));
-    assert.ok(lineWith('encrypted message').startsWith('[869][MF] <img '), 'the Log keeps the tag and icon');
+    assert.ok(lineWith('mixed a').startsWith(`${MF} <span class="short-name"`), 'mixed tab keeps the preset code');
+    assert.ok(lineWith('mixed b').startsWith('<span class="chat-entry-radio" title="869 MHz · LongFast · Meshtastic">LF</span> '));
+    assert.ok(lineWith('>encrypted<').startsWith(`${MF} <span class="short-name"`), 'a mixed Log keeps the preset code');
   });
 });
 
@@ -348,9 +361,9 @@ test('a tab that turns from one radio to mixed rebuilds its lines once, tagged, 
     app.resetChatRenderStats();
     await app.refresh();
     assert.deepEqual(
-      bodiesOf('alpha').map(body => body.slice(0, '[869][MF]'.length)),
-      ['[869][MF]', '[869][MF]', '[869][MF]', '[869][LF]'],
-      'the tab is mixed, so every line carries its tag',
+      bodiesOf('alpha').map(body => /^<span class="chat-entry-radio"[^>]*>(\w\w)<\/span> /.exec(body)?.[1]),
+      ['MF', 'MF', 'MF', 'LF'],
+      'the tab is mixed, so every line carries its preset code',
     );
     assert.equal(app.getChatRenderStats().materialized, 5, 'the 3 lines rebuilt once, the new line and its Log entry');
 
@@ -412,8 +425,8 @@ test('base.css lays a message line out as a 5ch time column and one body column 
     'the node page sizes its column for [YYYY-MM-DD HH:MM]',
   );
   const announcement = declarationsFor('.chat-entry-node');
-  assert.equal(announcement['padding-left'], '19ch', 'a Log announcement keeps its 19ch hang (FU9)');
-  assert.equal(announcement['text-indent'], '-19ch');
+  assert.equal(announcement['grid-template-columns'], '5ch minmax(0, 1fr)', 'a Log announcement takes the same grid (LA1)');
+  assert.equal(announcement['padding-left'], undefined, 'no 19ch hang (LA1)');
   assert.equal(announcement['overflow-wrap'], 'anywhere');
 });
 

@@ -228,7 +228,7 @@ function chatSnapshots(row) {
 /**
  * Timestamps the chat renders an entry at, per source, with the field
  * precedence ``buildChatTabModel`` uses: a node yields its first-heard
- * ("New node") and last-heard ("Updated node info") entries; telemetry,
+ * ("new node") and last-heard ("node info") entries; telemetry,
  * positions and neighbours one entry per snapshot; waypoints, traces and
  * messages one entry per row; the encrypted list only its encrypted rows.
  *

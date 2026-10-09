@@ -22,7 +22,6 @@ import {
   formatChatChannelTag,
   formatChatPresetTag,
   formatChatRadioTag,
-  formatNodeAnnouncementPrefix,
   __test__
 } from '../chat-format.js';
 
@@ -30,7 +29,6 @@ const {
   firstNonNull,
   normalizeString,
   normalizeFrequency,
-  normalizeFrequencySlot,
   FREQUENCY_PLACEHOLDER,
   resolveModemPresetCandidate,
   normalizePresetString,
@@ -142,24 +140,6 @@ test('formatChatChannelTag escapes HTML metacharacters in the channel name (DOM 
 test('formatChatPresetTag renders preset hints with placeholders', () => {
   assert.equal(formatChatPresetTag({ presetCode: 'MF' }), '[MF]');
   assert.equal(formatChatPresetTag({ presetCode: null }), `[${PRESET_PLACEHOLDER}]`);
-});
-
-test('formatNodeAnnouncementPrefix includes optional frequency bracket', () => {
-  assert.equal(
-    formatNodeAnnouncementPrefix({ timestamp: '12:34:56', frequency: '868' }),
-    '[12:34:56][868]'
-  );
-  assert.equal(
-    formatNodeAnnouncementPrefix({ timestamp: '01:02:03', frequency: null }),
-    `[01:02:03][${FREQUENCY_PLACEHOLDER}]`
-  );
-});
-
-test('normalizeFrequencySlot returns placeholder when frequency is missing', () => {
-  assert.equal(normalizeFrequencySlot(null), FREQUENCY_PLACEHOLDER);
-  assert.equal(normalizeFrequencySlot(''), FREQUENCY_PLACEHOLDER);
-  assert.equal(normalizeFrequencySlot(undefined), FREQUENCY_PLACEHOLDER);
-  assert.equal(normalizeFrequencySlot('915'), '915');
 });
 
 test('resolveModemPresetCandidate walks nested payloads', () => {

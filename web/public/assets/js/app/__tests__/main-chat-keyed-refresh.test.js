@@ -540,3 +540,45 @@ test('focus on an entry that a refresh rebuilds moves to the rebuilt entry (DR1,
     assert.ok(document.activeElement === rebuilt, 'focus moved to the rebuilt entry');
   });
 });
+
+test('a part that joins a burst updates its Log line in place: the same node, no removal, no scroll jump (LA4, DR1)', async () => {
+  const start = NOW - 400;
+  const positions = [];
+  const telemetry = [];
+  const encrypted = todayTimes(30).map((rxTime, index) => ({
+    id: index + 1, channel: 0, from_id: '!b', to_id: '^all', encrypted: true, text: 'q83vEjRWeJA=', rx_time: rxTime,
+  }));
+  const responses = {
+    'encrypted=true': [],
+    '/api/nodes': [
+      { node_id: '!a', short_name: 'SNS1', long_name: 'Creek sensor', role: 'SENSOR', last_heard: start },
+      { node_id: '!b', short_name: 'B', long_name: 'Node B', last_heard: NOW - 3600 },
+    ],
+    '/api/positions': positions,
+    '/api/telemetry': telemetry,
+    '/api/messages': encrypted,
+  };
+  await runChatApp(responses, async ({ ping, chat, model }) => {
+    const logPanel = () => chat.children[1].children[0];
+    const burstRow = () => logPanel().children.find(node => String(node.innerHTML).includes('>SNS1<'));
+    const row = burstRow();
+    assert.ok(row, 'the advert shows');
+    const panel = logPanel();
+    panel.scrollTop = 100; // the reader scrolls up into the history
+
+    for (const [collection, rows, record, shown] of [
+      ['positions', positions, { id: 1, node_id: '!a', rx_time: start + 2, latitude: 38.0249, longitude: -123.0132 }, 'position</span> 38.0249, -123.0132'],
+      ['telemetry', telemetry, { id: 1, node_id: '!a', rx_time: start + 5, battery_level: 61, voltage: 3.84, channel_utilization: 0.21 }, 'telemetry</span> 61% · 3.84 V · util 0.2%'],
+    ]) {
+      rows.push(record);
+      model.stats.removed = 0;
+      await ping(collection);
+      assert.strictEqual(burstRow(), row, `the ${collection} part joins the same row`);
+      assert.ok(row.innerHTML.includes(shown), row.innerHTML);
+      assert.equal(model.stats.removed, 0, `a ${collection} part removes no element from #chat`);
+      assert.strictEqual(logPanel(), panel, 'the panel is kept');
+      assert.equal(panel.scrollTop, 100, 'the reader stays where they were');
+    }
+    assert.equal(logPanel().children.filter(node => String(node.innerHTML).includes('>SNS1<')).length, 1, 'one line for the burst');
+  });
+});

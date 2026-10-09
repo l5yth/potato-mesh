@@ -26,6 +26,7 @@
  */
 
 import { CHAT_LOG_ENTRY_TYPES } from '../chat-log-tabs.js';
+import { CHAT_LOG_BURST_TYPE } from '../chat-log-burst.js';
 
 /**
  * Derive a stable cache key for a chat message. Prefers the message ``id`` (the
@@ -48,13 +49,18 @@ export function chatMessageEntryKey(message) {
 /**
  * Derive a stable cache key for a mixed-feed (Log tab) chat entry from its type
  * and identifying fields. Encrypted messages reuse the message key so they stay
- * stable across refreshes just like the channel-tab copy.
+ * stable across refreshes just like the channel-tab copy. A folded burst takes
+ * its first part's key, so the row that showed that part alone is the row the
+ * burst updates as later parts arrive (SPEC LA4).
  *
  * @param {?Object} entry Structured chat-log entry.
  * @returns {string} Stable per-entry cache key.
  */
 export function chatLogEntryKey(entry) {
   if (!entry || typeof entry !== 'object') return 'log:';
+  if (entry.type === CHAT_LOG_BURST_TYPE && Array.isArray(entry.parts) && entry.parts.length > 0) {
+    return chatLogEntryKey(entry.parts[0]);
+  }
   if (entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED && entry.message) {
     return `enc:${chatMessageEntryKey(entry.message)}`;
   }

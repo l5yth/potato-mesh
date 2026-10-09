@@ -156,6 +156,12 @@
 * Web: on /map, /chat, /nodes and node pages the announcement banner, the header and the filter and live controls sit on the dashboard's 16 px page margin (SPEC SR1)
 * Web: on screens wider than 1024 px the footer shows PotatoMesh and the version on the same row as the page links when both fit; otherwise the links keep their own row (SPEC SR2)
 * Web: map overlays keep their dark background in browsers without `color-mix()` (Chrome before 111, Safari before 16.2, Firefox before 113) (SPEC SR3)
+* Web: Log announcements lead with `HH:MM` in the time column like chat messages, with seconds, frequency and preset in its tooltip, and wrapped lines continue under the text (SPEC LA1)
+* Web: Log lines name their kind in a word (new node, node info, telemetry, position, neighbor, waypoint, trace, encrypted) instead of a colour emoji, then one detail: up to three changed telemetry values, a position at 4 decimals, the neighbor's or the trace hops' badges; the chat filter matches these words (SPEC LA2/LA3)
+* Web: a node's node info, position and telemetry heard within 60 seconds share one Log line (SPEC LA4)
+* Web: the Log and channel tabs drop the radio tag when every line with a preset code shows the same code for the same protocol; a chat line that needs one shows only the preset code, such as `MF`, and chat lines no longer show the protocol icon (SPEC LA1/LA5)
+* Web: MeshCore short-name badges have square corners, like their map markers (SPEC LA5)
+* Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

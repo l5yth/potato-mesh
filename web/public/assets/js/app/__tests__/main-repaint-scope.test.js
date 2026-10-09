@@ -313,11 +313,11 @@ test('a Log entry the clock moves out of the 7-day window leaves the chat on the
   // so no merge removes it; only the clock does.
   responses['/api/neighbors'] = [{ node_id: '!a', neighbor_id: '!b', snr: 4.5, rx_time: NOW - CHAT_WINDOW_SECONDS + 120 }];
   await runMapApp({ responses }, async ctx => {
-    assert.equal(chatCount(ctx, 'Broadcasted neighbor info'), 1, 'setup: the neighbour Log entry is shown');
+    assert.equal(chatCount(ctx, '>neighbor</span>'), 1, 'setup: the neighbour Log entry is shown');
     const start = rebuilt(ctx);
     // Ten minutes on the entry is 7 d + 8 min old.
     await withClockAt(NOW + 600, () => ctx.testUtils.refresh());
-    assert.equal(chatCount(ctx, 'Broadcasted neighbor info'), 0, 'the aged-out entry left the Log');
+    assert.equal(chatCount(ctx, '>neighbor</span>'), 0, 'the aged-out entry left the Log');
     assertRebuilt(ctx, start, { table: 0, markers: 0, lines: 0, chat: 1 }, 'a clock-only chat change:');
   });
 });
@@ -353,10 +353,10 @@ test('node first/last-heard, trace and encrypted Log entries leave the chat as t
   ];
   await runMapApp({ responses }, async ctx => {
     const seen = () => ({
-      newNode: chatCount(ctx, 'New node:'),
-      trace: chatCount(ctx, 'Caught trace'),
-      encrypted: chatCount(ctx, 'encrypted message'),
-      adverts: chatCount(ctx, 'Updated node info (advert)'),
+      newNode: chatCount(ctx, '>new node</span>'),
+      trace: chatCount(ctx, '>trace</span>'),
+      encrypted: chatCount(ctx, '>encrypted</span>'),
+      adverts: chatCount(ctx, '>node info</span> · advert'),
     });
     assert.deepEqual(seen(), { newNode: 1, trace: 1, encrypted: 1, adverts: 2 }, 'setup: every entry is shown');
     const start = rebuilt(ctx);
@@ -416,11 +416,11 @@ for (const [unit, left, before, after] of [['seconds', 120, '2m 0s', '1m 59s'], 
       { id: 5, protocol: 'meshtastic', name: 'Probe POI', node_id: '!a', from_id: '!a', latitude: 52.52, longitude: 13.41, expire: NOW + left, rx_time: NOW - 45 },
     ];
     await runWithPinnedClock(NOW, { responses }, async (ctx, setClock) => {
-      assert.equal(chatCount(ctx, `Expires: ${before}`), 1, `setup: the Log reads ${before}`);
+      assert.equal(chatCount(ctx, `expires ${before}`), 1, `setup: the Log reads ${before}`);
       const chatBefore = ctx.testUtils.getSurfaceRenderCounts().chat;
       setClock(NOW + 0.5);
       await ctx.testUtils.refresh();
-      assert.equal(chatCount(ctx, `Expires: ${after}`), 1, `the Log reads ${after}`);
+      assert.equal(chatCount(ctx, `expires ${after}`), 1, `the Log reads ${after}`);
       assert.equal(ctx.testUtils.getSurfaceRenderCounts().chat - chatBefore, 1, 'one chat repaint');
     });
   });

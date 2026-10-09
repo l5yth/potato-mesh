@@ -50,6 +50,7 @@ export function scrollToHashTarget(documentRef) {
   return true;
 }
 import { startRelativeTimeTicker } from '../main/relative-time-ticker.js';
+import { badgeProtocol } from '../main/short-html-renderer.js';
 
 const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;
@@ -107,7 +108,9 @@ export async function resolveRenderShortHtml(override) {
     }
     await new Promise(resolve => setTimeout(resolve, RENDER_WAIT_INTERVAL_MS));
   }
-  return short => `<span class="short-name">${escapeHtml(short ?? '?')}</span>`;
+  // The fallback badge names its protocol like the dashboard's (SPEC LA5).
+  return (short, _role, _longName, nodeData = null) =>
+    `<span class="short-name" data-protocol="${badgeProtocol(nodeData?.protocol)}">${escapeHtml(short ?? '?')}</span>`;
 }
 
 /**

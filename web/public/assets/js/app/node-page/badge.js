@@ -22,6 +22,7 @@
 
 import { escapeHtml } from '../utils.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
+import { badgeProtocol } from '../main/short-html-renderer.js';
 
 /**
  * Render a short-name badge with consistent role-aware styling.
@@ -81,5 +82,6 @@ export function renderRoleAwareBadge(renderShortHtml, {
   if (typeof renderShortHtml === 'function') {
     return renderShortHtml(resolvedShort ?? fallbackShort, resolvedRole, resolvedLong, badgeSource);
   }
-  return `<span class="short-name">${escapeHtml(resolvedShort ?? fallbackShort)}</span>`;
+  // The fallback badge names its protocol too (SPEC LA5).
+  return `<span class="short-name" data-protocol="${badgeProtocol(badgeSource.protocol)}">${escapeHtml(resolvedShort ?? fallbackShort)}</span>`;
 }

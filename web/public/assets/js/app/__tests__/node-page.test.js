@@ -1037,13 +1037,14 @@ test('resolveRenderShortHtml prefers global implementation when available', asyn
   }
 });
 
-test('resolveRenderShortHtml falls back when no implementation is exposed', async () => {
+test('resolveRenderShortHtml falls back when no implementation is exposed, naming the protocol (LA5)', async () => {
   const original = globalThis.PotatoMesh;
   try {
     delete globalThis.PotatoMesh;
     const fn = await resolveRenderShortHtml();
     assert.equal(typeof fn, 'function');
-    assert.equal(fn('AB'), '<span class="short-name">AB</span>');
+    assert.equal(fn('AB'), '<span class="short-name" data-protocol="meshtastic">AB</span>');
+    assert.equal(fn(null, 'COMPANION', 'Spotter', { protocol: 'meshcore' }), '<span class="short-name" data-protocol="meshcore">?</span>');
   } finally {
     globalThis.PotatoMesh = original;
   }

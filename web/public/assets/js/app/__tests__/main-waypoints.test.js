@@ -98,7 +98,7 @@ test('the author node flashes through the companion nodes publish (W8 re-roll)',
   });
 });
 
-test('the waypoint Log entry carries the 📌 line but never the description (W7)', async () => {
+test('the waypoint Log entry reads "waypoint · <glyph> <name> · expires …" but never the description (W7, LA3)', async () => {
   await runLiveApp({ responses: RESPONSES }, async ({ testUtils }) => {
     const parts = testUtils.buildChatLogEntryParts({
       ts: WAYPOINT_ROW.rx_time,
@@ -108,13 +108,11 @@ test('the waypoint Log entry carries the 📌 line but never the description (W7
       nodeNum: null,
     });
     assert.ok(parts, 'the waypoint entry renders');
-    assert.match(parts.html, /📌/);
-    assert.match(parts.html, /Broadcasted waypoint ✈ Tempelhofer Feld/);
-    assert.match(parts.html, /Lat: 52\.47516/);
-    assert.match(parts.html, /Lon: 13\.40296/);
     // The remaining lifetime is computed against the live clock, so the 4-day
     // expiry reads as "3d 23h" by render time.
-    assert.match(parts.html, /Expires: 3d 23h/);
+    assert.match(parts.html, /<span class="chat-entry-kind">waypoint<\/span> · ✈ Tempelhofer Feld · expires 3d 23h/);
+    assert.match(parts.html, /title="Lat: 52\.47516 · Lon: 13\.40296"/, 'latitude and longitude in the title');
+    assert.doesNotMatch(parts.html, /📌/, 'the kind word replaces the type emoji (LA2)');
     assert.doesNotMatch(parts.html, /SECRET-BODY-NEVER-IN-LOG/, 'description stays out of the Log');
   });
 });
@@ -128,7 +126,7 @@ test('an expired waypoint logs honestly and a never-expiring one reads never (W7
       nodeId: '!a',
       nodeNum: null,
     });
-    assert.match(expired.html, /Expires: expired/);
+    assert.match(expired.html, /✈ Tempelhofer Feld · expired/);
     const immortal = testUtils.buildChatLogEntryParts({
       ts: NOW - 60,
       type: CHAT_LOG_ENTRY_TYPES.WAYPOINT,
@@ -136,8 +134,7 @@ test('an expired waypoint logs honestly and a never-expiring one reads never (W7
       nodeId: '!a',
       nodeNum: null,
     });
-    assert.match(immortal.html, /Broadcasted waypoint ✈ Waypoint/);
-    assert.match(immortal.html, /Expires: never/);
+    assert.match(immortal.html, /<span class="chat-entry-kind">waypoint<\/span> · ✈ Waypoint · expires never/);
   });
 });
 

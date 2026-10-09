@@ -169,3 +169,24 @@ test('replacementOf names the node a rebuilt entry replaced (DR1, #881)', () => 
   assert.equal(cache.replacementOf(null), null);
   assert.equal(cache.replacementOf('text'), null);
 });
+
+test('an inPlace entry keeps its node and only re-parses its content (LA4)', () => {
+  const doc = makeDoc();
+  const cache = createChatEntryCache({ documentRef: doc });
+  const node = cache.materialize('log', 'k1', 'chat-entry-node', 'node info');
+  const grown = cache.materialize('log', 'k1', 'chat-entry-node', 'node info · position', { inPlace: true });
+  assert.strictEqual(grown, node, 'a folded burst keeps its row');
+  assert.equal(node.innerHTML, 'node info · position');
+  assert.equal(doc.created(), 1, 'no second node');
+  assert.deepEqual(cache.stats(), { materialized: 2 }, 'the content still counts as a parse');
+  assert.strictEqual(cache.replacementOf(node), node, 'focus inside it moves to the same control of the new content');
+
+  // Unchanged HTML is still a cache hit, and a changed class is written.
+  assert.strictEqual(cache.materialize('log', 'k1', 'chat-entry-node', 'node info · position', { inPlace: true }), node);
+  assert.deepEqual(cache.stats(), { materialized: 2 });
+  cache.materialize('log', 'k1', 'chat-entry-msg', 'other', { inPlace: true });
+  assert.equal(node.className, 'chat-entry-msg');
+  // A new key builds a node, inPlace or not.
+  assert.notStrictEqual(cache.materialize('log', 'k2', 'c', 'x', { inPlace: true }), node);
+  assert.equal(doc.created(), 2);
+});

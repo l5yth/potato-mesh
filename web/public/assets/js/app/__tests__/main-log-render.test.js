@@ -15,13 +15,15 @@
  */
 
 /**
- * Render-side guards for the node-centric Log feed (SPEC LV7, amended):
+ * Render-side guards for the node-centric Log feed (SPEC LV7, amended by LA2
+ * and LA3):
  *
- *   - A node-info entry renders its reason — "Updated node info (advert)" for a
- *     bare heard, "(message)" for a decrypted chat message recorded
- *     node-centrically — and degrades to plain copy when no reason is present.
- *   - A position entry reads "Broadcasted position info: …" with a colon, not
- *     the em dash used by telemetry.
+ *   - A node-info entry renders its reason — "node info · advert" for a bare
+ *     heard, "node info · message" for a decrypted chat message recorded
+ *     node-centrically — and degrades to the kind alone when no reason is
+ *     present.
+ *   - A position entry reads "position · <lat>, <lon>", one middle dot, no
+ *     colon and no em dash.
  */
 
 import test from 'node:test';
@@ -44,6 +46,9 @@ const CONFIG = Object.freeze({
   instanceDomain: null,
   snapshotWindowSeconds: 3600,
 });
+
+/** The kind word of a node-info entry (SPEC LA2). */
+const NODE_INFO_KIND = '<span class="chat-entry-kind">node info</span>';
 
 /** Sender node used as the inline display source for the crafted entries. */
 const NODE = Object.freeze({
@@ -85,7 +90,7 @@ test('node-info entry renders the advert reason', () => {
       node: NODE,
       nodeId: NODE.node_id,
     });
-    assert.ok(parts && parts.html.includes('Updated node info (advert)'),
+    assert.ok(parts && parts.html.includes(`${NODE_INFO_KIND} · advert`),
       `expected advert reason, got: ${parts && parts.html}`);
   });
 });
@@ -99,12 +104,12 @@ test('decrypted-message node-info renders the message reason, never a body', () 
       node: NODE,
       nodeId: NODE.node_id,
     });
-    assert.ok(parts.html.includes('Updated node info (message)'),
+    assert.ok(parts.html.includes(`${NODE_INFO_KIND} · message`),
       `expected message reason, got: ${parts.html}`);
   });
 });
 
-test('node-info without a reason degrades to plain copy', () => {
+test('node-info without a reason degrades to the kind alone', () => {
   withRenderHelper(buildChatLogEntryParts => {
     const parts = buildChatLogEntryParts({
       type: CHAT_LOG_ENTRY_TYPES.NODE_INFO,
@@ -112,13 +117,12 @@ test('node-info without a reason degrades to plain copy', () => {
       node: NODE,
       nodeId: NODE.node_id,
     });
-    assert.ok(parts.html.includes('Updated node info'));
-    assert.ok(!parts.html.includes('Updated node info ('),
-      `plain copy must carry no reason suffix, got: ${parts.html}`);
+    assert.ok(parts.html.includes(`<span class="chat-entry-part">${NODE_INFO_KIND}</span>`),
+      `the kind must carry no reason, got: ${parts.html}`);
   });
 });
 
-test('position entry uses a colon separator, not an em dash', () => {
+test('position entry reads "position · lat, lon", without a colon or an em dash', () => {
   withRenderHelper(buildChatLogEntryParts => {
     const parts = buildChatLogEntryParts({
       type: CHAT_LOG_ENTRY_TYPES.POSITION,
@@ -127,8 +131,10 @@ test('position entry uses a colon separator, not an em dash', () => {
       node: NODE,
       nodeId: NODE.node_id,
     });
-    assert.ok(parts.html.includes('Broadcasted position info:'),
-      `expected colon separator, got: ${parts.html}`);
+    assert.ok(parts.html.includes('<span class="chat-entry-kind">position</span> · 52.5000, 13.4000'),
+      `expected the middle dot, got: ${parts.html}`);
+    assert.ok(!parts.html.includes(': 52'),
+      `position must not use a colon separator, got: ${parts.html}`);
     assert.ok(!parts.html.includes('—'),
       `position must not use the em dash separator, got: ${parts.html}`);
   });
