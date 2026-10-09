@@ -85,13 +85,25 @@ import {
 import { renderSatsInViewBadge } from './short-info-satellites.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
+  chatRadioKey,
   extractChatMessageMetadata,
   formatChatEntryTime,
   formatChatLine,
-  formatChatRadioTag,
-  formatNodeAnnouncementPrefix,
-  formatChatPresetTag
+  formatChatRadioCode,
+  sharesOneRadio
 } from './chat-format.js';
+import {
+  encryptedNoticeTarget,
+  formatBurstLogParts,
+  formatChatLogParts,
+  formatEncryptedLogNotice,
+  formatEntryLogPart,
+  formatRenderedLogPart,
+  formatWaypointLogPart,
+  attachTelemetryHistory,
+  TRACE_HOP_SEPARATOR
+} from './chat-log-detail.js';
+import { CHAT_LOG_BURST_TYPE, foldChatLogBursts } from './chat-log-burst.js';
 import { formatChatRouteChip } from './chat-route-chip.js';
 import { formatChatSenderMarker } from './chat-sender-marker.js';
 import { initializeInstanceSelector } from './instance-selector.js';
@@ -106,7 +118,6 @@ import { createDataCache, CACHE_SCHEMA_VERSION } from './main/data-cache.js';
 import { createIndexedDbBackend } from './main/data-cache-idb.js';
 import { isExpired as isCacheEntryExpired, isStale as isCacheEntryStale } from './main/cache-lifetime.js';
 import { cacheKeyFor } from './main/cache-keys.js';
-import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageIndex } from './message-replies.js';
 import { renderChatEntryContent } from './chat-entry-renderer.js';
@@ -276,7 +287,6 @@ import { buildLegendColumns, legendStackInView } from './main/legend-columns.js'
 import {
   buildWaypointOverlayLines,
   renderWaypointsLayer,
-  waypointGlyph,
   waypointKey,
 } from './main/waypoint-layer.js';
 
@@ -2977,20 +2987,23 @@ export function initializeApp(config) {
   }
 
   /**
-   * Build the parts (class name + HTML) for a node-join chat entry.
+   * Build the parts (class name + HTML) for a node-join chat entry: `new node
+   * · <long-name link>` (SPEC LA2, LA3).
    *
    * @param {Object} node Node payload.
    * @param {?number} [timestampOverride=null] Optional timestamp override.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
-  function buildNodeChatEntryParts(node, timestampOverride = null) {
+  function buildNodeChatEntryParts(node, timestampOverride = null, options = {}) {
     if (!node || typeof node !== 'object') return null;
     const nodeIdRaw = pickFirstProperty([node], ['node_id', 'nodeId']);
     const fallbackId = nodeIdRaw || 'Unknown node';
     const longNameRaw = pickFirstProperty([node], ['long_name', 'longName']);
     const longNameDisplay = longNameRaw ? String(longNameRaw) : fallbackId;
     const nodeProtocol = pickFirstProperty([node], ['protocol']);
-    const longNameLink = renderNodeLongNameLink(longNameRaw, nodeIdRaw, { protocol: nodeProtocol });
+    // No protocol icon in the link: the badge's shape names the protocol (SPEC LA5).
+    const longNameLink = renderNodeLongNameLink(longNameRaw, nodeIdRaw);
     const announcementName = longNameLink || escapeHtml(longNameDisplay);
     const shortNameRaw = pickFirstProperty([node], ['short_name', 'shortName']);
     const shortNameDisplay = shortNameRaw ? String(shortNameRaw) : (nodeIdRaw ? nodeIdRaw.slice(-4) : null);
@@ -3006,46 +3019,13 @@ export function initializeApp(config) {
       metadataSource: node,
       nodeData: node,
       protocol: nodeProtocol,
-      messageHtml: `${renderEmojiHtml('☀️')} ${renderAnnouncementCopy('New node:', ` ${announcementName}`)}`
-    });
+      messageHtml: formatChatLogParts([formatRenderedLogPart(CHAT_LOG_ENTRY_TYPES.NODE_NEW, announcementName)])
+    }, options);
   }
 
   /**
-   * Build a formatted suffix that enumerates highlight values.
-   *
-   * @param {Array<{label: string, value: string}>} highlights Highlight metadata entries.
-   * @param {string} [separator=' — '] Leading separator placed before the joined
-   *   highlights (e.g. ``': '`` so a position reads "Broadcasted position info: …").
-   * @returns {string} HTML suffix containing escaped highlight entries.
-   */
-  function buildHighlightSuffix(highlights, separator = ' — ') {
-    if (!Array.isArray(highlights) || highlights.length === 0) {
-      return '';
-    }
-    const parts = [];
-    for (const entry of highlights) {
-      if (!entry || typeof entry !== 'object') {
-        continue;
-      }
-      const { label, value } = entry;
-      if (label == null || value == null || value === '') {
-        continue;
-      }
-      const labelText = String(label).trim();
-      const valueText = String(value).trim();
-      if (!labelText || !valueText) {
-        continue;
-      }
-      parts.push(`${escapeHtml(labelText)}: ${escapeHtml(valueText)}`);
-    }
-    if (!parts.length) {
-      return '';
-    }
-    return `${separator}${parts.join(', ')}`;
-  }
-
-  /**
-   * Render a non-italicised emoji span suitable for announcement entries.
+   * Render a non-italicised emoji span for a message body (the shared chat
+   * entry renderer wraps a message's emoji in it).
    *
    * @param {string} symbol Emoji or short textual marker.
    * @returns {string} HTML span wrapping the escaped symbol.
@@ -3062,33 +3042,18 @@ export function initializeApp(config) {
   }
 
   /**
-   * Render chat announcement copy without italic styling.
+   * Frame the parts of an announcement about the node a display context
+   * names: the entry's time, the node's radio and its badge (SPEC LA1).
    *
-   * @param {string} baseText Base message content before any suffix.
-   * @param {string} [suffix=''] Optional HTML-safe suffix appended to the base copy.
-   * @returns {string} Escaped HTML span containing the announcement copy.
-   */
-  function renderAnnouncementCopy(baseText, suffix = '') {
-    const safeBase = baseText != null ? String(baseText) : '';
-    const safeSuffix = suffix != null ? String(suffix) : '';
-    return `<span class="chat-entry-copy">${escapeHtml(safeBase)}${safeSuffix}</span>`;
-  }
-
-  /**
-   * Build the parts for a "node info updated" chat entry.
-   *
-   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} entry Structured chat-log entry; its ``ts`` leads the line.
    * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @param {string} messageHtml The parts, from {@link formatChatLogParts} or
+   *   {@link formatBurstLogParts}.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }} Entry parts.
    */
-  function buildNodeInfoChatEntryParts(entry, context) {
+  function buildContextAnnouncementParts(entry, context, messageHtml, options = {}) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
-    // The reason annotates *why* the node record updated — "(advert)" for a bare
-    // heard / node-info update, "(message)" for a decrypted chat message recorded
-    // node-centrically so its body never reaches the Log (LV7).  Absent reason
-    // degrades to the plain "Updated node info" copy.
-    const reason = typeof entry?.reason === 'string' ? entry.reason.trim() : '';
-    const reasonSuffix = reason ? ` (${reason})` : '';
     return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
@@ -3097,130 +3062,87 @@ export function initializeApp(config) {
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
       protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('💾')} ${renderAnnouncementCopy(`Updated node info${reasonSuffix}`)}`
-    });
+      messageHtml
+    }, options);
   }
 
   /**
-   * Build the parts for a telemetry-broadcast chat entry.
+   * Build the parts for a node-info, telemetry or position entry: `node info
+   * · <reason>`, `telemetry · <changed values>`, `position · <lat>, <lon>`
+   * (SPEC LA2, LA3).
    *
    * @param {Object} entry Structured chat-log entry.
    * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }} Entry parts.
    */
-  function buildTelemetryChatEntryParts(entry, context) {
-    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
-    const highlightSuffix = buildHighlightSuffix(formatTelemetryHighlights(entry?.telemetry));
-    return buildAnnouncementParts({
-      timestampSeconds: entry?.ts ?? null,
-      shortName: context.shortName,
-      longName: label,
-      role: context.role,
-      metadataSource: context.metadataSource,
-      nodeData: context.nodeData,
-      protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('🔋')} ${renderAnnouncementCopy('Broadcasted telemetry', highlightSuffix)}`
-    });
+  function buildNodeEventChatEntryParts(entry, context, options) {
+    return buildContextAnnouncementParts(entry, context, formatChatLogParts([formatEntryLogPart(entry)]), options);
   }
 
   /**
-   * Build the parts for a position-broadcast chat entry.
+   * Build the parts for a folded burst (SPEC LA4): one line at its first
+   * part's place and time that lists every part, each titled with its own
+   * time. The line updates in place as parts arrive (``inPlace``), keyed by
+   * its first part.
    *
-   * @param {Object} entry Structured chat-log entry.
-   * @param {Object} context Display context from {@link buildDisplayContext}.
-   * @returns {{ className: string, html: string }} Entry parts.
+   * @param {{ parts: Array<Object> }} burst Burst from ``foldChatLogBursts``.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
+   * @returns {{ className: string, html: string, inPlace: boolean }} Entry parts.
    */
-  function buildPositionChatEntryParts(entry, context) {
-    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
-    // A position reads "Broadcasted position info: <lat>, <lon>" (colon, not the
-    // em dash used by telemetry) to match the neighbour entry's punctuation.
-    const highlightSuffix = buildHighlightSuffix(formatPositionHighlights(entry?.position), ': ');
-    return buildAnnouncementParts({
-      timestampSeconds: entry?.ts ?? null,
-      shortName: context.shortName,
-      longName: label,
-      role: context.role,
-      metadataSource: context.metadataSource,
-      nodeData: context.nodeData,
-      protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('📍')} ${renderAnnouncementCopy('Broadcasted position info', highlightSuffix)}`
-    });
+  function buildBurstChatEntryParts(burst, options) {
+    const [first] = burst.parts;
+    const parts = buildContextAnnouncementParts(first, buildDisplayContext(first), formatBurstLogParts(burst.parts), options);
+    return { ...parts, inPlace: true };
   }
 
   /**
-   * Build the parts for a neighbour-broadcast chat entry.
+   * Render a node as its badge, or as its escaped reference when no node is
+   * known by it (SPEC LA3: neighbours and trace hops are named by badge).
+   *
+   * @param {?Object} node Node record.
+   * @param {string} reference Identifier shown for an unknown node.
+   * @returns {string} Badge or text HTML; ``''`` without either.
+   */
+  function renderLogNodeHtml(node, reference) {
+    if (node) {
+      return renderShortHtml(node.short_name ?? node.shortName, node.role, node.long_name ?? node.longName, node);
+    }
+    return reference ? escapeHtml(reference) : '';
+  }
+
+  /**
+   * Build the parts for a neighbour-broadcast chat entry: `neighbor · <the
+   * neighbour's badge>` (SPEC LA2, LA3).
    *
    * @param {Object} entry Structured chat-log entry.
    * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }} Entry parts.
    */
-  function buildNeighborChatEntryParts(entry, context) {
-    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+  function buildNeighborChatEntryParts(entry, context, options) {
     const neighborId = entry?.neighborId ?? pickFirstProperty([entry?.neighbor], ['neighbor_id', 'neighborId']);
-    let neighborLabel = null;
-    if (neighborId) {
-      const trimmed = String(neighborId).trim();
-      if (trimmed && nodesById.has(trimmed)) {
-        const neighborNode = nodesById.get(trimmed);
-        neighborLabel = pickFirstProperty([neighborNode], ['long_name', 'longName', 'short_name', 'shortName']) ?? trimmed;
-      } else {
-        neighborLabel = trimmed;
-      }
-    }
-    const detail = neighborLabel ? `: ${escapeHtml(String(neighborLabel))}` : '';
-    return buildAnnouncementParts({
-      timestampSeconds: entry?.ts ?? null,
-      shortName: context.shortName,
-      longName: label,
-      role: context.role,
-      metadataSource: context.metadataSource,
-      nodeData: context.nodeData,
-      protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('🏘️')} ${renderAnnouncementCopy('Broadcasted neighbor info', detail)}`
-    });
+    const trimmed = neighborId ? String(neighborId).trim() : '';
+    const neighborNode = trimmed && nodesById.has(trimmed) ? nodesById.get(trimmed) : null;
+    const part = formatRenderedLogPart(CHAT_LOG_ENTRY_TYPES.NEIGHBOR, renderLogNodeHtml(neighborNode, trimmed));
+    return buildContextAnnouncementParts(entry, context, formatChatLogParts([part]), options);
   }
 
   /**
-   * Build the parts for a waypoint-broadcast chat entry (SPEC W7, amending
-   * LV7): ``📌 Broadcasted waypoint <glyph> <name> — Lat: …, Lon: …,
-   * Expires: …``. The waypoint description (user-authored body text) is
-   * deliberately never rendered here — bodies stay out of the Log.
+   * Build the parts for a waypoint-broadcast chat entry (SPEC LA3, amending
+   * W7): `waypoint · <glyph> <name> · expires <remaining>`, latitude and
+   * longitude in the title. The waypoint description (user-authored body
+   * text) is deliberately never rendered here — bodies stay out of the Log.
    *
    * @param {Object} entry Structured chat-log entry.
    * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }} Entry parts.
    */
-  function buildWaypointChatEntryParts(entry, context) {
-    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+  function buildWaypointChatEntryParts(entry, context, options) {
     const waypoint = entry?.waypoint && typeof entry.waypoint === 'object' ? entry.waypoint : {};
-    const glyph = waypointGlyph(waypoint.icon);
-    const name = waypoint.name != null && String(waypoint.name).trim().length > 0
-      ? String(waypoint.name).trim()
-      : 'Waypoint';
-    const highlights = [];
-    const lat = toFiniteNumber(waypoint.latitude);
-    const lon = toFiniteNumber(waypoint.longitude);
-    if (lat != null) highlights.push({ label: 'Lat', value: lat.toFixed(5) });
-    if (lon != null) highlights.push({ label: 'Lon', value: lon.toFixed(5) });
-    const expire = toFiniteNumber(waypoint.expire);
-    let expiresValue = 'never';
-    if (expire != null && expire > 0) {
-      const remaining = Math.floor(expire - Date.now() / 1000);
-      // The Log keeps expired broadcasts as history (W7); label them honestly.
-      expiresValue = remaining > 0 ? timeHum(remaining) : 'expired';
-    }
-    highlights.push({ label: 'Expires', value: expiresValue });
-    const highlightSuffix = buildHighlightSuffix(highlights);
-    return buildAnnouncementParts({
-      timestampSeconds: entry?.ts ?? null,
-      shortName: context.shortName,
-      longName: label,
-      role: context.role,
-      metadataSource: context.metadataSource,
-      nodeData: context.nodeData,
-      protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('📌')} ${renderAnnouncementCopy(`Broadcasted waypoint ${glyph} ${name}`, highlightSuffix)}`
-    });
+    const part = formatWaypointLogPart(waypoint, { nowSeconds: Date.now() / 1000 });
+    return buildContextAnnouncementParts(entry, context, formatChatLogParts([part]), options);
   }
 
   /**
@@ -3228,31 +3150,34 @@ export function initializeApp(config) {
    * dispatching on the entry type, without touching the DOM. Returns ``null``
    * for entries that should not render. Used by the memoising render path.
    *
-   * @param {Object} entry Structured chat-log entry.
-   * @returns {{ className: string, html: string }|null} Entry parts or null.
+   * @param {Object} entry Structured chat-log entry, or a folded burst.
+   * @param {{ uniform?: boolean }} [options] ``uniform``: every Log line names
+   *   one radio, so no line carries a radio tag (SPEC LA1, CD2).
+   * @returns {{ className: string, html: string, inPlace?: boolean }|null} Entry parts or null.
    */
-  function buildChatLogEntryParts(entry) {
+  function buildChatLogEntryParts(entry, options = {}) {
     if (!entry || typeof entry !== 'object') return null;
+    if (entry.type === CHAT_LOG_BURST_TYPE) {
+      return buildBurstChatEntryParts(entry, options);
+    }
     if (entry.type === CHAT_LOG_ENTRY_TYPES.NODE_NEW) {
-      return buildNodeChatEntryParts(entry.node ?? resolveNodeForLogEntry(entry) ?? null, entry?.ts ?? null);
+      return buildNodeChatEntryParts(entry.node ?? resolveNodeForLogEntry(entry) ?? null, entry?.ts ?? null, options);
     }
     const context = buildDisplayContext(entry);
     switch (entry.type) {
       case CHAT_LOG_ENTRY_TYPES.NODE_INFO:
-        return buildNodeInfoChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TELEMETRY:
-        return buildTelemetryChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.POSITION:
-        return buildPositionChatEntryParts(entry, context);
+        return buildNodeEventChatEntryParts(entry, context, options);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
-        return buildNeighborChatEntryParts(entry, context);
+        return buildNeighborChatEntryParts(entry, context, options);
       case CHAT_LOG_ENTRY_TYPES.WAYPOINT:
-        return buildWaypointChatEntryParts(entry, context);
+        return buildWaypointChatEntryParts(entry, context, options);
       case CHAT_LOG_ENTRY_TYPES.TRACE:
-        return buildTraceChatEntryParts(entry, context);
+        return buildTraceChatEntryParts(entry, context, options);
       case CHAT_LOG_ENTRY_TYPES.MESSAGE:
       case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
-        return entry?.message ? buildMessageChatEntryParts(entry.message) : null;
+        return entry?.message ? buildMessageChatEntryParts(entry.message, options) : null;
       default:
         return null;
     }
@@ -3264,6 +3189,12 @@ export function initializeApp(config) {
    * the HTML parse can be memoised per entry (issue: chat-log render); the
    * {@link createAnnouncementEntry} wrapper materialises it into a node.
    *
+   * The line takes the message grid (SPEC LA1): ``HH:MM`` in the time column,
+   * titled with seconds, frequency and preset, then the body: the radio code
+   * (SPEC LA5) unless every Log line names one radio, the badge, and the
+   * parts (SPEC LA2). The badge names the line's protocol, also when the
+   * node record lacks one.
+   *
    * @param {{
    *   timestampSeconds: ?number,
    *   shortName: ?string,
@@ -3273,7 +3204,8 @@ export function initializeApp(config) {
    *   nodeData: Object|null,
    *   messageHtml: string,
    *   protocol: ?string
-   * }} params Rendering parameters.
+   * }} params Rendering parameters; ``messageHtml`` holds the parts.
+   * @param {{ uniform?: boolean }} [options] ``uniform``: drop the radio code.
    * @returns {{ className: string, html: string }} Entry class name and HTML.
    */
   function buildAnnouncementParts({
@@ -3285,23 +3217,22 @@ export function initializeApp(config) {
     nodeData,
     messageHtml,
     protocol: protocolHint = null
-  }) {
+  }, { uniform = false } = {}) {
     const tsDate = timestampSeconds != null ? new Date(timestampSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const metadata = extractChatMessageMetadata(metadataSource || nodeData || {});
-    const prefix = formatNodeAnnouncementPrefix({
-      timestamp: escapeHtml(ts),
-      frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
-    });
-    const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     const longNameDisplay = longName != null ? String(longName) : '';
-    const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
     const announcementProtocol =
       protocolHint ?? pickFirstProperty([nodeData, metadataSource], ['protocol']);
-    const announcementIconPrefix = protocolIconPrefixHtml(announcementProtocol);
+    const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {}, {
+      protocol: announcementProtocol
+    });
+    const time = formatChatEntryTime({ timestamp: ts, frequency: metadata.frequency, preset: metadata.presetName });
+    const radioCode = uniform ? '' : formatChatRadioCode(metadata, announcementProtocol);
+    const radio = radioCode ? `${radioCode} ` : '';
     return {
       className: 'chat-entry-node',
-      html: `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`
+      html: formatChatLine(time, `${radio}${shortHtml} ${messageHtml}`)
     };
   }
 
@@ -3311,21 +3242,24 @@ export function initializeApp(config) {
    * the render path uses the parts form directly so it can memoise the parse.
    *
    * @param {Object} params Rendering parameters (see {@link buildAnnouncementParts}).
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {HTMLElement} Chat log element.
    */
-  function createAnnouncementEntry(params) {
-    return materializeEntryNode(buildAnnouncementParts(params));
+  function createAnnouncementEntry(params, options) {
+    return materializeEntryNode(buildAnnouncementParts(params, options));
   }
 
   /**
-   * Convert a trace path into user-friendly labels using cached node metadata.
+   * Resolve the hops of a trace path from cached node metadata: each hop's
+   * node, when known, and its label, the short name, display name or
+   * reference its badge or text shows (SPEC LA3).
    *
    * @param {Array<{id: ?string, num: ?number, raw: *}>} tracePath Ordered hop references.
-   * @returns {Array<string>} Display labels for each hop.
+   * @returns {Array<{ node: ?Object, label: string }>} One entry per hop with a label.
    */
-  function formatTracePathLabels(tracePath) {
+  function traceHops(tracePath) {
     if (!Array.isArray(tracePath)) return [];
-    const labels = [];
+    const hops = [];
     for (const hop of tracePath) {
       if (!hop || typeof hop !== 'object') continue;
       const node = resolveNodeForHop(hop);
@@ -3333,39 +3267,43 @@ export function initializeApp(config) {
       const shortName = node ? normalizeNodeNameValue(node.short_name ?? node.shortName) : null;
       const label = shortName || (node ? (getNodeDisplayNameForOverlay(node) || fallbackId) : fallbackId);
       if (label) {
-        labels.push(String(label));
+        hops.push({ node, label: String(label) });
       }
     }
-    return labels;
+    return hops;
   }
 
   /**
    * Build the parts for a traceroute chat entry, or null when the trace path is
-   * too short to render.
+   * too short to render: `trace · <hop badges joined by →>` (SPEC LA2, LA3).
    *
    * @param {Object} entry Structured chat-log entry carrying ``tracePath``.
    * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @param {{ uniform?: boolean }} [options] See {@link buildAnnouncementParts}.
    * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
-  function buildTraceChatEntryParts(entry, context) {
+  function buildTraceChatEntryParts(entry, context, options = {}) {
     if (!entry || !Array.isArray(entry.tracePath) || entry.tracePath.length < 2) {
       return null;
     }
     const sourceHop = entry.tracePath[0] || null;
     const sourceNode = resolveNodeForHop(sourceHop);
-    const labels = formatTracePathLabels(entry.tracePath);
-    const labelText = labels.length ? labels.join(', ') : 'Traceroute';
-    const labelSuffix = `: ${escapeHtml(labelText)}`;
+    const hops = traceHops(entry.tracePath);
+    const part = formatRenderedLogPart(
+      CHAT_LOG_ENTRY_TYPES.TRACE,
+      hops.map(hop => renderLogNodeHtml(hop.node, hop.label)).join(TRACE_HOP_SEPARATOR)
+    );
     return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
-      longName: context.longName || context.nodeId || labels[0] || 'Traceroute',
+      // buildDisplayContext already falls back from the long name to the node id.
+      longName: context.longName || hops[0]?.label || 'Traceroute',
       role: context.role,
       metadataSource: sourceNode || context.metadataSource,
       nodeData: sourceNode || context.nodeData,
       protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('👣')} ${renderAnnouncementCopy('Caught trace', labelSuffix)}`
-    });
+      messageHtml: formatChatLogParts([part])
+    }, options);
   }
 
   /**
@@ -3496,60 +3434,54 @@ export function initializeApp(config) {
   }
 
   /**
-   * Describe an encrypted message when the payload cannot be decrypted.
+   * Key of the radio tag a Log line renders (SPEC LA1, CD2): a message's own,
+   * and an announcement's from the record its builder reads, the node a
+   * new-node line announces, a trace's first hop, else the entry's display
+   * context.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Map<Object, Map<?string, ?string>>} [known] Keys already derived in
+   *   this pass, by record and protocol: a node's many entries share one.
+   * @returns {?string} The key, as ``chatRadioKey`` derives it; ``null`` for an
+   *   entry without a preset code, which renders no code.
+   */
+  function chatLogEntryRadioKey(entry, known = new Map()) {
+    if (entry?.message) return chatRadioKey(entry.message);
+    let source;
+    let protocol;
+    if (entry?.type === CHAT_LOG_ENTRY_TYPES.NODE_NEW) {
+      source = entry.node ?? resolveNodeForLogEntry(entry) ?? {};
+      protocol = pickFirstProperty([source], ['protocol']);
+    } else {
+      const context = buildDisplayContext(entry);
+      source = (entry?.type === CHAT_LOG_ENTRY_TYPES.TRACE && resolveNodeForHop(entry.tracePath?.[0] ?? null))
+        || context.metadataSource;
+      protocol = context.protocol ?? pickFirstProperty([source], ['protocol']);
+    }
+    let byProtocol = known.get(source);
+    if (!byProtocol) {
+      byProtocol = new Map();
+      known.set(source, byProtocol);
+    }
+    if (!byProtocol.has(protocol)) byProtocol.set(protocol, chatRadioKey(source, protocol));
+    return byProtocol.get(protocol);
+  }
+
+  /**
+   * Describe an encrypted message when the payload cannot be decrypted:
+   * `encrypted · channel <label>`, or `encrypted · to <badge>` for a direct
+   * message (SPEC LA2).
    *
    * @param {Object} message Raw message payload.
    * @returns {{content: string, isHtml: boolean}} Renderable notice payload.
    */
   function formatEncryptedMessageNotice(message) {
-    const recipient = pickFirstProperty([message], ['to_id', 'toId']);
-    const recipientText = recipient != null && recipient !== ''
-      ? String(recipient).trim()
-      : '';
-    if (recipientText && recipientText.toLowerCase() !== '^all') {
-      const targetNode = resolveRecipientNode(recipientText);
-      if (targetNode) {
-        const badge = renderShortHtml(
-          targetNode.short_name ?? targetNode.shortName,
-          targetNode.role,
-          targetNode.long_name ?? targetNode.longName,
-          targetNode
-        );
-        const idSpan = `<span class="mono">${escapeHtml(recipientText)}</span>`;
-        return { content: `🔒 encrypted message to ${badge} ${idSpan}`, isHtml: true };
-      }
-      return { content: `🔒 encrypted message to ${recipientText}`, isHtml: false };
+    const { recipient, channelLabel } = encryptedNoticeTarget(message);
+    if (recipient) {
+      const recipientHtml = renderLogNodeHtml(resolveRecipientNode(recipient), recipient);
+      return { content: formatEncryptedLogNotice({ recipientHtml }), isHtml: true };
     }
-
-    const channelCandidate = pickFirstProperty([message], ['channel', 'channel_index', 'channelIndex']);
-    let channelLabel = null;
-    if (channelCandidate != null && channelCandidate !== '') {
-      if (typeof channelCandidate === 'number' && Number.isFinite(channelCandidate)) {
-        channelLabel = String(Math.round(channelCandidate));
-      } else {
-        const trimmedChannel = String(channelCandidate).trim();
-        if (trimmedChannel.length > 0) {
-          const numericChannel = Number(trimmedChannel);
-          channelLabel = Number.isFinite(numericChannel) ? String(Math.round(numericChannel)) : trimmedChannel;
-        }
-      }
-    }
-
-    if (!channelLabel) {
-      const channelName = pickFirstProperty([message], ['channel_name', 'channelName']);
-      if (channelName != null) {
-        const trimmedName = String(channelName).trim();
-        if (trimmedName.length > 0) {
-          channelLabel = trimmedName;
-        }
-      }
-    }
-
-    if (!channelLabel) {
-      channelLabel = 'unknown channel';
-    }
-
-    return { content: `🔒 encrypted message on channel ${channelLabel}`, isHtml: false };
+    return { content: formatEncryptedLogNotice({ channelLabel }), isHtml: true };
   }
 
   /**
@@ -3594,8 +3526,8 @@ export function initializeApp(config) {
    *
    * @param {Object} m Message payload.
    * @param {{ uniform?: boolean }} [options] ``uniform``: the line sits on a
-   *   tab whose lines all name one radio (SPEC CD2), so it drops the
-   *   ``[freq][preset]`` tag and the protocol icon.
+   *   tab whose lines all name one radio (SPEC CD2, LA1), so it drops the
+   *   radio code; otherwise the line leads with it (SPEC LA5).
    * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
   function buildMessageChatEntryParts(m, { uniform = false } = {}) {
@@ -3614,8 +3546,6 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const messageProtocol = pickFirstProperty([m, m?.node], ['protocol']);
-
-    const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
 
     // Delegate reply-prefix / mention / body / encrypted rendering to the
     // shared chat entry renderer so the dashboard and the node detail page
@@ -3645,13 +3575,19 @@ export function initializeApp(config) {
         meshcoreSenderNode
       );
     } else {
-      short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
+      // The badge names the message's protocol also when its sender has no
+      // node record, or one without a protocol (SPEC LA5).
+      short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node, {
+        protocol: messageProtocol
+      });
     }
     const metadata = extractChatMessageMetadata(m);
     // HH:MM leads the line; seconds, frequency and preset sit in its title (SPEC CD1).
     const time = formatChatEntryTime({ timestamp: ts, frequency: metadata.frequency, preset: metadata.presetName });
-    // A one-radio tab drops the radio tag and the protocol icon its tab shows (SPEC CD2).
-    const radio = uniform ? '' : `${formatChatRadioTag(metadata)} ${nodeProtocolPrefix}`;
+    // A one-radio tab drops the radio code (SPEC CD2); a mixed one shows the
+    // preset code, and the badge's shape names the protocol (SPEC LA5).
+    const radioCode = uniform ? '' : formatChatRadioCode(metadata, messageProtocol);
+    const radio = radioCode ? `${radioCode} ` : '';
     // A sender named only by the text gets a hidden marker right after its
     // badge, a verified one a tag (SPEC SV3); the route chip (hops + flood
     // scope, SPEC SC7) follows the text (SPEC CD3).
@@ -3707,6 +3643,20 @@ export function initializeApp(config) {
       }
       return enriched;
     });
+  }
+
+  /**
+   * Give every trace entry the labels its hops' badges show, as ``hopLabels``,
+   * so the search matches the line's words (SPEC LA3). A trace entry is
+   * copied; the others pass through as themselves.
+   *
+   * @param {Array<Object>} entries Chat log entries.
+   * @returns {Array<Object>} The entries.
+   */
+  function attachTraceHopLabels(entries) {
+    return entries.map(entry => (entry.type === CHAT_LOG_ENTRY_TYPES.TRACE
+      ? { ...entry, hopLabels: traceHops(entry.tracePath).map(hop => hop.label) }
+      : entry));
   }
 
   /**
@@ -3800,7 +3750,10 @@ export function initializeApp(config) {
       primaryChannelFallbackLabel: config.channel
     });
 
-    const enrichedLogEntries = attachNodeContextToLogEntries(logEntries);
+    // Telemetry lines name what changed since the node's earlier telemetry in
+    // the whole Log, before any filter, so a line's detail depends on entry
+    // data alone (SPEC LA3).
+    const enrichedLogEntries = attachTelemetryHistory(attachTraceHopLabels(attachNodeContextToLogEntries(logEntries)));
     // When a protocol is hidden, exclude its entries from the chat display.
     // Entries without a resolved node are kept; entries with a node but a
     // null/missing protocol are treated as meshtastic (the default protocol).
@@ -3817,15 +3770,22 @@ export function initializeApp(config) {
         return !proto || !hiddenProtocols.has(proto);
       })
       : channels;
+    // A node's bursts fold before the search, which matches the words each
+    // line shows, folded parts included, and keeps a matching line whole (SPEC LA4).
     const { logEntries: filteredLogEntries, channels: filteredChannels } = filterChatModel(
-      { logEntries: protocolVisibleEntries, channels: protocolVisibleChannels },
+      { logEntries: foldChatLogBursts(protocolVisibleEntries), channels: protocolVisibleChannels },
       filterQuery
     );
 
+    // The Log takes the channel tabs' one-radio rule, judged on the whole Log
+    // before the search and protocol filters; an entry that names no radio
+    // does not count (SPEC LA1, CD2).
+    const radioKeys = new Map();
+    const logUniform = sharesOneRadio(enrichedLogEntries, entry => chatLogEntryRadioKey(entry, radioKeys));
     const logContent = buildChatPanelContent({
       namespace: 'log',
       entries: filteredLogEntries,
-      renderParts: buildChatLogEntryParts,
+      renderParts: entry => buildChatLogEntryParts(entry, { uniform: logUniform }),
       keyOf: chatLogEntryKey,
       emptyLabel: 'No recent mesh activity.'
     });
@@ -3948,7 +3908,10 @@ export function initializeApp(config) {
       if (!parts) {
         continue;
       }
-      const node = chatEntryCache.materialize(namespace, keyOf(entry), parts.className, parts.html);
+      // A folded burst keeps its row and updates it in place (SPEC LA4).
+      const node = chatEntryCache.materialize(namespace, keyOf(entry), parts.className, parts.html, {
+        inPlace: parts.inPlace === true
+      });
       // Tag message rows so a live update can flash them (SPEC VF3); for channel
       // tabs (namespace is the tab id, not 'log') record the message→tab id so
       // the channel's tab header can flash too.

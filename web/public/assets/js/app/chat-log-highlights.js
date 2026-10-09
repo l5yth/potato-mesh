@@ -215,6 +215,23 @@ export function formatTelemetryHighlights(telemetryPayload) {
 }
 
 /**
+ * Resolve the latitude and longitude of a position payload as numbers, with
+ * the same field names and scaling as {@link formatPositionHighlights}: an
+ * `_i` field, or a bare value above 180, is read as millionths of a degree.
+ *
+ * @param {*} positionPayload Raw position record.
+ * @returns {{ latitude: ?number, longitude: ?number }} Coordinates in degrees,
+ *   `null` where the payload has none.
+ */
+export function resolvePositionCoordinates(positionPayload) {
+  const [latitude, longitude] = POSITION_HIGHLIGHT_FIELDS.slice(0, 2).map(field => {
+    const extracted = extractPositionValue(positionPayload, field.sources);
+    return extracted ? toFiniteNumber(normalizePositionValue(extracted.value, extracted.key)) : null;
+  });
+  return { latitude, longitude };
+}
+
+/**
  * Build highlight entries for position broadcasts.
  *
  * Only non-empty values discovered in the payload are returned.

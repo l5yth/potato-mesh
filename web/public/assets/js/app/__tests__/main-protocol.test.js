@@ -115,7 +115,7 @@ test('buildMapPopupHtml omits meshtastic icon for meshcore protocol', () => {
 
 // --- createAnnouncementEntry ---
 
-test('createAnnouncementEntry prefixes meshtastic icon when protocol is meshtastic', () => {
+test('createAnnouncementEntry names meshtastic on its badge, with no icon (LA5)', () => {
   withApp((t) => {
     const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
@@ -126,7 +126,8 @@ test('createAnnouncementEntry prefixes meshtastic icon when protocol is meshtast
       nodeData: null,
       messageHtml: 'joined the mesh',
     });
-    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'announcement should include meshtastic icon');
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'the protocol icon left the line');
+    assert.ok(innerHtml(div).includes('<span class="short-name" data-protocol="meshtastic"'), 'the badge names the protocol');
   });
 });
 
@@ -161,7 +162,7 @@ test('createAnnouncementEntry omits meshtastic icon for meshcore protocol', () =
   });
 });
 
-test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => {
+test('createAnnouncementEntry names meshcore on its badge, with no icon (LA5)', () => {
   withApp((t) => {
     const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
@@ -173,20 +174,22 @@ test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => 
       nodeData: null,
       messageHtml: 'seen',
     });
-    assert.ok(innerHtml(div).includes('meshcore.svg'), 'announcement for meshcore should include meshcore icon');
+    assert.ok(!innerHtml(div).includes('meshcore.svg'), 'the protocol icon left the line');
+    assert.ok(innerHtml(div).includes('<span class="short-name" data-protocol="meshcore"'), 'the badge takes the line\'s protocol');
   });
 });
 
 // --- createMessageChatEntry ---
 
-test('createMessageChatEntry prefixes meshtastic icon when node protocol is meshtastic', () => {
+test('createMessageChatEntry names meshtastic on its badge, with no icon (LA5)', () => {
   withApp((t) => {
     const div = t.createMessageChatEntry({
       text: 'hello mesh',
       rx_time: 1000,
       node: { short_name: 'ALI', role: 'CLIENT', protocol: 'meshtastic' },
     });
-    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'chat entry should include meshtastic icon');
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'the protocol icon left the line');
+    assert.ok(innerHtml(div).includes('<span class="short-name" data-protocol="meshtastic"'), 'the badge names the protocol');
   });
 });
 
@@ -213,14 +216,15 @@ test('createMessageChatEntry omits meshtastic icon for meshcore node', () => {
   });
 });
 
-test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
+test('createMessageChatEntry names meshcore on its badge, with no icon (LA5)', () => {
   withApp((t) => {
     const div = t.createMessageChatEntry({
       text: 'test',
       rx_time: 3000,
       node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
     });
-    assert.ok(innerHtml(div).includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
+    assert.ok(!innerHtml(div).includes('meshcore.svg'), 'the protocol icon left the line');
+    assert.ok(innerHtml(div).includes('<span class="short-name" data-protocol="meshcore"'), 'the badge names the protocol');
   });
 });
 
@@ -395,11 +399,12 @@ test('renderShortHtml adds single space padding for plain 2-char name', () => {
 
 // --- SPEC RL3: the chat/log tags fill from the node's own radio metadata ---
 
-test('a Reticulum node announcement fills its frequency and preset tags', () => {
+test('a Reticulum node announcement fills its radio code and time title (RL3, LA5)', () => {
   // The reported symptom was two empty brackets on every Reticulum line:
   //   [18:53:11][   ][  ] 2771 ☀️ New node: …
   // No renderer needed a Reticulum branch — the tags were always driven by the
-  // node's lora_freq/modem_preset, which the provider simply never sent.
+  // node's lora_freq/modem_preset, which the provider simply never sent. Since
+  // LA5 the line shows the preset code, the frequency in the titles.
   withApp((t) => {
     const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
@@ -420,14 +425,14 @@ test('a Reticulum node announcement fills its frequency and preset tags', () => 
     // Assert the values, not the absence of blanks: an empty slot serialises as
     // `&nbsp;` entities, so a /\s/-based "not blank" check can never fail and
     // pinned nothing at all.
-    assert.match(html, /\[867\]/, `frequency slot not filled: ${html}`);
-    assert.match(html, /\[LF\]/, `preset slot not filled: ${html}`);
+    assert.ok(html.includes('<span class="chat-entry-radio" title="867 MHz · LongFast · Reticulum">LF</span>'), `radio code not filled: ${html}`);
+    assert.match(html, /<span class="chat-entry-time" title="\d\d:\d\d:\d\d · 867 MHz · LongFast">/, `time title not filled: ${html}`);
   });
 });
 
-test('a Reticulum announcement without radio metadata keeps its empty slots', () => {
-  // Absent stays absent: the slots hold their width rather than inventing a
-  // number, exactly as they do for any other protocol that reported none.
+test('a Reticulum announcement without radio metadata shows no radio code (LA5)', () => {
+  // Absent stays absent: no code and no frequency are invented, exactly as for
+  // any other protocol that reported none.
   withApp((t) => {
     const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
@@ -440,6 +445,6 @@ test('a Reticulum announcement without radio metadata keeps its empty slots', ()
     });
     const html = innerHtml(div);
     assert.doesNotMatch(html, /867/);
-    assert.doesNotMatch(html, /\[LF\]/);
+    assert.doesNotMatch(html, /chat-entry-radio/);
   });
 });

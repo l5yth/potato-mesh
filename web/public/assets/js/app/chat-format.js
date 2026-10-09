@@ -75,22 +75,7 @@ export function formatChatChannelTag({ channelName }) {
 }
 
 /**
- * Create the formatted prefix for node announcements in the chat log.
- *
- * Both the timestamp and the optional frequency will be wrapped in brackets,
- * mirroring the chat message display while omitting the channel indicator.
- *
- * @param {{ timestamp: string, frequency: string|null }} params Display strings.
- * @returns {string} Prefix string suitable for HTML insertion.
- */
-export function formatNodeAnnouncementPrefix({ timestamp, frequency }) {
-  const ts = typeof timestamp === 'string' ? timestamp : '';
-  const freq = normalizeFrequencySlot(frequency);
-  return `[${ts}][${freq}]`;
-}
-
-/**
- * Render the preset hint bracket inserted between the prefix and short name.
+ * Render the preset hint bracket of the node page's `[freq][preset]` tag.
  *
  * @param {{ presetCode: string|null }} params Normalized preset abbreviation.
  * @returns {string} HTML-ready bracket slot.
@@ -115,9 +100,10 @@ export function formatChatTimeSlot(text, title = '') {
 }
 
 /**
- * Render the time slot of a dashboard chat line (SPEC CD1): ``HH:MM``, with
- * the full ``HH:MM:SS``, the frequency and the preset in its title. A value
- * the line does not know is left out of the title.
+ * Render the time slot of a dashboard chat line (SPEC CD1, LA1): ``HH:MM``,
+ * with the full ``HH:MM:SS``, the frequency and the preset in its title, for
+ * messages and Log announcements alike. A value the line does not know is
+ * left out of the title.
  *
  * @param {{ timestamp: string, frequency?: ?string, preset?: ?string }} params
  *   Raw (unescaped) ``HH:MM:SS`` time (``--:--:--`` when unknown), frequency
@@ -130,9 +116,10 @@ export function formatChatEntryTime({ timestamp, frequency = null, preset = null
 }
 
 /**
- * Render the frequency and preset slots of a chat line, such as ``[869][MF]``
- * (SPEC CD2). A missing value keeps its slot, filled with non-breaking
- * spaces.
+ * Render the frequency and preset slots of a node-page chat line, such as
+ * ``[869][MF]`` (SPEC CD1). A missing value keeps its slot, filled with
+ * non-breaking spaces. The dashboard chat shows {@link formatChatRadioCode}
+ * instead (SPEC LA5).
  *
  * @param {{ frequency: ?string, presetCode: ?string }} params Raw (unescaped)
  *   frequency and preset abbreviation, as {@link extractChatMessageMetadata}
@@ -142,6 +129,39 @@ export function formatChatEntryTime({ timestamp, frequency = null, preset = null
 export function formatChatRadioTag({ frequency, presetCode }) {
   const freq = frequency ? escapeHtml(frequency) : FREQUENCY_PLACEHOLDER;
   return `[${freq}]${formatChatPresetTag({ presetCode })}`;
+}
+
+/**
+ * Display names of the protocols, for the radio code's title.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const PROTOCOL_LABELS = Object.freeze({ meshtastic: 'Meshtastic', meshcore: 'MeshCore', reticulum: 'Reticulum' });
+
+/**
+ * Render the radio tag of a dashboard chat line that needs one (SPEC LA5,
+ * CD2): the preset code alone, such as ``MF`` or ``NA``, in
+ * ``<span class="chat-entry-radio">``, titled with the frequency, the preset
+ * name and the protocol (``869 MHz · MediumFast · Meshtastic``). A title
+ * leaves out a value the line does not know; a radio without a preset code
+ * gets no tag.
+ *
+ * @param {{ frequency: ?string, presetCode: ?string, presetName?: ?string }} metadata
+ *   Raw (unescaped) values, as {@link extractChatMessageMetadata} returns them.
+ * @param {?string} [protocol] The line's protocol.
+ * @returns {string} The tag's HTML, or ``''``.
+ */
+export function formatChatRadioCode({ frequency, presetCode, presetName = null }, protocol = null) {
+  const code = normalizePresetSlot(presetCode);
+  if (code === PRESET_PLACEHOLDER) return '';
+  const protocolKey = normalizeString(protocol);
+  // Own keys only: `constructor` is inherited by every plain object.
+  const protocolLabel = protocolKey && Object.hasOwn(PROTOCOL_LABELS, protocolKey.toLowerCase())
+    ? PROTOCOL_LABELS[protocolKey.toLowerCase()]
+    : protocolKey;
+  const title = [frequency ? `${frequency} MHz` : null, presetName, protocolLabel].filter(Boolean).join(' · ');
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<span class="chat-entry-radio"${titleAttr}>${escapeHtml(code)}</span>`;
 }
 
 /**
@@ -159,21 +179,53 @@ export function formatChatLine(timeHtml, bodyHtml) {
 }
 
 /**
- * Key of the radio a chat line names (SPEC CD2): its frequency, its preset
- * slot and its protocol. Lines with one key render the same ``[freq][preset]``
- * tag and protocol icon, so a tab whose lines all share a key can drop both.
+ * Key of the radio tag a chat line renders (SPEC CD2, LA1): what the tag
+ * shows, its preset code and its protocol. The frequency only titles the
+ * code, so a line without a frequency of its own, which takes its node's
+ * preset, keys like the lines that have one. Lines with one key render the
+ * same tag, so a tab whose lines all share a key can drop it. A line without
+ * a preset code renders no code and has no key, such as a placeholder node
+ * the server made for an unheard hop.
  *
- * @param {?Object} message Message payload.
- * @returns {string} The key.
+ * @param {?Object} message Message payload, or the node record or snapshot
+ *   a Log announcement takes its radio from.
+ * @param {?string} [protocol] The line's protocol; by default the message's,
+ *   else its node's.
+ * @returns {?string} The key, or ``null`` for a line that renders no code.
  */
-export function chatRadioKey(message) {
-  const { frequency, presetCode } = extractChatMessageMetadata(message);
-  return JSON.stringify([frequency, normalizePresetSlot(presetCode), messageProtocol(message)]);
+export function chatRadioKey(message, protocol = messageProtocol(message)) {
+  const slot = normalizePresetSlot(extractChatMessageMetadata(message).presetCode);
+  if (slot === PRESET_PLACEHOLDER) return null;
+  return JSON.stringify([slot, normalizeString(protocol)]);
+}
+
+/**
+ * Whether no two items render different radio tags (SPEC CD2, LA1): a tab or
+ * the Log drops the radio tag of its lines when they do not. An item whose
+ * key is ``null`` renders no code and does not count.
+ *
+ * @param {Iterable<*>} items Lines, entries or messages.
+ * @param {function(*): ?string} keyOf Radio key of an item, such as
+ *   {@link chatRadioKey}.
+ * @returns {boolean} `false` when two items have different keys, else `true`.
+ */
+export function sharesOneRadio(items, keyOf) {
+  let first = null;
+  for (const item of items) {
+    const key = keyOf(item);
+    if (key === null) continue;
+    if (first === null) {
+      first = key;
+    } else if (key !== first) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
  * Protocol of a chat line: the message's own, else its node's, trimmed, as
- * the dashboard picks it for the line's protocol icon.
+ * the dashboard picks it for the line's radio code title.
  *
  * @param {?Object} message Message payload.
  * @returns {?string} The protocol, or ``null`` when neither names one.
@@ -184,27 +236,6 @@ function messageProtocol(message) {
     if (protocol) return protocol;
   }
   return null;
-}
-
-/**
- * Produce a consistently formatted frequency slot for chat prefixes.
- *
- * A missing or empty frequency is rendered as three HTML non-breaking spaces to
- * ensure the UI maintains its expected alignment while clearly indicating the
- * absence of data.
- *
- * @param {*} value Frequency value that has already been escaped for HTML.
- * @returns {string} Frequency slot suitable for prefix rendering.
- */
-function normalizeFrequencySlot(value) {
-  if (value == null) {
-    return FREQUENCY_PLACEHOLDER;
-  }
-  if (typeof value === 'string') {
-    return value.length > 0 ? value : FREQUENCY_PLACEHOLDER;
-  }
-  const strValue = String(value);
-  return strValue.length > 0 ? strValue : FREQUENCY_PLACEHOLDER;
 }
 
 /**
@@ -434,8 +465,6 @@ export const __test__ = {
   firstNonNull,
   normalizeString,
   normalizeFrequency,
-  formatNodeAnnouncementPrefix,
-  normalizeFrequencySlot,
   FREQUENCY_PLACEHOLDER,
   formatChatChannelTag,
   resolveModemPresetCandidate,

@@ -33,24 +33,46 @@ import {
   getRoleTextColor,
   normalizeRole,
 } from '../role-helpers.js';
+import { isMeshcoreProtocol, isReticulumProtocol } from '../protocol-helpers.js';
 
 /**
- * Render a short name badge with role-based styling.
+ * The protocol a badge names in ``data-protocol`` (SPEC LA5): the one whose
+ * palette paints it, so ``meshtastic`` for an absent or unknown protocol, as
+ * {@link getRoleColor} reads it. ``base.css`` gives a MeshCore badge the
+ * square corners of its map marker.
+ *
+ * @param {*} protocol Raw protocol of the badge's node.
+ * @returns {'meshcore'|'reticulum'|'meshtastic'} The badge's protocol.
+ */
+export function badgeProtocol(protocol) {
+  if (isMeshcoreProtocol(protocol)) return 'meshcore';
+  if (isReticulumProtocol(protocol)) return 'reticulum';
+  return 'meshtastic';
+}
+
+/**
+ * Render a short name badge with role-based styling. Every badge names its
+ * protocol in ``data-protocol`` ({@link badgeProtocol}, SPEC LA5).
  *
  * @param {string} short Short node identifier.
  * @param {string} role Node role string.
  * @param {string} longName Full node name.
  * @param {?Object} nodeData Optional node metadata attached to the badge.
+ * @param {{ protocol?: ?string }} [options] ``protocol``: the protocol of the
+ *   line the badge sits in, used when ``nodeData`` names none, also without a
+ *   node record (a MeshCore line whose sender is unknown), so the badge's
+ *   colours and corners follow its line.
  * @returns {string} HTML snippet describing the badge.
  */
-export function renderShortHtml(short, role, longName, nodeData = null) {
+export function renderShortHtml(short, role, longName, nodeData = null, { protocol: lineProtocol = null } = {}) {
   const safeTitle = longName ? escapeHtml(String(longName)) : '';
   const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
+  const protocol = nodeData?.protocol ?? lineProtocol ?? null;
   // Pass the protocol so a role-less node takes its own base role rather than
   // Meshtastic's CLIENT (SPEC RA9); the overlay hook carries this value.
   const roleValue = normalizeRole(
     role != null && role !== '' ? role : (nodeData && nodeData.role),
-    nodeData?.protocol ?? null,
+    protocol,
   );
   let infoAttr = '';
   if (nodeData && typeof nodeData === 'object') {
@@ -63,7 +85,7 @@ export function renderShortHtml(short, role, longName, nodeData = null) {
       // Carry the protocol: the short-info overlay re-renders this badge from
       // `data-node-info` alone, so without it a Reticulum or Meshcore badge was
       // repainted in the Meshtastic palette (SPEC RA9/RD5).
-      protocol: nodeData.protocol ?? null,
+      protocol,
       hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
       telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
     };
@@ -79,9 +101,10 @@ export function renderShortHtml(short, role, longName, nodeData = null) {
     }
     infoAttr = attrParts.join('');
   }
+  const protocolAttr = ` data-protocol="${badgeProtocol(protocol)}"`;
   if (!short) {
     const fallbackText = getContrastTextColor('#ccc');
-    return `<span class="short-name" style="background:#ccc;color:${fallbackText}"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
+    return `<span class="short-name"${protocolAttr} style="background:#ccc;color:${fallbackText}"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
   }
   // Pad the label for the badge.  For plain-ASCII names that are already
   // 4 characters (meshtastic always stores exactly 4) no padding is added.
@@ -99,9 +122,8 @@ export function renderShortHtml(short, role, longName, nodeData = null) {
     centred = ` ${raw} `;
   }
   const padded = escapeHtml(centred).replace(/ /g, '&nbsp;');
-  const protocol = nodeData?.protocol ?? null;
   const color = getRoleColor(roleValue, protocol);
   const textColor = getRoleTextColor(roleValue, protocol);
   const styleAttr = textColor ? `background:${color};color:${textColor}` : `background:${color}`;
-  return `<span class="short-name" style="${styleAttr}"${titleAttr}${infoAttr}>${padded}</span>`;
+  return `<span class="short-name"${protocolAttr} style="${styleAttr}"${titleAttr}${infoAttr}>${padded}</span>`;
 }

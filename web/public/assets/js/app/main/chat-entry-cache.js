@@ -42,7 +42,7 @@
  * @param {{ documentRef?: Document }} [options] Optional document override; the
  *   ambient ``document`` is used when omitted. Primarily for unit tests.
  * @returns {{
- *   materialize: (namespace: string, key: string, className: string, html: string) => Object,
+ *   materialize: (namespace: string, key: string, className: string, html: string, options?: { inPlace?: boolean }) => Object,
  *   prune: (namespace: string) => void,
  *   retainNamespaces: (activeNamespaces: Iterable<string>) => void,
  *   replacementOf: (node: Object) => ?Object,
@@ -100,17 +100,33 @@ export function createChatEntryCache({ documentRef } = {}) {
    * otherwise build, cache, and return a fresh node. Records the key as seen so
    * a later {@link prune} keeps it.
    *
+   * With ``inPlace`` a changed entry keeps its node and only its content is
+   * parsed anew, so the panel keeps the row where it is and moves nothing: a
+   * folded burst grows this way as its parts arrive (SPEC LA4). The node then
+   * counts as its own replacement, so focus inside it moves to the same
+   * control of its new content.
+   *
    * @param {string} namespace Tab identifier.
    * @param {string} key Stable per-entry identity.
    * @param {string} className CSS class applied to the entry element.
    * @param {string} html Rendered entry HTML (also the cache-validity signature).
+   * @param {{ inPlace?: boolean }} [options] Update a changed entry's node in
+   *   place instead of building a fresh one.
    * @returns {Object} The cached or freshly-built entry node.
    */
-  function materialize(namespace, key, className, html) {
+  function materialize(namespace, key, className, html, { inPlace = false } = {}) {
     const cache = nsMap(namespace);
     seenSet(namespace).add(key);
     const existing = cache.get(key);
     if (existing && existing.html === html) {
+      return existing.node;
+    }
+    if (existing && inPlace) {
+      if (existing.node.className !== className) existing.node.className = className;
+      existing.node.innerHTML = html;
+      existing.html = html;
+      replacements.set(existing.node, existing.node);
+      materialized += 1;
       return existing.node;
     }
     const node = doc.createElement('div');
@@ -125,7 +141,8 @@ export function createChatEntryCache({ documentRef } = {}) {
   }
 
   /**
-   * The node that replaced ``node`` when its entry was last rebuilt.
+   * The node that replaced ``node`` when its entry was last rebuilt; ``node``
+   * itself when the entry was last updated in place.
    *
    * @param {Object} node A node this cache handed out earlier.
    * @returns {?Object} Its replacement, or ``null`` when ``node`` was never

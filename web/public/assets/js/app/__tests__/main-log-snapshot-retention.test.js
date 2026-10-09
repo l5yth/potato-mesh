@@ -118,10 +118,12 @@ test('telemetry log entries survive successive refreshes (A1: no re-aggregation 
     // the intermediate one, leaving 2).
     const chat = env.document.getElementById('chat');
     const html = chat ? chat.innerHTML : '';
+    // Each packet keeps its own telemetry part: a burst holds one per kind (LA4).
+    const kind = '<span class="chat-entry-kind">telemetry</span>';
     assert.equal(
-      countOccurrences(html, 'Broadcasted telemetry'),
+      countOccurrences(html, kind),
       3,
-      `the Log must show all three telemetry entries (saw ${countOccurrences(html, 'Broadcasted telemetry')})`,
+      `the Log must show all three telemetry entries (saw ${countOccurrences(html, kind)})`,
     );
   } finally {
     globalThis.fetch = originalFetch;

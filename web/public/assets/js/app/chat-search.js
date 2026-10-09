@@ -15,6 +15,8 @@
  */
 
 import { CHAT_LOG_ENTRY_TYPES } from './chat-log-tabs.js';
+import { CHAT_LOG_BURST_TYPE } from './chat-log-burst.js';
+import { chatLogEntryText, telemetryLogValues } from './chat-log-detail.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 
 const BASE_SEARCH_KEYS = Object.freeze([
@@ -93,9 +95,13 @@ export function filterChatModel(model = {}, query) {
 }
 
 /**
- * Determine whether a structured chat log entry matches the query.
+ * Determine whether a structured chat log entry matches the query. An entry
+ * matches the words its line shows after the badge, its kind words and
+ * details (`chatLogEntryText`, SPEC LA3), and its records' fields and type
+ * token as before; a folded burst matches when its line or any of its parts
+ * does, and stays whole (SPEC LA4).
  *
- * @param {?Object} entry Chat log entry.
+ * @param {?Object} entry Chat log entry, or a folded burst.
  * @param {string} query Normalised filter query.
  * @returns {boolean} True when the entry should remain visible.
  */
@@ -103,6 +109,12 @@ export function chatLogEntryMatchesQuery(entry, query) {
   if (!query) return true;
   if (!entry || typeof entry !== 'object') {
     return false;
+  }
+  if (valueIncludesQuery(chatLogEntryText(entry), query)) {
+    return true;
+  }
+  if (entry.type === CHAT_LOG_BURST_TYPE) {
+    return entry.parts.some(part => chatLogEntryMatchesQuery(part, query));
   }
   const candidates = [];
   candidates.push(...collectSearchValues(entry.node));
@@ -123,6 +135,8 @@ export function chatLogEntryMatchesQuery(entry, query) {
   } else if (entry.type === CHAT_LOG_ENTRY_TYPES.TELEMETRY) {
     const telemetryHighlights = formatTelemetryHighlights(entry.telemetry || {});
     candidates.push(...highlightsToStrings(telemetryHighlights));
+    // Every value as a line shows it, also one its line leaves to the title.
+    candidates.push(...telemetryLogValues(entry.telemetry).map(value => value.text));
   } else if (entry.type === CHAT_LOG_ENTRY_TYPES.POSITION) {
     const positionHighlights = formatPositionHighlights(entry.position || {});
     candidates.push(...highlightsToStrings(positionHighlights));

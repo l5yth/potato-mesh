@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { chatRadioKey } from './chat-format.js';
+import { chatRadioKey, sharesOneRadio } from './chat-format.js';
 import { extractModemMetadata } from './node-modem-metadata.js';
 
 /**
@@ -96,7 +96,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
 /**
  * Reason annotations for {@link CHAT_LOG_ENTRY_TYPES.NODE_INFO} entries.
  *
- * A node-info entry renders as "Updated node info (<reason>)".  ``advert`` is
+ * A node-info entry renders as "node info · <reason>" (SPEC LA3).  ``advert`` is
  * the generic "this node was heard / its record updated" fallback emitted only
  * when no more-specific event already represents that heard; ``message`` records
  * a decrypted chat message as a node-info update so the message body never
@@ -159,8 +159,9 @@ function resolveSnapshotList(entry) {
  *   }>
  * }} Tab model data. Channels are sorted by {@code messageCount} descending (7-day activity),
  *   with alphabetical label ordering as a tiebreaker. A channel is ``uniform``
- *   when every message names one radio ({@link chatRadioKey}): its lines then
- *   drop the ``[freq][preset]`` tag and protocol icon (SPEC CD2).
+ *   when no two of its messages render different radio tags: a preset code
+ *   and protocol ({@link chatRadioKey}; a message without a preset code
+ *   renders none). Its lines then drop their radio tag (SPEC CD2, LA1, LA5).
  */
 export function buildChatTabModel({
   nodes = [],
@@ -459,9 +460,8 @@ export function buildChatTabModel({
   for (const channel of channelBuckets.values()) {
     channel.entries.sort((a, b) => a.ts - b.ts);
     channel.messageCount = channel.entries.length;
-    // A bucket holds at least the message that created it.
-    const radio = chatRadioKey(channel.entries[0].message);
-    channel.uniform = channel.entries.every(entry => chatRadioKey(entry.message) === radio);
+    // A message without a preset code renders no code and does not count (SPEC LA1).
+    channel.uniform = sharesOneRadio(channel.entries, entry => chatRadioKey(entry.message));
   }
   // Sort channels into three priority tiers (SPEC F1):
   //   0. Default/primary channels (index 0 — LongFast, MediumFast, Public, …),

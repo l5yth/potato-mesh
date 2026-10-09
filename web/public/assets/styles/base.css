@@ -43,10 +43,12 @@
   --announcement-border: #a56a00;
   --danger: #ff6b6b;
   /* One grey family (SPEC GF1): the raised surface of chat, footer, dialogs
-     and popovers, the hairline of surfaces and controls, and secondary text
-     between --fg and --muted. */
+     and popovers, the hairline of surfaces and controls, secondary text
+     between --fg and --muted, and the faint text below --muted (the chat's
+     radio code, SPEC LA5; 4.56:1 on --panel, UX2). */
   --panel: #151c22;
   --line-strong: rgba(255, 255, 255, 0.14);
+  --fg-faint: #788592;
   --fg-soft: #c9d1d9;
   /* Map overlay chrome over the tiles: the panel at 92% and its hairline. */
   --overlay-bg: color-mix(in srgb, var(--panel) 92%, transparent);
@@ -1183,10 +1185,6 @@ body.view-chat .page-shell {
   color: var(--muted);
 }
 
-.chat-entry-copy {
-  font-style: normal;
-}
-
 .chat-entry-reply {
   /* Contains its absolutely positioned .visually-hidden label, which would
      otherwise escape the scrolling panel (SPEC CD4). */
@@ -1203,6 +1201,12 @@ body.view-chat .page-shell {
   display: inline-block;
   border-radius: 4px;
   padding: 0 2px;
+}
+
+/* The badge's corners carry the protocol, as the map marker's shape does
+   (SPEC LA5, UX7): a MeshCore badge is near-square everywhere it shows. */
+.short-name[data-protocol="meshcore"] {
+  border-radius: 1px;
 }
 
 .short-name[data-node-info] {
@@ -3621,16 +3625,6 @@ button:focus-visible,
   max-width: 40vw;
 }
 
-/* Chat hanging indent (UX11, D-033; audit follow-up a): a Log announcement's
-   prefix `[HH:MM:SS][freq][MF]` is 19 characters, so the hang is 19ch —
-   wrapped log lines land under the message column instead of mid-timestamp
-   (the old 8ch stopped inside the clock). A message line puts its time in a
-   grid column instead (SPEC CD1, below). */
-.chat-entry-node {
-  padding-left: 19ch;
-  text-indent: -19ch;
-}
-
 .chat-entry-msg,
 .chat-entry-node {
   /* Break unbreakable tokens (Legend & Chat Fix): `.chat-tabpanel` is
@@ -3638,26 +3632,19 @@ button:focus-visible,
      container. Nothing else in base.css breaks long tokens, so one hex payload,
      long URL, or 39-char long name overflows the panel. `anywhere` (not
      `break-word`) also lowers the entry's min-content width, so it can never
-     demand more width than the panel — wrapped fragments continue under the
-     19ch hang or in the message line's body column. No `overflow-x: hidden`,
-     which would only mask the next regression. */
+     demand more width than the panel — wrapped fragments continue in the
+     line's body column. No `overflow-x: hidden`, which would only mask the
+     next regression. */
   overflow-wrap: anywhere;
 }
 
-/* text-indent is inherited, so the hanging indent re-applies to the inline
-   badge, protocol icon and reply prefix nested in the line and shoves them out
-   of their colour box (audit follow-up 01). Zero it back on those descendants;
-   :where() keeps the reset at specificity 0 so nothing has to fight it. */
-:where(.chat-entry-msg, .chat-entry-node)
-  :where(.short-name, .protocol-icon, .chat-entry-reply) {
-  text-indent: 0;
-}
-
-/* Chat message line (SPEC CD1, design review rc3 C1): the time in a 5ch
-   column and the rest of the line in one body column, so wrapped lines land
-   under the body. The node page keeps its date-bearing `[YYYY-MM-DD HH:MM]`,
-   18 characters, since it lists days without dividers. */
-.chat-entry-msg {
+/* One chat line grid (SPEC CD1, LA1; design review rc3 C1 and rc4 L1): the
+   time in a 5ch column and the rest of the line in one body column, so
+   wrapped lines land under the body, for messages and Log announcements
+   alike. The node page keeps its date-bearing `[YYYY-MM-DD HH:MM]`, 18
+   characters, since it lists days without dividers. */
+.chat-entry-msg,
+.chat-entry-node {
   display: grid;
   grid-template-columns: 5ch minmax(0, 1fr);
   column-gap: 8px;
@@ -3672,6 +3659,30 @@ button:focus-visible,
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* A line that needs a radio tag shows the preset code alone, faint, with
+   frequency, preset and protocol in its title (SPEC LA5). */
+.chat-entry-radio {
+  color: var(--fg-faint);
+}
+
+/* The kind word that follows an announcement's badge, where a colour emoji
+   used to lead (SPEC LA2); the detail after it keeps the line's colour. */
+.chat-entry-kind {
+  color: var(--muted);
+}
+
+/* One click affordance in the chat (SPEC LA6, as DV2 in #nodes): the badge
+   beside a new node's long name opens the same node, so the name underlines
+   only on hover or keyboard focus. Longhands keep the 1px / 2px thickness. */
+.chat-panel .node-long-link {
+  text-decoration-line: none;
+}
+
+.chat-panel .node-long-link:hover,
+.chat-panel .node-long-link:focus-visible {
+  text-decoration-line: underline;
 }
 
 /* Route chip (SPEC SC7, CD3): hop count and flood scope after the message
