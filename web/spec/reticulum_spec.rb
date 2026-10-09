@@ -817,18 +817,20 @@ RSpec.describe "Reticulum protocol support" do
       end
     end
 
-    it "never exposes destination hashes or public keys on the read API" do
+    it "never exposes destination or identity hashes on the node read API" do
       register_reticulum_ingestor
       post_reticulum_nodes
 
       get "/api/nodes?protocol=reticulum"
       payload = JSON.parse(last_response.body)
       expect(payload.length).to eq(1)
-      # `public_key` has never been in a node projection; `dest_hash` is an
-      # on-air identifier and follows the same rule (Invariant II).
+      # The identity's public key is served as stored (SPEC PK1); the identity
+      # hash is served by GET /api/destinations alone (RE2), and `dest_hash`
+      # is an on-air identifier no node projection carries (Invariant II).
+      expect(payload.first["public_key"]).to eq(RETICULUM_PUBLIC_KEY)
+      expect(payload.first).not_to have_key("identity_hash")
       expect(payload.first).not_to have_key("dest_hash")
       expect(payload.first).not_to have_key("destHash")
-      expect(payload.first).not_to have_key("public_key")
     end
 
     it "stores no fabricated radio/telemetry/position values" do
