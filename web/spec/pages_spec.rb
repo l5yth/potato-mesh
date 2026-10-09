@@ -225,6 +225,35 @@ RSpec.describe PotatoMesh::App::Pages do
       expect(html).to include("<td>")
     end
 
+    it "wraps each table in its own scroll box (SPEC PO3)" do
+      path = File.join(pages_dir, "1-test.md")
+      File.write(path, "| A | B |\n| - | - |\n| 1 | 2 |\n\nBetween.\n\n| C |\n| - |\n| 3 |\n")
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-test", slug: "test", title: "Test", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html.scan('<div class="markdown-table-wrapper"><table>').size).to eq(2)
+      expect(html.scan("<table").size).to eq(2)
+      expect(html.scan("</table></div>").size).to eq(2)
+      expect(html).to include("<p>Between.</p>")
+    end
+
+    it "changes the repository's About page by its two table wrappers only (SPEC PO3)" do
+      path = File.expand_path("../pages/1-about.md", __dir__)
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-about", slug: "about", title: "About", path: path,
+      )
+      body = described_class.strip_frontmatter(File.read(path, encoding: "utf-8"))
+      sanitised = described_class.strip_unsafe_html(
+        Kramdown::Document.new(body, **described_class::KRAMDOWN_OPTIONS).to_html,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html.scan('<div class="markdown-table-wrapper">').size).to eq(2)
+      expect(html.gsub('<div class="markdown-table-wrapper">', "").gsub("</table></div>", "</table>")).to eq(sanitised)
+    end
+
     it "does not pass through raw HTML script tags" do
       path = File.join(pages_dir, "1-test.md")
       File.write(path, "<script>alert('xss')</script>\n\nSafe text.")
@@ -332,6 +361,30 @@ RSpec.describe PotatoMesh::App::Pages do
       html = described_class.render_page_content(entry)
       expect(html).to include("<strong>")
       expect(html).not_to include("<script")
+    end
+  end
+
+  # ── wrap_tables ─────────────────────────────────────────────
+
+  describe ".wrap_tables" do
+    it "returns HTML without a table as the same string" do
+      html = "<p>a &amp; b<br>c</p>\n<pre><code>x</code></pre>"
+      expect(described_class.wrap_tables(html)).to equal(html)
+    end
+
+    it "keeps an operator's own wrapper as the table's one box, so its font size cannot compound (SPEC PO3)" do
+      html = '<div class="note markdown-table-wrapper"><table><tbody><tr><td>x</td></tr></tbody></table></div>'
+      expect(described_class.wrap_tables(html)).to eq(html)
+    end
+
+    it "wraps nested tables in a box each and keeps their attributes" do
+      inner = '<table id="inner"><tbody><tr><td>x</td></tr></tbody></table>'
+      html = %(<table class="outer"><tbody><tr><td>#{inner}</td></tr></tbody></table>)
+      expect(described_class.wrap_tables(html)).to eq(
+        '<div class="markdown-table-wrapper"><table class="outer"><tbody><tr><td>' \
+        '<div class="markdown-table-wrapper">' + inner + "</div>" \
+        "</td></tr></tbody></table></div>",
+      )
     end
   end
 
