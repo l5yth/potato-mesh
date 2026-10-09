@@ -162,6 +162,8 @@
 * Web: the Log and channel tabs drop the radio tag when every line with a preset code shows the same code for the same protocol; a chat line that needs one shows only the preset code, such as `MF`, and chat lines no longer show the protocol icon (SPEC LA1/LA5)
 * Web: MeshCore short-name badges have square corners, like their map markers (SPEC LA5)
 * Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
+* Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
+* Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

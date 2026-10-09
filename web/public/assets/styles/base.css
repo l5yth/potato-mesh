@@ -2953,6 +2953,10 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
   background: var(--bg2);
   padding: 0.15em 0.4em;
   border-radius: 4px;
+  /* A key or hash has no break opportunity (SPEC PO2): inline it may break
+     anywhere, so it never widens the page. In a `pre` the code keeps
+     `white-space: pre`, never wraps, and the pre scrolls (DV8). */
+  overflow-wrap: anywhere;
 }
 
 .markdown-body pre {
@@ -2973,8 +2977,19 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
+}
+
+/* A table wider than the column scrolls inside its own box (SPEC PO3):
+   pages.rb wraps every table in `.markdown-table-wrapper`, which takes the
+   table's margin, font size and sideways scroll, so the page never scrolls
+   sideways. The table keeps its table display and fills the column when it
+   fits: `display: block` on the table would shrink it to its content (the
+   About page's tables from 767 to 325.5 px at 1366 px). The bare `th` rule's
+   sticky header now pins inside the wrapper, not to the window. */
+.markdown-body .markdown-table-wrapper {
   margin: 1em 0;
   font-size: 0.9em;
+  overflow-x: auto;
 }
 
 .markdown-body th,
@@ -3107,6 +3122,21 @@ button.legend-item[aria-pressed="false"] .legend-swatch {
   #nodes .nodes-group-header th {
     padding-inline: 4px;
   }
+}
+
+/* Identifiers break inside a word while the table is squeezed (SPEC PO1):
+   one long name without a break opportunity (`mf.mt.turm.ak.ber.sixtopia.net`)
+   or hardware model (`HELTEC_MESH_NODE_T114`) can set the table's min-content
+   past its column, at the start of each tier that shows more columns, and the
+   page scrolled sideways. `main/nodes-table-fit.js` adds the class after each
+   render and on resize while the table, unbroken, is wider than its wrapper.
+   `anywhere`, not `break-word`, lowers the cells' min-content, so the
+   auto-layout table shrinks into the column; the wrapper stays a plain block
+   (DV9, FU10). Without the class the cells keep their words, so a table that
+   fits keeps every column width. */
+#nodes.nodes-table--squeezed td.nodes-col--long-name,
+#nodes.nodes-table--squeezed td.nodes-col--hw-model {
+  overflow-wrap: anywhere;
 }
 
 /* The waiting row keeps generous padding. It is inside #nodes tbody, so the

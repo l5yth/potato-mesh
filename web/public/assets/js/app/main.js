@@ -204,6 +204,7 @@ import {
   BOOT_CACHE_FLAG,
 } from './main/constants.js';
 import { capNodesForRender, buildShowAllRow, SHOW_ALL_BUTTON_CLASS } from './main/nodes-table-cap.js';
+import { watchNodesTableFit } from './main/nodes-table-fit.js';
 import { createKeyedRowReconciler, SIGNATURE_CLOCK_SECONDS } from './main/keyed-rows.js';
 import { captureReaderPlace, restoreReaderPlace } from './main/reader-place.js';
 import {
@@ -373,6 +374,9 @@ export function initializeApp(config) {
   const instanceSelect = document.getElementById('instanceSelect');
   const baseTitle = document.title;
   const nodesTable = document.getElementById('nodes');
+  // Identifier cells break inside a word only while the table would overflow
+  // its column (SPEC PO1): decided after each render and when the column resizes.
+  const nodesTableFit = watchNodesTableFit(nodesTable);
   const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
   const bodyClassList = document.body ? document.body.classList : null;
   const isPrivateMode = document.body && document.body.dataset
@@ -4694,6 +4698,9 @@ export function initializeApp(config) {
     // Keep the waiting row honest (SPEC UX4): present while the node set is
     // empty, gone the moment real rows render.
     syncNodesEmptyRow(tb, nodes.length, document, NODES_TABLE_TOTAL_COLUMNS);
+    // Before the reader's place is restored, which measures the final rows;
+    // a render that changed no row keeps the last fit without measuring.
+    nodesTableFit.check(reconciled);
     restoreReaderPlace(place, {
       tbody: tb,
       elements: reconciled.elements,
@@ -5548,9 +5555,11 @@ export function initializeApp(config) {
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
     const sortedNodes = surfaces.has('table') || surfaces.has('map') ? getFilteredSortedNodes() : null;
+    // The sort arrows before the rows: renderTable's fit check measures the
+    // final header (SPEC PO1).
+    if (surfaces.has('table')) updateSortIndicators();
     if (surfaces.has('table')) renderTable(sortedNodes, nowSec);
     if (surfaces.has('map')) renderMap(sortedNodes, nowSec);
-    if (surfaces.has('table')) updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
     if (surfaces.has('chat')) rerenderChatLog(filterQuery);
