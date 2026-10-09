@@ -34,6 +34,7 @@ import { renderRoleAwareBadge } from '../node-page/badge.js';
 import { innerHtml, withApp } from './main-app-test-helpers.js';
 import { runLiveApp } from './sse-app-harness.js';
 import { ROOT_TOKENS, declarationsFor, resolveToken } from './base-css-rules.js';
+import { visibleText as words } from './visible-text.js';
 
 const { NODE_NEW, NODE_INFO, TELEMETRY, POSITION, NEIGHBOR, WAYPOINT, TRACE } = CHAT_LOG_ENTRY_TYPES;
 
@@ -109,17 +110,6 @@ function afterBadge(html) {
   assert.ok(start >= 0, html);
   const rest = html.slice(html.indexOf('</span>', start) + '</span> '.length);
   return html.includes('<span class="chat-entry-body">') ? rest.slice(0, -'</span>'.length) : rest;
-}
-
-/**
- * Visible words of an HTML fragment, tags removed and non-breaking spaces
- * read as spaces.
- *
- * @param {string} html Fragment.
- * @returns {string} Its text.
- */
-function words(html) {
-  return html.replace(/<[^>]+>/g, '').replace(/&nbsp;| /g, ' ');
 }
 
 /**

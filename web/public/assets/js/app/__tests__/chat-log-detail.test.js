@@ -30,6 +30,7 @@ import { CHAT_LOG_ENTRY_TYPES } from '../chat-log-tabs.js';
 import * as detail from '../chat-log-detail.js';
 import { resolvePositionCoordinates } from '../chat-log-highlights.js';
 import { CHAT_LOG_BURST_TYPE } from '../chat-log-burst.js';
+import { visibleText } from './visible-text.js';
 
 const {
   CHAT_LOG_KIND_WORDS,
@@ -226,7 +227,7 @@ test('a folded burst lists "kind · detail · kind detail", each part titled wit
       + '<span class="chat-entry-kind">telemetry</span> 61% · 3.84 V · util 0.2%</span>',
   );
   assert.equal(
-    html.replace(/<[^>]+>/g, ''),
+    visibleText(html),
     'node info · advert · position 38.0249, -123.0132 · telemetry 61% · 3.84 V · util 0.2%',
     'the line reads as the design shows it',
   );

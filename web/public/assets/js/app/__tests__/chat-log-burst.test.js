@@ -36,6 +36,7 @@ import {
 } from '../chat-log-burst.js';
 import { chatLogEntryKey } from '../main/chat-entry-keys.js';
 import { innerHtml, withApp } from './main-app-test-helpers.js';
+import { visibleText } from './visible-text.js';
 
 const { NODE_INFO, POSITION, TELEMETRY, NEIGHBOR, MESSAGE_ENCRYPTED, NODE_NEW } = CHAT_LOG_ENTRY_TYPES;
 
@@ -151,7 +152,7 @@ test('the Log renders a burst as "SNS1 node info · advert · position … · te
       line.html.startsWith('<span class="chat-entry-time" title="07:41:05 · 869 MHz · MediumFast">07:41</span> <span class="chat-entry-body"><span class="short-name"'),
       line.html,
     );
-    const words = innerHtml({ innerHTML: line.html }).replace(/<[^>]+>/g, '').replace(/ /g, ' ');
+    const words = visibleText(innerHtml({ innerHTML: line.html }));
     assert.equal(words, '07:41 SNS1 node info · advert · position 38.0249, -123.0132 · telemetry 61% · 3.84 V · util 0.2%');
     assert.ok(line.html.includes('title="07:41:06"'), 'the position keeps its own time');
     assert.ok(line.html.includes('title="07:41:09 · Battery: 61%'), 'the telemetry keeps its own time and full set');
