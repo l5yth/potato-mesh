@@ -184,11 +184,20 @@ module PotatoMesh
 
       # Fetch node state optionally scoped by identifier and timestamp.
       #
+      # Each row carries +public_key+, the key the row is bound to (SPEC NI2),
+      # as stored: base64 for Meshtastic, hex for MeshCore and Reticulum
+      # (SPEC PK1).  +compact_api_row+ drops it from a row that holds none.  A
+      # key leaves only with its row, so the opt-out, private-mode and window
+      # filters below hide it with the row (PK2).  +identity_hash+ is not
+      # selected: +GET /api/destinations+ serves it (RE2).
+      #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @param before [Integer, nil] inclusive upper-bound +last_heard+ cursor for
       #   backward pagination (SPEC BP1); nodes newer than this are excluded.
+      # @param protocol [String, nil] protocol the rows must carry
+      #   (+meshtastic+, +meshcore+ or +reticulum+); +nil+ for every protocol.
       # @return [Array<Hash>] compacted node rows suitable for API responses.
       def query_nodes(limit, node_ref: nil, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
@@ -232,7 +241,7 @@ module PotatoMesh
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,
                  latitude, longitude, altitude, lora_freq, modem_preset, protocol,
-                 synthetic
+                 synthetic, public_key
           FROM nodes
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
