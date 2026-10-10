@@ -183,6 +183,11 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: looking up a node by its number no longer scans the nodes table (SPEC SU1)
+* Web: a database upgrade step that fails stops the boot with an error naming the step and leaves the database as it was, instead of logging a warning and serving a half-upgraded database (SPEC SU2)
+* Web: the boot recreates every index from `data/*.sql` that the database lacks, and stops, naming what is missing, when a table or column is still missing after the upgrade (SPEC SU3)
+* Web: a database created by v0.2.0 gains `messages.encrypted`; a database created before v0.6.0 gets the MeshCore text index and the duplicate purge on its first boot, not its second; the upgrade matches column names in any case (SPEC SU4)
+* Web: a process that starts while another one upgrades the same database no longer fails on a duplicate column or a locked database (SPEC SU5)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
