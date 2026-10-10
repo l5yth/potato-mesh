@@ -14,6 +14,8 @@
 
 # frozen_string_literal: true
 
+require_relative "database/schema_guard"
+
 module PotatoMesh
   module App
     module Database
@@ -125,16 +127,36 @@ module PotatoMesh
 
       # Apply any schema migrations required for older installations.
       #
+      # Every step runs in one IMMEDIATE transaction (SPEC SU2, SU5). A boot
+      # that races another boot on the same database waits for the write
+      # lock, then reads the upgraded schema and changes nothing. A failing
+      # step rolls the whole upgrade back and fails the boot with an error
+      # naming the step; the +dest_hash+ DROP is the one step allowed to
+      # fail. A new database gets its full schema here too, in the same
+      # transaction. Column guards match names in any case, as SQLite does
+      # (SPEC SU4), and every index +data/*.sql+ defines that the database
+      # lacks is created last (SPEC SU3).
+      #
       # @return [void]
+      # @raise [SchemaUpgradeError] when a step fails.
       def ensure_schema_upgrades
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
+        db.extend(UpgradeConnection)
+        # Some data/*.sql files set WAL, and journal_mode cannot change
+        # inside a transaction, so the switch comes before the one they run
+        # in. A new file is still in rollback-journal mode: there the switch
+        # takes the write lock, and SQLite reports BUSY at once, without the
+        # busy timeout, while a racing boot holds it. So it retries like the
+        # BEGIN (SPEC SU5).
+        with_busy_retry { db.execute("PRAGMA journal_mode=WAL") }
+        with_busy_retry { db.execute("BEGIN IMMEDIATE") }
 
         node_table_exists = db.get_first_value(
           "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'",
         ).to_i > 0
         if node_table_exists
-          node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }
+          node_columns = schema_column_names(db, "nodes")
           unless node_columns.include?("precision_bits")
             db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
             node_columns << "precision_bits"
@@ -306,9 +328,15 @@ module PotatoMesh
         message_table_exists = db.get_first_value(
           "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages'",
         ).to_i > 0
-        message_columns = message_table_exists ? db.execute("PRAGMA table_info(messages)").map { |row| row[1] } : []
+        message_columns = message_table_exists ? schema_column_names(db, "messages") : []
 
         if message_table_exists
+          # v0.2.0 created messages without this column, and no later boot
+          # added it, so every message insert there failed (SPEC SU4).
+          unless message_columns.include?("encrypted")
+            db.execute("ALTER TABLE messages ADD COLUMN encrypted TEXT")
+          end
+
           unless message_columns.include?("lora_freq")
             db.execute("ALTER TABLE messages ADD COLUMN lora_freq INTEGER")
           end
@@ -342,6 +370,10 @@ module PotatoMesh
           unless message_columns.include?("protocol")
             db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
             db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+            # The MX6 index and the #756 purge below key on protocol; keep
+            # the list current so they run on this boot, not the next one
+            # (SPEC SU4).
+            message_columns << "protocol"
           end
 
           # RF metrics (SPEC RF1/RF2/RF6): hops actually travelled (distinct
@@ -500,7 +532,7 @@ module PotatoMesh
           db.execute_batch(File.read(sql_file))
         end
 
-        instance_columns = db.execute("PRAGMA table_info(instances)").map { |row| row[1] }
+        instance_columns = schema_column_names(db, "instances")
         unless instance_columns.include?("contact_link")
           db.execute("ALTER TABLE instances ADD COLUMN contact_link TEXT")
           instance_columns << "contact_link"
@@ -533,7 +565,7 @@ module PotatoMesh
           db.execute_batch(File.read(telemetry_schema))
         end
 
-        telemetry_columns = db.execute("PRAGMA table_info(telemetry)").map { |row| row[1] }
+        telemetry_columns = schema_column_names(db, "telemetry")
         # The environment expansion plus the extended metric families (TI-A2:
         # power / air-quality / health / local / host / traffic stats and the
         # one-wire probe list) share one idempotent backfill loop; the extended
@@ -562,7 +594,7 @@ module PotatoMesh
           positions_schema = File.expand_path("../../../../data/positions.sql", __dir__)
           db.execute_batch(File.read(positions_schema))
         end
-        position_columns = db.execute("PRAGMA table_info(positions)").map { |row| row[1] }
+        position_columns = schema_column_names(db, "positions")
         unless position_columns.include?("ingestor")
           db.execute("ALTER TABLE positions ADD COLUMN ingestor TEXT")
         end
@@ -578,7 +610,7 @@ module PotatoMesh
           neighbors_schema = File.expand_path("../../../../data/neighbors.sql", __dir__)
           db.execute_batch(File.read(neighbors_schema))
         end
-        neighbor_columns = db.execute("PRAGMA table_info(neighbors)").map { |row| row[1] }
+        neighbor_columns = schema_column_names(db, "neighbors")
         unless neighbor_columns.include?("ingestor")
           db.execute("ALTER TABLE neighbors ADD COLUMN ingestor TEXT")
         end
@@ -596,7 +628,7 @@ module PotatoMesh
           traces_schema = File.expand_path("../../../../data/traces.sql", __dir__)
           db.execute_batch(File.read(traces_schema))
         end
-        trace_columns = db.execute("PRAGMA table_info(traces)").map { |row| row[1] }
+        trace_columns = schema_column_names(db, "traces")
         unless trace_columns.include?("ingestor")
           db.execute("ALTER TABLE traces ADD COLUMN ingestor TEXT")
         end
@@ -612,7 +644,7 @@ module PotatoMesh
           ingestors_schema = File.expand_path("../../../../data/ingestors.sql", __dir__)
           db.execute_batch(File.read(ingestors_schema))
         else
-          ingestor_columns = db.execute("PRAGMA table_info(ingestors)").map { |row| row[1] }
+          ingestor_columns = schema_column_names(db, "ingestors")
           unless ingestor_columns.include?("version")
             db.execute("ALTER TABLE ingestors ADD COLUMN version TEXT")
           end
@@ -656,14 +688,30 @@ module PotatoMesh
           destinations_schema = File.expand_path("../../../../data/destinations.sql", __dir__)
           db.execute_batch(File.read(destinations_schema))
         end
-      rescue SQLite3::SQLException, Errno::ENOENT => e
-        warn_log(
-          "Failed to apply schema upgrade",
-          context: "database.schema",
-          error_class: e.class.name,
-          error_message: e.message,
-        )
+
+        # A new database has no nodes or messages table. They come last, after
+        # the blocks above skipped them as before, so a fresh schema commits
+        # whole in this transaction and a racing boot never reads it half
+        # built (SPEC SU5); init_db then finds the schema present.
+        %w[nodes messages].each do |schema|
+          table_exists = db.get_first_value(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", [schema],
+          ).to_i > 0
+          db.execute_batch(File.read(File.join(SCHEMA_DIRECTORY, "#{schema}.sql"))) unless table_exists
+        end
+
+        # An index an operator dropped comes back here, after every other
+        # step (SPEC SU3).
+        create_missing_schema_indexes(db)
+
+        db.execute("COMMIT")
+      rescue SQLite3::Exception => e
+        step = db.respond_to?(:upgrade_step_label) ? db.upgrade_step_label : "opening the database"
+        raise SchemaUpgradeError,
+              "Schema upgrade step failed: #{step} (#{e.class}: #{e.message.lines.first.to_s.chomp.chomp(":")})"
       ensure
+        # Closing rolls back the transaction a failed step left open, so the
+        # database keeps its pre-boot schema.
         db&.close
       end
     end
