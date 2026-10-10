@@ -26,7 +26,7 @@
  * @module app/__tests__/main-repaint-scope
  */
 
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { NOW, runMapApp, settle } from './live-map-harness.js';
 
@@ -138,7 +138,7 @@ test('a neighbour change repaints the map and the chat, not the table (DR4)', as
   });
 });
 
-test('a filter edit repaints every surface without any new data (DR4)', async () => {
+test('a filter edit repaints every surface without any new data once typing pauses (DR4, DE1)', async () => {
   let filterInput = null;
   /** Register the filter input before boot. @param {Object} env DOM environment. */
   const beforeBoot = env => {
@@ -148,9 +148,17 @@ test('a filter edit repaints every surface without any new data (DR4)', async ()
   };
   await runMapApp({ responses: baseResponses(), beforeBoot }, async ctx => {
     const start = rebuilt(ctx);
-    filterInput.value = 'node';
-    for (const handler of filterInput._listeners.get('input')) handler({ type: 'input' });
-    assertRebuilt(ctx, start, { table: 1, markers: 2, lines: 0, chat: 1 });
+    // The repaint waits until typing pauses (SPEC DE1): fake the window's timer.
+    mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      filterInput.value = 'node';
+      for (const handler of filterInput._listeners.get('input')) handler({ type: 'input' });
+      assertRebuilt(ctx, start, { table: 0, markers: 0, lines: 0, chat: 0 }, 'while the window runs:');
+      mock.timers.tick(200);
+      assertRebuilt(ctx, start, { table: 1, markers: 2, lines: 0, chat: 1 }, 'once typing paused:');
+    } finally {
+      mock.timers.reset();
+    }
   });
 });
 
