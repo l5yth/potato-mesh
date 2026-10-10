@@ -47,7 +47,7 @@ Additional environment variables are optional:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `API_TOKEN` | _required_ | Shared secret used by the ingestor and API clients for authenticated `POST` requests. |
-| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) advertised by the web UI, metadata, and API responses. |
+| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) advertised by the web UI, metadata, and API responses. With a scheme (`https://mesh.example.org`), generated URLs keep that scheme whatever the proxy forwards. |
 | `SITE_NAME` | `"PotatoMesh Demo"` | Title and branding surfaced in the web UI. |
 | `CHANNEL` | `"#LongFast"` | Default LoRa channel label displayed on the dashboard. |
 | `FREQUENCY` | `"915MHz"` | Default LoRa frequency description shown in the UI. |
@@ -125,16 +125,22 @@ terminate TLS in a reverse proxy in front of it. A ready-to-adapt nginx example
 lives at [`deploy/nginx.example.conf`](deploy/nginx.example.conf); the notes
 below explain the parts that matter.
 
-Forwarded headers (required). The app derives its public scheme and host -
-used for `INSTANCE_DOMAIN`, page metadata, the sitemap, and federation links -
-from `X-Forwarded-Proto` and the `Host` header. Forward both, or generated URLs
-resolve to the wrong scheme/host:
+Forwarded headers (required). Generated URLs (page metadata, the sitemap) take
+their scheme from `INSTANCE_DOMAIN` when it names one (`https://mesh.example.org`),
+else from `Forwarded` or `X-Forwarded-Proto`, `http` or `https` only; without an
+`INSTANCE_DOMAIN` their host comes from `Host`. Set `Host` and
+`X-Forwarded-Proto`, and clear `Forwarded`:
 
 ```nginx
 proxy_set_header Host              $host;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header Forwarded         "";
 ```
+
+Security headers. The app sends `Content-Security-Policy` on HTML pages and
+`Referrer-Policy: strict-origin-when-cross-origin` on every response. Do not set
+either header in the proxy.
 
 Static-asset caching. Every JS module and `base.css` is versioned
 (`?v=<APP_VERSION>`) and safe to cache immutably for a year. Images,

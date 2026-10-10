@@ -205,15 +205,23 @@ module PotatoMesh
           # Resolve the canonical absolute base URL for the running request.
           # Prefers an operator-supplied override (+INSTANCE_DOMAIN+) so
           # generated absolute URLs match the public-facing hostname, falling
-          # back to the request's own +base_url+ for development.
+          # back to the request's own host for development. Either way the
+          # scheme is {#public_url_scheme} (SPEC HD4).
           #
           # @return [String] base URL (scheme + authority) without trailing slash.
           def public_base_url
             domain = string_or_nil(app_constant(:INSTANCE_DOMAIN))
-            return request.base_url unless domain
+            "#{public_url_scheme}://#{domain || request.host_with_port}"
+          end
 
-            scheme = request.scheme || "https"
-            "#{scheme}://#{domain}"
+          # The scheme of the public URLs (SPEC HD4): the one +INSTANCE_DOMAIN+
+          # names, else +http+ or +https+ from the forwarded headers as Rack
+          # ranks them, else the request's own ({PotatoMesh::App::PublicScheme}).
+          #
+          # @return [String] +"http"+ or +"https"+.
+          def public_url_scheme
+            string_or_nil(app_constant(:INSTANCE_DOMAIN_SCHEME)) ||
+              PotatoMesh::App::PublicScheme.from_request(request.env)
           end
 
           # Construct the OG image URL referenced from the layout. Operators
@@ -410,17 +418,6 @@ module PotatoMesh
             else
               send_file File.join(settings.public_folder, "potatomesh-logo.svg"), type: "image/svg+xml"
             end
-          end
-
-          app.get "/potatomesh-logo.svg" do
-            path = File.expand_path("potatomesh-logo.svg", settings.public_folder)
-            settings.logger&.info("logo_path=#{path} exist=#{File.exist?(path)} file=#{File.file?(path)}")
-            halt 404, "Not Found" unless File.exist?(path) && File.readable?(path)
-
-            content_type "image/svg+xml"
-            last_modified File.mtime(path)
-            cache_control :public, max_age: 3600
-            send_file path
           end
 
           app.get "/robots.txt" do

@@ -14,6 +14,9 @@
 
 # frozen_string_literal: true
 
+require "erb"
+require "json"
+
 module PotatoMesh
   module App
     # Builds the JSON import map that version-stamps every served JS module.
@@ -28,8 +31,29 @@ module PotatoMesh
     #
     # A module absent from the map degrades to today's unversioned-but-working
     # load — a missing entry can never break a working import.
+    #
+    # Every +?v=+ value is {.version_query}, the URL-encoded version, in the
+    # map's targets, the preload hrefs and +asset_url+ alike, so a preload and
+    # its import share one URL; the JSON is script-safe, so the inline import
+    # map cannot be left early. The Content-Security-Policy hashes {.json} at
+    # boot, the string the layout prints (SPEC HD3, HD6).
     module AssetImportMap
       module_function
+
+      # Escapes that keep JSON inside a +<script>+ element: +<+, +>+ and +&+
+      # as JSON unicode escapes, as the layout's JSON-LD block writes them.
+      JSON_SCRIPT_ESCAPES = { "<" => "\\u003c", ">" => "\\u003e", "&" => "\\u0026" }.freeze
+
+      # The version as a +?v=+ query value: URL-encoded, every byte outside
+      # +A-Z a-z 0-9 - _ . ~+ percent-encoded, so a version holding a space,
+      # quotes, markup or an ampersand (a git tag may) stays one opaque value
+      # that is safe in an attribute (SPEC HD6).
+      #
+      # @param version [#to_s] cache-busting token (the application version).
+      # @return [String] the encoded value, e.g. +"v1.0.0-rc4%2B5-f333f65"+.
+      def version_query(version)
+        ERB::Util.url_encode(version.to_s)
+      end
 
       # Enumerate every served JS module under +js_root+ and map each to its
       # cache-busted URL.
@@ -37,24 +61,27 @@ module PotatoMesh
       # @param js_root [String] absolute path to the served +/assets/js+ dir.
       # @param version [String] cache-busting token (the application version).
       # @return [Hash{String=>Hash{String=>String}}] the import-map document
-      #   (``{"imports" => {"/assets/js/app/main.js" => "...?v=<version>"}}``).
+      #   (``{"imports" => {"/assets/js/app/main.js" => "...?v=<version>"}}``,
+      #   the version as {.version_query} encodes it).
       def document(js_root, version)
+        query = version_query(version)
         imports = module_paths(js_root).each_with_object({}) do |path, acc|
-          acc[path] = "#{path}?v=#{version}"
+          acc[path] = "#{path}?v=#{query}"
         end
         { "imports" => imports }
       end
 
-      # Serialize {document} to a compact JSON string, memoized per
-      # +[js_root, version]+. Both inputs are constant for the life of the
-      # process, so the filesystem is walked at most once per pair.
+      # Serialize {document} to a compact, script-safe JSON string
+      # ({JSON_SCRIPT_ESCAPES}), memoized per +[js_root, version]+. Both inputs
+      # are constant for the life of the process, so the filesystem is walked at
+      # most once per pair, and the policy built at boot hashes these bytes.
       #
       # @param js_root [String] absolute path to the served +/assets/js+ dir.
       # @param version [String] cache-busting token (the application version).
       # @return [String] JSON document suitable for a +<script type="importmap">+.
       def json(js_root, version)
         cache = (@json_cache ||= {})
-        cache[[js_root, version]] ||= JSON.generate(document(js_root, version))
+        cache[[js_root, version]] ||= JSON.generate(document(js_root, version)).gsub(/[<>&]/, JSON_SCRIPT_ESCAPES)
       end
 
       # List the served **ES-module** paths to preload — every
@@ -87,7 +114,7 @@ module PotatoMesh
       def preload_html(js_root, version)
         cache = (@preload_cache ||= {})
         cache[[js_root, version]] ||= preload_paths(js_root)
-          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version}">) }
+          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version_query(version)}">) }
           .join("\n")
       end
 
@@ -186,7 +213,7 @@ module PotatoMesh
         key = [js_root, version, Array(entry_paths).uniq.sort]
         cache[key] ||= import_closure(js_root, entry_paths)
           .select { |path| path.start_with?("/assets/js/app/") }
-          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version}">) }
+          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version_query(version)}">) }
           .join("\n")
       end
 
@@ -217,11 +244,16 @@ module PotatoMesh
       # unchanged — only the cache key differs per release (see
       # {PotatoMesh::Application::APP_VERSION}).
       #
+      # The version goes in URL-encoded ({AssetImportMap.version_query}), so a
+      # version holding quotes or markup cannot leave the +src+ or +href+
+      # attribute it is written into (SPEC HD6).
+      #
       # @param path [String] absolute asset path rooted at the public folder,
       #   e.g. ``"/assets/js/app/index.js"`` or ``"/assets/styles/base.css"``.
-      # @return [String] the path with a ``?v=<APP_VERSION>`` query appended.
+      # @return [String] the path with a ``?v=<APP_VERSION>`` query appended,
+      #   the version URL-encoded.
       def asset_url(path)
-        "#{path}?v=#{app_constant(:APP_VERSION)}"
+        "#{path}?v=#{PotatoMesh::App::AssetImportMap.version_query(app_constant(:APP_VERSION))}"
       end
 
       # Render the JSON import map that version-stamps the entire served JS
@@ -254,8 +286,8 @@ module PotatoMesh
       # The entry ES modules a given view loads, whose transitive closure is the
       # module preload set. Every view boots +index.js+ (the shared layout entry)
       # and the cold-load +boot-prefetch.js+; the charts / federation / node-detail
-      # views additionally boot their own page entry module (their views +import+
-      # it inline). Anything else falls back to the shared base only.
+      # views additionally load their page's boot module, which imports the page
+      # module (SPEC HD3). Anything else falls back to the shared base only.
       #
       # @param view_mode [#to_s, nil] the current view mode (e.g. ``:dashboard``,
       #   ``:charts``, ``:node_detail``).
@@ -263,9 +295,9 @@ module PotatoMesh
       def asset_preload_entry_modules(view_mode)
         entries = ["/assets/js/app/index.js", "/assets/js/app/main/boot-prefetch.js"]
         case view_mode.to_s
-        when "charts" then entries << "/assets/js/app/charts-page.js"
-        when "federation" then entries << "/assets/js/app/federation-page.js"
-        when "node_detail" then entries << "/assets/js/app/node-page.js"
+        when "charts" then entries << "/assets/js/app/charts-page-boot.js"
+        when "federation" then entries << "/assets/js/app/federation-page-boot.js"
+        when "node_detail" then entries << "/assets/js/app/node-page-boot.js"
         end
         entries
       end

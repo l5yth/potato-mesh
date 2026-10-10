@@ -60,6 +60,8 @@ require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
 require_relative "application/asset_cache_control"
+require_relative "application/security_headers"
+require_relative "application/public_scheme"
 require_relative "application/pubsub"
 require_relative "application/pages"
 require_relative "application/instances"
@@ -118,6 +120,9 @@ module PotatoMesh
     INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
     SELF_INSTANCE_ID = Digest::SHA256.hexdigest(INSTANCE_PUBLIC_KEY_PEM)
     INSTANCE_DOMAIN, INSTANCE_DOMAIN_SOURCE = determine_instance_domain
+    # The scheme INSTANCE_DOMAIN names when it is a URL ("http" or "https"),
+    # which pins the scheme of the public URLs (SPEC HD4); nil for a bare host.
+    INSTANCE_DOMAIN_SCHEME = App::PublicScheme.from_instance_domain(ENV["INSTANCE_DOMAIN"])
 
     # Adjust the runtime logger severity to match the DEBUG flag.
     #
@@ -225,6 +230,11 @@ module PotatoMesh
       set :logger, app_logger
       use Rack::CommonLogger, app_logger
       use Rack::Deflater
+      # Content-Security-Policy on HTML pages, Referrer-Policy on every response
+      # (SPEC HD1, HD2). The import map is the pages' one inline script, hashed
+      # here once from the memoised JSON the layout prints (SPEC HD3, AV3).
+      use PotatoMesh::App::SecurityHeaders,
+          content_security_policy: PotatoMesh::App::SecurityHeaders.content_security_policy([asset_import_map_json])
       # Long-cache for version-busted static JS/CSS (returning-visitor caching);
       # the nginx disk-serve path sets the same header first when enabled, so this
       # never overwrites an existing one. The immutable (year-long) pin is used

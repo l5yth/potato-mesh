@@ -22,7 +22,6 @@
     <p class="charts-page__status">Loading aggregated telemetry charts…</p>
   </div>
 </section>
-<script type="module">
-  import { initializeChartsPage } from '<%= asset_url("/assets/js/app/charts-page.js") %>';
-  initializeChartsPage();
-</script>
+<%# A boot module, not an inline script: the Content-Security-Policy allows
+    it by origin (SPEC HD3). %>
+<script type="module" src="<%= asset_url("/assets/js/app/charts-page-boot.js") %>"></script>

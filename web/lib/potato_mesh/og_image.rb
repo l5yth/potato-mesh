@@ -196,6 +196,22 @@ module PotatoMesh
     # {.chromium_flags} keeps them enabled.
     SITE_ISOLATION_FEATURES = %w[site-per-process IsolateOrigins].freeze
 
+    # Environment variables the capture's Chromium keeps (SPEC HD5): the
+    # command search path, the home and temporary directories, the locale and
+    # time zone, the display, fontconfig's configuration, the path of a setuid
+    # sandbox helper (FE3), and the proxy settings it fetches the page through.
+    # {.chromium_env} unsets every other variable.
+    CHROMIUM_ENV_KEYS = %w[
+      PATH HOME TMPDIR LANG LANGUAGE TZ
+      DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_RUNTIME_DIR
+      FONTCONFIG_FILE FONTCONFIG_PATH CHROME_DEVEL_SANDBOX
+      http_proxy https_proxy all_proxy no_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+    ].freeze
+
+    # Prefix of the locale category variables Chromium keeps (+LC_ALL+,
+    # +LC_TIME+, ...).
+    CHROMIUM_ENV_PREFIX = "LC_"
+
     # Build the option hash passed to +Ferrum::Browser.new+. Extracted as
     # a separate method so tests can verify the dimensions without
     # launching the browser.
@@ -206,6 +222,9 @@ module PotatoMesh
     # itself, minus the ones that disable Chromium's security model. Ferrum's
     # +FERRUM_CHROME_DOCKERIZE+ therefore no longer applies; the sandbox
     # follows +OG_IMAGE_NO_SANDBOX+ alone.
+    #
+    # +env+ is {.chromium_env}: Chromium starts without the app's secrets and
+    # settings (SPEC HD5).
     #
     # @return [Hash] keyword options for Ferrum::Browser.
     def browser_options
@@ -219,6 +238,7 @@ module PotatoMesh
         process_timeout: PotatoMesh::Config.og_image_navigation_timeout,
         ignore_default_browser_options: true,
         browser_options: chromium_flags,
+        env: chromium_env,
       }
       browser_path = ENV["FERRUM_BROWSER_PATH"]
       options[:browser_path] = browser_path if browser_path && !browser_path.empty?
@@ -257,6 +277,30 @@ module PotatoMesh
       flags["disable-gpu"] = nil
       flags["no-sandbox"] = nil if PotatoMesh::Config.og_image_no_sandbox?
       flags
+    end
+
+    # The environment the capture's Chromium starts with (SPEC HD5): each
+    # variable of +source+ maps to its value when Chromium keeps it
+    # ({CHROMIUM_ENV_KEYS} and the +LC_*+ locale categories) and to +nil+
+    # otherwise. Ferrum hands the hash to +Process.spawn+, which unsets a
+    # variable mapped to +nil+, so Chromium never sees +API_TOKEN+, the app's
+    # +XDG_*+ directories (the instance key lives there) or any other app
+    # setting.
+    #
+    # @param source [#to_h] the environment to filter, the process's own by
+    #   default.
+    # @return [Hash{String=>String, nil}] every variable name of +source+,
+    #   mapped to the value Chromium gets or to +nil+.
+    def chromium_env(source = ENV)
+      source.to_h.to_h { |key, value| [key, chromium_env_key?(key) ? value : nil] }
+    end
+
+    # True when the capture's Chromium keeps the variable +key+.
+    #
+    # @param key [String] an environment variable name, compared exactly.
+    # @return [Boolean]
+    def chromium_env_key?(key)
+      CHROMIUM_ENV_KEYS.include?(key) || key.start_with?(CHROMIUM_ENV_PREFIX)
     end
 
     # Wait for the dashboard to reach a stable state before capturing.

@@ -38,7 +38,7 @@
       <span class="footer-brand">PotatoMesh</span>
       <% if version && !version.empty? %>
         <span class="footer-separator" aria-hidden="true">·</span>
-        <span class="mono"><%= version %></span>
+        <span class="mono"><%= Rack::Utils.escape_html(version) %></span>
       <% end %>
     </span>
     <%# The links are their own footer tier (Post-Deploy review 02): flex-basis

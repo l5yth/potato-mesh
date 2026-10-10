@@ -49,6 +49,12 @@ RSpec.describe PotatoMesh::App::Helpers do
     it "reads the cache key from the APP_VERSION constant" do
       expect(helper.asset_url("/assets/js/theme.js")).to end_with("?v=1.2.3")
     end
+
+    it "URL-encodes a version holding a space, quotes, markup and an ampersand (SPEC HD6)" do
+      allow(helper).to receive(:app_constant).with(:APP_VERSION).and_return(%(v1.0.0 "<>&'))
+
+      expect(helper.asset_url("/assets/js/theme.js")).to eq("/assets/js/theme.js?v=v1.0.0%20%22%3C%3E%26%27")
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -64,16 +70,16 @@ RSpec.describe PotatoMesh::App::Helpers do
       end
     end
 
-    it "adds the /charts page entry only on the charts view" do
-      expect(helper.asset_preload_entry_modules(:charts)).to eq(base + ["/assets/js/app/charts-page.js"])
+    it "adds the /charts boot module only on the charts view" do
+      expect(helper.asset_preload_entry_modules(:charts)).to eq(base + ["/assets/js/app/charts-page-boot.js"])
     end
 
-    it "adds the /federation page entry only on the federation view" do
-      expect(helper.asset_preload_entry_modules(:federation)).to eq(base + ["/assets/js/app/federation-page.js"])
+    it "adds the /federation boot module only on the federation view" do
+      expect(helper.asset_preload_entry_modules(:federation)).to eq(base + ["/assets/js/app/federation-page-boot.js"])
     end
 
-    it "adds the node-detail page entry only on the node_detail view" do
-      expect(helper.asset_preload_entry_modules(:node_detail)).to eq(base + ["/assets/js/app/node-page.js"])
+    it "adds the node-detail boot module only on the node_detail view" do
+      expect(helper.asset_preload_entry_modules(:node_detail)).to eq(base + ["/assets/js/app/node-page-boot.js"])
     end
 
     it "falls back to the shared base for a nil or unrecognised view" do

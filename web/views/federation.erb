@@ -21,7 +21,6 @@
     <%= erb :"shared/_instances_table" %>
   </div>
 </section>
-<script type="module">
-  import { initializeFederationPage } from '<%= asset_url("/assets/js/app/federation-page.js") %>';
-  initializeFederationPage();
-</script>
+<%# A boot module, not an inline script: the Content-Security-Policy allows
+    it by origin (SPEC HD3). %>
+<script type="module" src="<%= asset_url("/assets/js/app/federation-page-boot.js") %>"></script>
