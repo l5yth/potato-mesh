@@ -117,6 +117,51 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
     end
   end
 
+  # A version a git tag may carry (a space, both quotes, markup, an ampersand)
+  # reaches every URL percent-encoded, and the import map stays JSON a script
+  # element cannot leave (SPEC HD6).
+  describe "with a version holding a space, quotes, markup and an ampersand" do
+    let(:hostile) { %(v1.0.0 "<>&') }
+    let(:encoded) { "v1.0.0%20%22%3C%3E%26%27" }
+
+    it "URL-encodes it in every import-map target" do
+      expect(described_class.document(@js_root, hostile)["imports"].values).to all(end_with("?v=#{encoded}"))
+    end
+
+    it "URL-encodes it in every preload href, so a preload and its import share one URL" do
+      expect(described_class.preload_html(@js_root, hostile)).to eq(
+        %(<link rel="modulepreload" href="/assets/js/app/config.js?v=#{encoded}">\n) +
+          %(<link rel="modulepreload" href="/assets/js/app/main.js?v=#{encoded}">),
+      )
+      expect(described_class.preload_html_for(@js_root, hostile, ["/assets/js/app/main.js"])).to eq(
+        %(<link rel="modulepreload" href="/assets/js/app/main.js?v=#{encoded}">),
+      )
+    end
+
+    it "serializes script-safe JSON: no <, >, & or ' left, and the same document" do
+      json = described_class.json(@js_root, hostile)
+
+      expect(json).not_to match(/[<>&']/)
+      expect(JSON.parse(json)).to eq(described_class.document(@js_root, hostile))
+    end
+
+    it "escapes markup a module path brings into the JSON" do
+      File.write(File.join(@js_root, "app", "a<b>&c.js"), "// an odd name")
+      json = described_class.json(@js_root, "1.2.3")
+
+      expect(json).to include("/assets/js/app/a\\u003cb\\u003e\\u0026c.js")
+      expect(JSON.parse(json)["imports"]).to include("/assets/js/app/a<b>&c.js" => "/assets/js/app/a<b>&c.js?v=1.2.3")
+    end
+  end
+
+  describe ".version_query" do
+    it "percent-encodes every byte outside A-Z, a-z, 0-9, -, _, . and ~" do
+      expect(described_class.version_query(%(v1.0.0 "<>&'))).to eq("v1.0.0%20%22%3C%3E%26%27")
+      expect(described_class.version_query("v1.0.0-rc4+5-f333f65")).to eq("v1.0.0-rc4%2B5-f333f65")
+      expect(described_class.version_query("v1.0.0~rc_4")).to eq("v1.0.0~rc_4")
+    end
+  end
+
   describe ".json" do
     it "emits valid JSON equal to the document" do
       parsed = JSON.parse(described_class.json(@js_root, "9.9.9"))
