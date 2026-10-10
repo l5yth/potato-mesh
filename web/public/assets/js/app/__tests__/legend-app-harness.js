@@ -303,6 +303,8 @@ export async function bootLegendApp({ leaflet = false, searchBox = true } = {}) 
     async typeFilter(text) {
       input.value = text;
       input._listeners.get('input').forEach(handler => handler());
+      // Enter applies the text at once, instead of once typing pauses (SPEC DE2).
+      (input._listeners.get('keydown') || []).forEach(handler => handler({ key: 'Enter' }));
       await settle();
     },
     clickClear: () => click(clearButton),

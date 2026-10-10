@@ -125,14 +125,18 @@ async function bootTable({ nodes, destinations = [], dom: domOptions = {} }) {
       await t.flushLiveRefresh();
     },
     /**
-     * Repaint every surface the way a filter keystroke does (`applyFilter`).
+     * Repaint every surface the way a filter keystroke does (`applyFilter`),
+     * applied at once with Enter (SPEC DE2) rather than once typing pauses.
      * Under SPEC DR4 a ping that changes no node repaints no table, so a step
      * that needs the table rendered with nothing changed repaints explicitly.
      *
      * @returns {void}
      */
     repaint() {
+      const paints = t.getRenderCount();
       dom.filterInput.dispatchEvent({ type: 'input' });
+      dom.filterInput.dispatchEvent({ type: 'keydown', key: 'Enter' });
+      assert.equal(t.getRenderCount(), paints + 1, 'the filter box repainted at once');
     },
     /**
      * Patch one node in the served payload.
