@@ -2370,8 +2370,8 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     end
 
     # The rank-based resolution is MeshCore-specific: a firmware-assigned
-    # Meshtastic sender keeps the historical last-writer-wins overwrite, so the
-    # rule never changes attribution for the other protocol.
+    # Meshtastic sender that differs means a reused packet id, so that copy is
+    # dropped (SPEC KC1) and the rank never decides a Meshtastic attribution.
     it "ranks a nil, blank, or unknown sender id as zero and never supersedes on it" do
       db = open_db
       expect(dp.meshcore_sender_rank(db, nil)).to eq(0)
@@ -2383,7 +2383,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
 
-    it "keeps last-writer-wins for a meshtastic message with a differing sender" do
+    it "drops a meshtastic copy with a differing sender and keeps the stored one (SPEC KC1)" do
       db = open_db
       first_sender = "!aaaa1111"
       second_sender = "!bbbb2222"
@@ -2400,7 +2400,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp.insert_message(db, base.merge("from_id" => first_sender))
       dp.insert_message(db, base.merge("from_id" => second_sender))
 
-      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7101")).to eq(second_sender)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7101")).to eq(first_sender)
     ensure
       db&.close
     end
@@ -3138,7 +3138,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       end.new
     end
 
-    it "updates reply_id when the existing row references a different reply_id" do
+    it "keeps the stored reply_id when a later copy references a different one (SPEC KC2)" do
       db = open_db
       base = {
         "from_id" => "!aabbccdd",
@@ -3149,7 +3149,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       }
       msg_update_harness.insert_message(db, base.merge("id" => 8001))
       msg_update_harness.insert_message(db, base.merge("id" => 8001, "reply_id" => 200))
-      expect(db.get_first_value("SELECT reply_id FROM messages WHERE id = 8001")).to eq(200)
+      expect(db.get_first_value("SELECT reply_id FROM messages WHERE id = 8001")).to eq(100)
     ensure
       db&.close
     end
@@ -3222,23 +3222,18 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     # The fallback path is taken when the SELECT-before-INSERT misses but the
     # INSERT itself trips the PK constraint — i.e., a concurrent ingestor has
     # already inserted the row in between.  We simulate that race by seeding a
-    # row, then forcing the existing-row SELECT to return nil so the INSERT
-    # path runs and trips the constraint deterministically.
+    # row, then hiding it from the copy's first lookup so the INSERT path runs
+    # and trips the constraint deterministically (+hide_stored_message_once+).
     it "applies fallback updates when INSERT trips a constraint violation" do
       db = open_db
       fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "first", "ingestor" => "!0000000a"))
+      hide_stored_message_once(db)
 
-      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
-        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
-          nil
-        else
-          original.call(sql, *args)
-        end
-      end
+      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "second", "emoji" => "e", "ingestor" => "!0000000b"))
 
-      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "second", "ingestor" => "!0000000b"))
-
-      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9001")).to eq("second")
+      # A later copy only fills (SPEC KC2): the stored text stays, the
+      # missing emoji is filled.
+      expect(db.get_first_row("SELECT text, emoji FROM messages WHERE id = 9001")).to eq("text" => "first", "emoji" => "e")
       # First-write-wins for ingestor: the existing value (!0000000a) is preserved.
       expect(db.get_first_value("SELECT ingestor FROM messages WHERE id = 9001")).to eq("!0000000a")
     ensure
@@ -3252,14 +3247,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "encrypted" => "BLOB",
         "text" => nil,
       ))
-
-      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
-        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
-          nil
-        else
-          original.call(sql, *args)
-        end
-      end
+      hide_stored_message_once(db)
 
       fb_harness.insert_message(db, base_msg.merge(
         "id" => 9002,
@@ -3272,6 +3260,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(db.get_first_value("SELECT text FROM messages WHERE id = 9002")).to eq("decrypted")
       expect(db.get_first_value("SELECT lora_freq FROM messages WHERE id = 9002")).to eq(869525)
       expect(db.get_first_value("SELECT modem_preset FROM messages WHERE id = 9002")).to eq("MEDIUM_SLOW")
+      # The recovery merges as the id hit does (SPEC KC3), so the decrypted
+      # copy clears the stored ciphertext there too.
+      expect(db.get_first_value("SELECT encrypted FROM messages WHERE id = 9002")).to be_nil
     ensure
       db&.close
     end
@@ -3279,16 +3270,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     # SPEC MR3 names the insert-race fallback as "precisely where two ingestors'
     # copies meet", so the sender-resolution rule must hold on this path too, in
     # both DB result modes.  Force the fallback the same way as above: seed the
-    # row, then stub the existing-row SELECT to nil so the INSERT trips the PK.
-    def stub_missing_existing_row(db)
-      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
-        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
-          nil
-        else
-          original.call(sql, *args)
-        end
-      end
-    end
+    # row, then hide it from the copy's first lookup so the INSERT trips the PK.
 
     # Two hex node ids so canonical normalisation keeps them verbatim; a synth
     # (rank 0) and a key-backed real (rank 2) so the copies disagree by evidence.
@@ -3315,7 +3297,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db = open_db
       seed_rank_nodes(db)
       fb_harness.insert_message(db, meshcore_copy(9201, synth_sender))
-      stub_missing_existing_row(db)
+      hide_stored_message_once(db)
 
       fb_harness.insert_message(db, meshcore_copy(9201, real_sender))
 
@@ -3331,7 +3313,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db = SQLite3::Database.new(PotatoMesh::Config.db_path)
       seed_rank_nodes(db)
       fb_harness.insert_message(db, meshcore_copy(9202, real_sender))
-      stub_missing_existing_row(db)
+      hide_stored_message_once(db)
 
       fb_harness.insert_message(db, meshcore_copy(9202, synth_sender))
 
@@ -3344,14 +3326,14 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     it "skips fallback from_id handling when the racing copy carries no sender" do
       db = open_db
       fb_harness.insert_message(db, meshcore_copy(9203, real_sender))
-      stub_missing_existing_row(db)
+      hide_stored_message_once(db)
 
       fb_harness.insert_message(db, { "id" => 9203, "to_id" => "^all", "channel" => 3, "text" => "senderless", "protocol" => "meshcore" })
 
-      # No incoming sender → the stored attribution is untouched, and the text
-      # still reconciles through the fallback.
+      # No incoming sender → the stored attribution is untouched, and so is
+      # the stored text: a later copy only fills (SPEC KC2).
       expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 9203")).to eq(real_sender)
-      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9203")).to eq("senderless")
+      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9203")).to eq("shared")
     ensure
       db&.close
     end

@@ -117,6 +117,26 @@ RSpec.shared_context "with isolated db" do
     db
   end
 
+  # Force the INSERT race of +insert_message+ on +db+: the first stored-row
+  # lookup of each message id misses, as when another ingestor's copy lands
+  # between this copy's lookup and its INSERT.  The INSERT then trips the
+  # primary key, and the race recovery's own lookup sees the row (SPEC KC3).
+  #
+  # @param db [SQLite3::Database] open database handle.
+  # @return [void]
+  def hide_stored_message_once(db)
+    lookup = "SELECT #{PotatoMesh::App::DataProcessing::MESSAGE_MERGE_COLUMNS.join(", ")} FROM messages"
+    looked_up = {}
+    allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
+      if sql.start_with?(lookup) && !looked_up.key?(args.first)
+        looked_up[args.first] = true
+        nil
+      else
+        original.call(sql, *args)
+      end
+    end
+  end
+
   # Return the full node row for the canonical test node ID.
   #
   # @param db [SQLite3::Database] open database handle.

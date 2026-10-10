@@ -204,21 +204,10 @@ RSpec.describe "MeshCore message scope" do
       db&.close
     end
 
-    # Force the INSERT race: the existing-row lookup misses, so the INSERT
-    # trips the primary key and the constraint-recovery path runs.
-    #
-    # @param db [SQLite3::Database] open database handle.
-    # @return [void]
-    def hide_existing_row(db)
-      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
-        sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq") ? nil : original.call(sql, *args)
-      end
-    end
-
     it "fills a NULL scope on the INSERT-race path" do
       db = open_db
       dp.insert_message(db, scope_message("ingestor" => "!11111111"))
-      hide_existing_row(db)
+      hide_stored_message_once(db)
       dp.insert_message(db, scope_message("ingestor" => "!22222222", "scope" => "de-be"))
       expect(db.get_first_value("SELECT scope FROM messages WHERE id = 765001")).to eq("de-be")
     ensure
@@ -247,7 +236,7 @@ RSpec.describe "MeshCore message scope" do
     it "never overwrites a stored name on the INSERT-race path" do
       db = open_db
       dp.insert_message(db, scope_message("ingestor" => "!11111111", "scope" => "de-be"))
-      hide_existing_row(db)
+      hide_stored_message_once(db)
       dp.insert_message(db, scope_message("ingestor" => "!22222222", "scope" => "eu"))
       expect(db.get_first_value("SELECT scope FROM messages WHERE id = 765001")).to eq("de-be")
     ensure
@@ -285,7 +274,7 @@ RSpec.describe "MeshCore message scope" do
       db = open_db
       dp.insert_message(db, scope_message("id" => 765_301, "text" => "Alice: race unknown", "scope" => "?"))
       dp.insert_message(db, scope_message("id" => 765_302, "text" => "Alice: race plain", "scope" => "*"))
-      hide_existing_row(db)
+      hide_stored_message_once(db)
       dp.insert_message(db, scope_message("id" => 765_301, "text" => "Alice: race unknown", "scope" => "de-be"))
       dp.insert_message(db, scope_message("id" => 765_302, "text" => "Alice: race plain", "scope" => "de-be"))
       expect(db.get_first_value("SELECT scope FROM messages WHERE id = 765301")).to eq("de-be")

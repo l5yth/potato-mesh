@@ -199,7 +199,7 @@ Single message payload:
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp. Takes precedence over the value inherited from the registered ingestor; values outside the whitelist fall back to the ingestor lookup, then to `"meshtastic"`. Ingestors SHOULD stamp this on every message so the web app classifies senders correctly even before the ingestor heartbeat is processed.
 
-Cross-ingestor deduplication. The `id` field is the sole dedup key - the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
+Cross-ingestor deduplication. The `id` field is the sole dedup key - the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. A later copy fills the `to_id`, `text`, `reply_id`, `emoji` and `portnum` the stored row lacks and never replaces them (SPEC KC2). A copy of any protocol but MeshCore that names a `from_id` other than the stored row's is another message under a reused `id`: the stored row stays, and the copy is dropped and logged at `warn`, with no decrypted payload stored and no node created or refreshed for it (SPEC KC1). MeshCore copies rank their senders instead (SPEC MR3). Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
 
 For MeshCore the canonical fingerprint is:
 
@@ -231,7 +231,7 @@ Single position payload:
 
 - Required: `id` (int), `rx_time` (int), `rx_iso` (string)
 - Node: `node_id` (canonical string), `node_num` (int|nil), `num` (int|nil), `from_id` (canonical string), `to_id` (string|nil)
-- Key: `public_key` (string|absent) - the full public key of the MeshCore advert or contact the position came from. A position carrying one moves the node row only when it is the key the row is bound to; the position row itself is stored either way (SPEC NI3). Meshtastic and Reticulum positions carry none.
+- Key: `public_key` (string|absent) - the full public key of the MeshCore advert or contact the position came from. A position carrying one moves the node row only when it is the key the row is bound to; the position row itself is stored either way (SPEC NI3), unless its `id` is stored for another node (SPEC KC4). Meshtastic and Reticulum positions carry none.
 - Position: `latitude`, `longitude`, `altitude` (floats|nil)
 - Position time: `position_time` (int|nil)
 - Quality: `location_source` (string|nil), `precision_bits` (int|nil), `sats_in_view` (int|nil), `pdop` (float|nil)
@@ -245,6 +245,8 @@ Sentinel handling (issue #782). The same rules as `POST /api/nodes` apply here:
 - `latitude == 0 AND longitude == 0` (within ±1e-9°) → set `latitude`, `longitude`, `altitude`, and `location_source` all to `nil`. Equator / prime-meridian fixes with one non-zero axis survive.
 
 MeshCore providers that obtain a contact advertisement with `(0, 0)` SHOULD drop the entire advertisement rather than queue a coordinate-less position row.
+
+Reused `id` (SPEC KC4). A position whose `id` is stored under a `node_id` it does not name is not stored: the stored row stays, the web app logs it at `warn`, and the position still updates its own node. A stored row without a `node_id` takes the position's.
 
 #### `POST /api/telemetry`
 
@@ -293,6 +295,8 @@ Single telemetry payload:
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
+Reused `id` (SPEC KC4). As for positions: a reading whose `id` is stored under a `node_id` it does not name is not stored and is logged at `warn`; it still updates its own node, and a stored row without a `node_id` takes the reading's.
+
 MeshCore telemetry sourcing (TI-A3). MeshCore exposes other nodes' telemetry only as on-air *pull* requests (there is no unsolicited telemetry broadcast the companion library surfaces), so the MeshCore provider collects it three ways and normalises every reading into this same payload shape with `protocol="meshcore"`: (1) host self-telemetry over the local companion link (`get_bat` → battery millivolts as `voltage`; `get_self_telemetry` → the host's CayenneLPP sensor list), no LoRa airtime, cadence `MESHCORE_SELF_TELEMETRY_SECONDS` (default 3600 s, matching the host-telemetry suppression window; `<= 0` disables); (2) round-robin contact polling (`req_telemetry_sync`, falling back to `req_status_sync` when a node reports no sensors) at one on-air request per `MESHCORE_TELEMETRY_POLL_SECONDS` (default 300 s; `<= 0` disables) regardless of roster size, with each contact additionally capped at one poll per 24 h (a fixed per-node cooldown, stamped at the poll attempt so unreachable nodes are not hammered; when every contact is fresh the tick transmits nothing) - and the transmit policy gates these on-air polls entirely - they require `TX_ENABLED=1` (default `0`, so an ingestor polls no other node unless its operator opts in), and the legacy `RX_ONLY=1` vetoes them regardless; the local self reads in (1) cost no airtime and are unaffected; (3) unsolicited/tag-matched events (`TELEMETRY_RESPONSE`, `STATUS_RESPONSE`, `BATTERY`) whenever the radio surfaces them. CayenneLPP types map to canonical keys (`temperature`, `humidity`→`relative_humidity`, `barometer`→`barometric_pressure`, `voltage`, `current` - scaled A→mA to match the Meshtastic column convention, `illuminance`→`lux`, `percentage`→`battery_level`); status `bat`/`level` millivolt gauges map to `voltage` (V). MeshCore assigns no firmware packet id, so the record `id` is the deterministic 53-bit fingerprint of *(node id, receive second, source kind)* - re-reads of the same source in the same second collapse into one row via the `telemetry.id` upsert.
 
 #### `POST /api/neighbors`
@@ -318,7 +322,7 @@ Single trace payload:
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
-A trace is stored once per `id`. A trace posted without an `id` gets a new row on every POST, so a copy the ingestor sends again after a lost reply (Client delivery, below) is stored twice. Meshtastic traces always carry their packet id.
+A trace is stored once per `id`. A trace whose `id` is stored under a `src` it does not name is not stored: the stored trace keeps its hops, and the web app logs it at `warn`; a stored trace without a `src` takes the trace's (SPEC KC4). A trace posted without an `id` gets a new row on every POST, so a copy the ingestor sends again after a lost reply (Client delivery, below) is stored twice. Meshtastic traces always carry their packet id.
 
 #### `POST /api/waypoints`
 

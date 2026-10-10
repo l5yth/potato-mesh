@@ -52,7 +52,8 @@ module PotatoMesh
         hop_entries.filter_map { |entry| coerce_trace_node_id(entry) }
       end
 
-      # Persist a traceroute observation and its hop path.
+      # Persist a traceroute observation and its hop path.  A trace stored
+      # under its id for another source keeps its row and hops (SPEC KC4).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param payload [Hash] traceroute payload as produced by the ingestor.
@@ -111,7 +112,14 @@ module PotatoMesh
                          elapsed_ms=COALESCE(excluded.elapsed_ms,traces.elapsed_ms),
                          ingestor=COALESCE(NULLIF(traces.ingestor,''), excluded.ingestor),
                          protocol=COALESCE(NULLIF(traces.protocol,'meshtastic'), excluded.protocol)
+                       WHERE traces.src IS NULL OR traces.src = excluded.src
                      SQL
+          # Another source's trace under a stored id leaves that trace and its
+          # hops alone (SPEC KC4).
+          if db.changes.zero?
+            warn_dropped_record(db, "traces", "src", trace_identifier, src, context: "data_processing.insert_trace")
+            return
+          end
 
           trace_id = trace_identifier || db.last_insert_row_id
           return unless trace_id
