@@ -27,6 +27,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDomEnvironment } from './dom-environment.js';
+import { registerNodeDetailOverlay } from './node-overlay-harness.js';
 import { initializeApp } from '../main.js';
 
 /** Minimal config that disables the auto-refresh timer so timing is ours. */
@@ -52,29 +53,8 @@ function jsonResponse(body) {
 /** Yield so the dynamic import + open settle. */
 const settle = (ms = 40) => new Promise(r => setTimeout(r, ms));
 
-/** Register a minimal but functional #nodeDetailOverlay so the lazily-imported
- *  factory returns a real manager (mirrors node-detail-overlay.test.js). */
-function registerOverlay(env) {
-  const noop = () => {};
-  const dialog = { focus: noop, addEventListener: noop, setAttribute: noop, removeAttribute: noop };
-  const closeButton = { addEventListener: noop };
-  const content = { innerHTML: '', addEventListener: noop, replaceChildren: noop };
-  const overlay = {
-    hidden: true,
-    style: { removeProperty: noop },
-    addEventListener: noop,
-    setAttribute: noop,
-    removeAttribute: noop,
-    querySelector(selector) {
-      if (selector === '.node-detail-overlay__dialog') return dialog;
-      if (selector === '.node-detail-overlay__close') return closeButton;
-      if (selector === '.node-detail-overlay__content') return content;
-      return null;
-    },
-  };
-  env.registerElement('nodeDetailOverlay', overlay);
-  return overlay;
-}
+/** Register the shared minimal #nodeDetailOverlay (node-overlay-harness.js). */
+const registerOverlay = env => registerNodeDetailOverlay(env).overlay;
 
 test('lazily imports and memoizes the node-detail overlay manager (frontend perf)', async () => {
   const env = createDomEnvironment({ includeBody: true });

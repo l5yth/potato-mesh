@@ -22,7 +22,14 @@
 
 import { escapeHtml } from '../utils.js';
 import { refreshNodeInformation } from '../node-details.js';
-import { fetchDestinationsForNode, fetchMessages, fetchNodesById, fetchTracesForNode, fetchWaypointsForNode } from '../node-page-data.js';
+import {
+  fetchDestinationsForNode,
+  fetchMessages,
+  fetchNodesById,
+  fetchTracesForNode,
+  fetchWaypointsForNode,
+  requestNodesById,
+} from '../node-page-data.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { buildNeighborRoleIndex } from './role-index.js';
 import { buildTraceRoleIndex } from './traces.js';
@@ -114,6 +121,19 @@ export async function resolveRenderShortHtml(override) {
 }
 
 /**
+ * Whether a supplied node registry can stand in for the ``/api/nodes`` page:
+ * a Map holding at least one node. The dashboard's map is empty before its
+ * first load and on pages without its data pipeline (ACCEPTANCE FP-A5), and
+ * those fetch the page like the standalone node page (SPEC OV1).
+ *
+ * @param {*} nodesById Candidate registry.
+ * @returns {boolean} ``true`` when the registry is usable.
+ */
+function isUsableRegistry(nodesById) {
+  return nodesById instanceof Map && nodesById.size > 0;
+}
+
+/**
  * Fetch node detail HTML for the supplied reference payload.
  *
  * @param {Object} referenceData Node reference object embedded in the DOM.
@@ -123,7 +143,9 @@ export async function resolveRenderShortHtml(override) {
  *   refreshImpl?: Function,
  *   renderShortHtml?: Function,
  *   privateMode?: boolean,
- * }} [options] Optional overrides for testing.
+ *   nodesById?: ?Map<string, Object>,
+ * }} [options] Optional overrides for testing; ``nodesById`` is the
+ *   dashboard's node registry, which the overlay hands over (SPEC OV1).
  * @returns {Promise<string>} HTML fragment for the detail view.
  */
 export async function fetchNodeDetailHtml(referenceData, options = {}) {
@@ -138,21 +160,29 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
   const refreshImpl = typeof options.refreshImpl === 'function' ? options.refreshImpl : refreshNodeInformation;
   const renderShortHtml = await resolveRenderShortHtml(options.renderShortHtml);
 
+  // The node registry: the dashboard's when the overlay hands one over (SPEC
+  // OV1), otherwise the ``/api/nodes`` page, requested beside the node's own
+  // reads and read once they succeeded, so a failed node read drops it
+  // unread and quietly (SPEC OV3). The role indexes fill from it, so only
+  // nodes it lacks are looked up one by one (SPEC OV2), and the chat-entry
+  // renderer resolves MeshCore ``@[Name]`` mentions and reply targets against
+  // it: without it, mention badges degrade to plain ``@[Name]`` text and
+  // leading-mention replies don't surface as ``↩`` reply prefixes.
+  const givenRegistry = isUsableRegistry(options.nodesById) ? options.nodesById : null;
+  const registryRequest = givenRegistry ? null : requestNodesById({ fetchImpl: options.fetchImpl });
   const node = await refreshImpl(referenceData, { fetchImpl: options.fetchImpl });
+  const nodesById = givenRegistry
+    ?? await fetchNodesById({ fetchImpl: options.fetchImpl, responsePromise: registryRequest });
   const neighborRoleIndex = await buildNeighborRoleIndex(node, node.neighbors, {
     fetchImpl: options.fetchImpl,
+    nodesById,
   });
   const messageIdentifier =
     normalized.nodeId ??
     stringOrNull(node.nodeId ?? node.node_id) ??
     (normalized.nodeNum != null ? normalized.nodeNum : null);
-  // Fetch messages, traces, and the global node registry in parallel.  The
-  // registry is used by the chat-entry renderer to resolve MeshCore
-  // ``@[Name]`` mentions and reply targets that reference nodes other than
-  // the page's own node — without it, mention badges silently degrade to
-  // plain ``@[Name]`` text and leading-mention replies don't surface as
-  // ``↩`` reply prefixes.
-  const [messages, traces, waypoints, nodesById, destinations] = await Promise.all([
+  // Fetch messages, traces, waypoints and destinations in parallel.
+  const [messages, traces, waypoints, destinations] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
@@ -162,12 +192,14 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
     }),
-    fetchNodesById({ fetchImpl: options.fetchImpl }),
     // Destinations for the identity page (SPEC RA5); empty for every
     // non-Reticulum node, which is what keeps the section absent there.
     fetchDestinationsForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
   ]);
-  const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
+  const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, {
+    fetchImpl: options.fetchImpl,
+    nodesById,
+  });
   return renderNodeDetailHtml(node, {
     neighbors: node.neighbors,
     messages,
