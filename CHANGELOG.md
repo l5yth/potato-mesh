@@ -164,6 +164,10 @@
 * Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
 * Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
 * Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
+* Web: a position or telemetry record whose `position`, `position.raw`, `position.payload` or `telemetry` section is not a mapping is stored without that section, and the rest of its batch is stored; a JSON-encoded `telemetry` section is read without a top-level time (SPEC IB1)
+* Web: a latitude outside -90 to 90 or a longitude outside -180 to 180 stores no coordinates for a position, node or waypoint; the rest of the record is stored (SPEC IB2)
+* Web/Data: a neighbor snapshot keeps its first 16 neighbors and a trace its first 16 hops; the ingestor cuts both lists before posting (SPEC IB3)
+* Web: a heartbeat `packets` count above 1,000,000,000 records no activity row, and `/api/stats` and `/api/stats/activity` count each stored row at most 1,000,000,000 (SPEC IB4)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

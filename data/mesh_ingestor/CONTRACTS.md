@@ -162,6 +162,8 @@ Sentinel handling (issue #782). Meshtastic firmware emits `(latitude=0, longitud
 
 The web application applies the same normalisation as a safety net so legacy ingestors and replayed payloads cannot reintroduce the sentinels, but new ingestors should strip them at the source so the cross-network contract stays clean.
 
+Coordinates off the globe (SPEC IB2). A `position.latitude` outside -90 to 90 or a `position.longitude` outside -180 to 180 stores neither, and drops `altitude` and `locationSource` with them, as the sentinel does; the rest of the entry is stored.
+
 Wire-format note for federation peers (issue #782). Position time is exposed only as `position_time` (unix seconds) on GET responses (`/api/nodes`, `/api/positions`); the redundant ISO twin (`pos_time_iso` on `/api/nodes`, `position_time_iso` on `/api/positions`) was removed in 0.7.0 - clients format `position_time` themselves. Sentinel rows are compacted by omitting `position_time` rather than emitting `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
 
 MeshCore advert sourcing (capturing adverts from other nodes). A MeshCore node announces itself by broadcasting an *advert* (public key + type + name + optional lat/lon). The ingestor surfaces heard adverts to `POST /api/nodes` through four complementary paths so coverage does not depend on the radio's auto-add setting or roster capacity:
@@ -243,6 +245,9 @@ Sentinel handling (issue #782). The same rules as `POST /api/nodes` apply here:
 
 - `position_time <= 0` → set to `nil`.
 - `latitude == 0 AND longitude == 0` (within ±1e-9°) → set `latitude`, `longitude`, `altitude`, and `location_source` all to `nil`. Equator / prime-meridian fixes with one non-zero axis survive.
+- `latitude` outside -90 to 90 or `longitude` outside -180 to 180, read from any accepted form (the nested `position` mapping and its `latitudeI`/`longitudeI` 1e-7 integers included) → the same four fields are `nil`; the rest of the record is stored (SPEC IB2).
+
+Nested sections (SPEC IB1). The web app also reads a nested `position` mapping, its `raw` mapping and its `payload` mapping. A section that is not a mapping is ignored: the record is stored without it, and the rest of the batch is stored.
 
 MeshCore providers that obtain a contact advertisement with `(0, 0)` SHOULD drop the entire advertisement rather than queue a coordinate-less position row.
 
@@ -289,6 +294,7 @@ Single telemetry payload:
   field names; nested family objects are consulted for values, not only
   for type inference. All metric additions are additive (D8) - absent keys
   are simply omitted, never sent as `null`.
+- Section: `telemetry` (mapping, JSON-encoded object, or absent) - the decoded Telemetry message. Its metric families and its `time` are read when the flat keys are absent. A value that is neither is ignored: the record is stored without it, and the rest of the batch is stored (SPEC IB1).
 - Subtype: `telemetry_type` (string|nil) - optional discriminator identifying which Meshtastic protobuf oneof was set; one of `"device"`, `"environment"`, `"power"`, `"air_quality"`, `"local_stats"`, `"health"`, `"host"`, or `"traffic"` (the last four added additively for the LocalStats / HealthMetrics / HostMetrics / TrafficManagementStats variants, TI-A1). Ingestors that detect the subtype SHOULD include this field; omit rather than send `null` when unknown. The web app infers the type from metric-field presence when absent, so old ingestors remain compatible.
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
@@ -300,7 +306,7 @@ MeshCore telemetry sourcing (TI-A3). MeshCore exposes other nodes' telemetry onl
 Neighbors snapshot payload:
 
 - Node: `node_id` (canonical string), `node_num` (int|nil)
-- `neighbors`: list of entries with `neighbor_id` (canonical string), `neighbor_num` (int|nil), `snr` (float|nil), `rx_time` (int), `rx_iso` (string)
+- `neighbors`: list of entries with `neighbor_id` (canonical string), `neighbor_num` (int|nil), `snr` (float|nil), `rx_time` (int), `rx_iso` (string). The web app stores the first 16 entries it can resolve, a repeated neighbor counting once per entry, so an entry it skips takes no place: one that is no mapping, carries an id in no legitimate form (SPEC SL5), names no neighbor, or names one only by a negative `neighbor_num`. An entry whose `neighbor_id` is blank is looked up by its `neighbor_num`, for at most 16 entries of a snapshot (SPEC IB3).
 - Snapshot time: `rx_time`, `rx_iso`
 - Optional: `node_broadcast_interval_secs` (int|nil), `last_sent_by_id` (canonical string|nil)
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
@@ -312,7 +318,7 @@ Single trace payload:
 
 - Identity: `id` (int|nil), `request_id` (int|nil)
 - Endpoints: `src` (int|nil), `dest` (int|nil)
-- Path: `hops` (list[int])
+- Path: `hops` (list[int]). The web app keeps the first 16 hops that read as node numbers (SPEC IB3).
 - Time: `rx_time` (int), `rx_iso` (string)
 - Metrics: `rssi` (int|nil), `snr` (float|nil), `elapsed_ms` (int|nil)
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
@@ -330,7 +336,7 @@ emitter.
 - Required: `id` (int - the sender-assigned waypoint id, not a packet id), `rx_time` (int), `rx_iso` (string)
 - Author: `node_id` (canonical string), `node_num` (int|nil), `from_id` (string/int)
 - Content: `name` (string|nil), `description` (string|nil), `icon` (int|nil - unicode codepoint rendered as the marker glyph)
-- Position: `latitude`, `longitude` (floats|nil; the protobuf `latitude_i`/`longitude_i` 1e-7 integer forms are also accepted). The paired `(0, 0)` no-fix sentinel is collapsed to NULL on both axes (issue #782 rules).
+- Position: `latitude`, `longitude` (floats|nil; the protobuf `latitude_i`/`longitude_i` 1e-7 integer forms are also accepted). The paired `(0, 0)` no-fix sentinel is collapsed to NULL on both axes (issue #782 rules). A latitude outside -90 to 90 or a longitude outside -180 to 180 stores neither; the waypoint is stored (SPEC IB2).
 - Lifecycle: `expire` (int unix|nil - `0`/absent means never expires and is stored as NULL), `locked_to` (canonical string or int node num|nil - `0` means unlocked; stored as the canonical `!%08x` id)
 - RF/meta: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil), `payload_b64` (string|nil), `ingestor`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
@@ -360,9 +366,9 @@ Heartbeat payload:
 - `version` (string)
 - Optional: `lora_freq`, `modem_preset`
 - Optional: `protocol` (string; `"meshtastic"`, `"meshcore"` or `"reticulum"`, case and surrounding spaces ignored) - declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent or any other value (SPEC SL7)
-- Optional: `packets` (int ≥ 0) - mesh-activity delta (SPEC MA1/MA2). The merged count of *every* frame this ingestor handled since its previous heartbeat: all received frames (including ignored / errored / unimplemented) plus its own transmissions (announcement + MeshCore telemetry polls), counted at the earliest receive/transmit seam so nothing is under-reported. It is a per-interval delta (reset on each send), not a since-boot cumulative. Additive and backward-compatible: an absent or negative value records no activity, so pre-feature ingestors are unaffected.
+- Optional: `packets` (int from 0 to 1000000000) - mesh-activity delta (SPEC MA1/MA2, IB4). The merged count of *every* frame this ingestor handled since its previous heartbeat: all received frames (including ignored / errored / unimplemented) plus its own transmissions (announcement + MeshCore telemetry polls), counted at the earliest receive/transmit seam so nothing is under-reported. It is a per-interval delta (reset on each send), not a since-boot cumulative. Additive and backward-compatible: an absent or negative value records no activity, so pre-feature ingestors are unaffected. A value above 1000000000 records no activity either.
 
-Mesh-activity time-series (SPEC MA3). Each heartbeat carrying a non-negative `packets` value appends one append-only row to the `ingestor_activity` table (`ingestor_id`, `at`, `packets`, `protocol`; `data/ingestor_activity.sql`); the `ingestors` snapshot row is upserted as before. A heartbeat whose `node_id`, `last_seen_time` and `packets` equal a stored row's `ingestor_id`, `at` and `packets` appends none: it is the same heartbeat sent again after a lost reply (SPEC UR7). Each ingestor's contribution is stored separately (never pre-summed) so a packets/hour moving average is computable across time × protocol × multiple ingestors. The row is best-effort - a failed activity insert never sinks the liveness heartbeat (still `201`). Rows are pruned by the retention worker on `at`. The read-side aggregate is served by `GET /api/stats` (`<scope>.packets.hour`, below).
+Mesh-activity time-series (SPEC MA3). Each heartbeat carrying a `packets` value from 0 to 1000000000 appends one append-only row to the `ingestor_activity` table (`ingestor_id`, `at`, `packets`, `protocol`; `data/ingestor_activity.sql`); the `ingestors` snapshot row is upserted as before. A heartbeat whose `node_id`, `last_seen_time` and `packets` equal a stored row's `ingestor_id`, `at` and `packets` appends none: it is the same heartbeat sent again after a lost reply (SPEC UR7). Each ingestor's contribution is stored separately (never pre-summed) so a packets/hour moving average is computable across time × protocol × multiple ingestors. The row is best-effort - a failed activity insert never sinks the liveness heartbeat (still `201`). Rows are pruned by the retention worker on `at`. The read-side aggregate is served by `GET /api/stats` (`<scope>.packets.hour`, below).
 
 Protocol propagation: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field inherit its `protocol` value at write time when no explicit per-record `protocol` stamp is present. Per-record stamps take precedence - the ingestor heartbeat default only kicks in when the per-record field is absent or malformed.
 
@@ -370,7 +376,7 @@ POST response & validation (0.7.0). Every `POST /api/*` ingest route returns `20
 
 Client delivery (SPEC UR1-UR6). The ingestor keeps one upload queue per target instance (each `INSTANCE_DOMAIN` entry), in memory only, so an instance that is down or slow holds up no other, and a record it missed is sent to it later while the others go on. Any `2xx` is delivered. No redirect is followed: a `3xx`, or a `4xx` other than `408`, `425` and `429`, drops the record for that instance with a warning that names the status (and, for a redirect whose target parses, the target host). A connect failure, a timeout, a `408`, `425` or `429`, or a `5xx` pauses that instance's queue, 5 s doubling to 60 s per failure and reset by a `2xx`, each pause varied at random by up to 20% within those bounds, and at least the answer's `Retry-After` (seconds or an HTTP date, up to an hour, never varied), and the record is sent again first among the records of its priority class; a `5xx` other than `502`, `503`, `504` and Cloudflare's `52x` also counts against the record, which is dropped after the fourth such answer. A record is also dropped at its eighth attempt with an unknown outcome: the reply timed out, or a `5xx` came back other than `502`, `503`, `521` to `523` and `525` to `529`. Those say the request never reached the instance or the server behind its proxy, and count toward neither limit. A queue holds 10,000 records, none older than 24 hours from when it was queued; a full queue drops the oldest record of its lowest priority class first: records at the default priority (a router's presence update), then telemetry, waypoints, positions, traces, neighbors, messages, nodes, and heartbeats last. Records of one class reach an instance in the order they were queued, a resent one included. A record whose reply was lost is sent again, so a route may get a copy it already stored: messages, positions, telemetry and traces collapse on `id`, waypoints on `(id, protocol)`, nodes and neighbors are upserted, a resent heartbeat adds no activity row, and only a trace without an `id` is stored twice.
 
-Field limits (SPEC SL1-SL10). Every ingest write bounds the strings it stores, in UTF-8 bytes, and still answers 201. Free text (T) is cut to its longest prefix of whole grapheme clusters within the cap (whole code points when one cluster alone is longer). A token (N: an id, key, enum label or encoded payload) over its cap is stored as `NULL`. A value within its cap is stored as posted. A numeric field is stored as a number or `NULL`, never as text: a numeric string such as `"5.5"` is converted, and text that is no number, a mapping or a list is stored as `NULL` (node `hopsAway`, `snr`, `rssi`, `isFavorite`, `user.isUnmessagable`, `deviceMetrics.*` and `position.altitude`; message `channel`, `snr`, `rssi` and `hop_limit`; every other numeric field was already converted). In every numeric field, an integer outside the signed 64-bit range and a number that is not finite are stored as `NULL`. Rows stored before the caps existed are left as they are and age out under retention.
+Field limits (SPEC SL1-SL10). Every ingest write bounds the strings it stores, in UTF-8 bytes, and still answers 201. Free text (T) is cut to its longest prefix of whole grapheme clusters within the cap (whole code points when one cluster alone is longer). A token (N: an id, key, enum label or encoded payload) over its cap is stored as `NULL`. A value within its cap is stored as posted. A numeric field is stored as a number or `NULL`, never as text: a numeric string such as `"5.5"` is converted, and text that is no number, a mapping or a list is stored as `NULL` (node `hopsAway`, `snr`, `rssi`, `isFavorite`, `user.isUnmessagable`, `deviceMetrics.*` and `position.altitude`; message `channel`, `snr`, `rssi` and `hop_limit`; every other numeric field was already converted). In every numeric field, an integer outside the signed 64-bit range and a number that is not finite are stored as `NULL`. A heartbeat's `packets` above 1000000000 records no activity row, and `GET /api/stats` and `GET /api/stats/activity` count each stored row at most 1000000000 (SPEC IB4). Rows stored before the caps existed are left as they are and age out under retention.
 
 | Field | Cap (bytes) | Policy |
 | --- | --- | --- |
@@ -392,11 +398,13 @@ Field limits (SPEC SL1-SL10). Every ingest write bounds the strings it stores, i
 | every `rx_iso` | 32 | N; the web app derives a missing one from `rx_time` |
 | telemetry `user_string` | 256 | T, wherever the record nests it |
 | telemetry `one_wire_temperature` | 8 entries | the first 8 are kept |
+| neighbor snapshot `neighbors` | 16 entries | the first 16 are kept (SPEC IB3) |
+| trace `hops` | 16 entries | the first 16 are kept (SPEC IB3) |
 | waypoint `name` | 128 | T |
 | waypoint `description` | 512 | T |
 | heartbeat `version` | 64 | T |
 
-Each cap sits well above the longest value the radio protocols produce. The ingestor trims a string longer than its cap plus 64 bytes, on a code-point boundary, before it posts it (`data/mesh_ingestor/field_limits.py`, SPEC SL8); the web app makes the final cut (`web/lib/potato_mesh/application/data_processing/field_limits.rb`). A field added to a payload gets a cap in both tables.
+Each cap sits well above the longest value the radio protocols produce. The ingestor trims a string longer than its cap plus 64 bytes, on a code-point boundary, before it posts it (`data/mesh_ingestor/field_limits.py`, SPEC SL8); the web app makes the final cut (`web/lib/potato_mesh/application/data_processing/field_limits.rb`). The ingestor keeps the first 16 entries of a snapshot's `neighbors` and a trace's `hops` (SPEC IB3). A field added to a payload gets a cap in both tables.
 
 A signed instance field is never cut, since a cut value no longer matches its signature (SPEC SL6). `POST /api/instances` answers `400 {"error":"name exceeds 256 bytes"}` (likewise `version`, `channel`, `frequency` and `contact_link`), `400 {"error":"public_key exceeds 2048 bytes"}` and `400 {"error":"signature exceeds 1024 bytes"}` before it checks the signature; a crawl skips such a record from a peer's `/api/instances` and logs `warn` "Discarded remote instance entry" with that reason.
 
@@ -671,7 +679,7 @@ One row per announced destination, newest `last_heard` first.
   `messages`, it is not privacy-gated
   (packets are a public aggregate, no message content). Additive to the 0.7.x
   `/api/stats` tree - no version bump; the ingestor dogfeeds it for the activity
-  announcement (MA6).
+  announcement (MA6). Each stored row counts at most 1000000000 (SPEC IB4).
 - `sampled` is unchanged: always `false` (the counts are exact, not sampled).
 
 ### GET /api/stats/activity packets/hour time-series (SPEC F2)
@@ -695,8 +703,8 @@ rate; `total` is the SUM across protocols (matching the live
 `<scope>.packets.hour`, SPEC MA4). Every known protocol (`meshcore`,
 `meshtastic`, `reticulum`) emits its own series key; `reticulum` originally
 folded into `total` without a key and went live with the Reticulum ingestor
-(SPEC F2-2 as amended). Buckets are ascending by `bucket_start`. Additive,
-read-side - no version bump.
+(SPEC F2-2 as amended). Buckets are ascending by `bucket_start`. Each stored row
+counts at most 1000000000 (SPEC IB4). Additive, read-side - no version bump.
 
 ### GET /api/events live-update stream (SSE)
 

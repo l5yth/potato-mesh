@@ -44,12 +44,14 @@ module PotatoMesh
       # Extract hop identifiers from a traceroute payload preserving order.
       #
       # @param hops_value [Object] raw hops array or path collection.
-      # @return [Array<Integer>] ordered list of coerced hop identifiers.
+      # @return [Array<Integer>] ordered list of the first
+      #   {FieldLimits::TRACE_HOP_ENTRIES} coerced hop identifiers; each may
+      #   mint a placeholder node, so the rest are dropped (SPEC IB3).
       def normalize_trace_hops(hops_value)
         return [] if hops_value.nil?
 
         hop_entries = hops_value.is_a?(Array) ? hops_value : [hops_value]
-        hop_entries.filter_map { |entry| coerce_trace_node_id(entry) }
+        hop_entries.lazy.filter_map { |entry| coerce_trace_node_id(entry) }.first(FieldLimits::TRACE_HOP_ENTRIES)
       end
 
       # Persist a traceroute observation and its hop path.
