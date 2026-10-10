@@ -71,6 +71,12 @@ module PotatoMesh
       # issue #782 for rationale.
       NULL_ISLAND_EPSILON = 1e-9
 
+      # Latitudes on the globe, in degrees (SPEC IB2).
+      LATITUDE_RANGE = (-90.0..90.0)
+
+      # Longitudes on the globe, in degrees (SPEC IB2).
+      LONGITUDE_RANGE = (-180.0..180.0)
+
       # Collapse a Meshtastic +position.time+ candidate to +nil+ whenever it
       # represents the firmware "no GPS lock" sentinel.  Meshtastic emits
       # +time = 0+ until a fresh GPS fix is acquired, and SQLite happily stores
@@ -104,13 +110,20 @@ module PotatoMesh
       # axis; the caller can then decide whether the surviving axis is enough
       # to keep the row.
       #
+      # A latitude outside {LATITUDE_RANGE} or a longitude outside
+      # {LONGITUDE_RANGE} names no place, so the pair collapses to
+      # +[nil, nil]+ as the sentinel does: a latitude of 398, or an int32
+      # +latitudeI+ of 2147483647 read as 214.7 degrees (SPEC IB2).
+      #
       # @param lat [Object] raw latitude candidate.
       # @param lon [Object] raw longitude candidate.
       # @return [Array(Float, Float)] +[lat_f, lon_f]+ as floats, with +nil+
-      #   substituted on either axis when sentinel/invalid.
+      #   substituted on either axis when sentinel/invalid, and on both when
+      #   either axis is off the globe.
       def normalize_lat_lon(lat, lon)
         lat_f = coerce_float(lat)
         lon_f = coerce_float(lon)
+        return [nil, nil] if (lat_f && !LATITUDE_RANGE.cover?(lat_f)) || (lon_f && !LONGITUDE_RANGE.cover?(lon_f))
         return [lat_f, lon_f] if lat_f.nil? || lon_f.nil?
         if lat_f.abs < NULL_ISLAND_EPSILON && lon_f.abs < NULL_ISLAND_EPSILON
           return [nil, nil]

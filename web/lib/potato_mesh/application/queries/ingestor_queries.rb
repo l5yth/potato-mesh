@@ -46,6 +46,11 @@ module PotatoMesh
       # deduped by the per-protocol MAX). +reticulum+ went live with the
       # Reticulum ingestor (#888); it was a zero stub before that.
       #
+      # Each stored row counts at most
+      # {DataProcessing::FieldLimits::MAX_HEARTBEAT_PACKETS} (SPEC IB4), the
+      # cap ingest applies, so a row stored before that cap cannot make the
+      # sum overflow SQLite's signed 64-bit range.
+      #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
       # @return [Hash{String => Integer}] +{ "total", "meshcore", "meshtastic",
@@ -58,9 +63,9 @@ module PotatoMesh
 
         rows = with_busy_retry do
           handle.execute(
-            "SELECT ingestor_id, protocol AS p, SUM(packets) AS total " \
+            "SELECT ingestor_id, protocol AS p, SUM(MIN(packets, ?)) AS total " \
             "FROM ingestor_activity WHERE at >= ? GROUP BY ingestor_id, protocol",
-            [cutoff],
+            [DataProcessing::FieldLimits::MAX_HEARTBEAT_PACKETS, cutoff],
           )
         end
 
@@ -107,7 +112,10 @@ module PotatoMesh
       # (+meshcore+/+meshtastic+/+reticulum+) is emitted as a key, mirroring
       # {#query_packets_per_hour}. The window is clamped to the
       # 28-day visibility floor (C4); the route pre-validates the bucket count
-      # against +MAX_QUERY_LIMIT+ and this query caps the row count too.
+      # against +MAX_QUERY_LIMIT+ and this query caps the row count too. Each
+      # stored row counts at most
+      # {DataProcessing::FieldLimits::MAX_HEARTBEAT_PACKETS}, as in
+      # {#query_packets_per_hour} (SPEC IB4).
       #
       # @param window_seconds [Integer] span to include, in seconds.
       # @param bucket_seconds [Integer] bucket width, in seconds.
@@ -130,11 +138,11 @@ module PotatoMesh
         since_threshold = normalize_since_threshold(since, floor: reference_now - window)
 
         rows = with_busy_retry do
-          handle.execute(<<~SQL, [bucket, bucket, since_threshold, MAX_QUERY_LIMIT])
+          handle.execute(<<~SQL, [bucket, bucket, DataProcessing::FieldLimits::MAX_HEARTBEAT_PACKETS, since_threshold, MAX_QUERY_LIMIT])
             SELECT bucket_start, p, MAX(ingestor_total) AS protocol_max
             FROM (
               SELECT ((at / ?) * ?) AS bucket_start, protocol AS p, ingestor_id,
-                     SUM(packets) AS ingestor_total
+                     SUM(MIN(packets, ?)) AS ingestor_total
               FROM ingestor_activity
               WHERE at >= ?
               GROUP BY bucket_start, p, ingestor_id

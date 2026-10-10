@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Loose byte caps on the strings the ingestor posts (SPEC SL8).
+"""Loose byte caps on the strings the ingestor posts (SPEC SL8), and list caps.
 
 The web app holds the final caps, in UTF-8 bytes, and cuts free text on a
 grapheme-cluster boundary
@@ -25,6 +25,13 @@ stores the same text; the trim only keeps an oversized value off the wire.  A
 protobuf parses a string of any length, whatever the firmware allows, so a
 node name can arrive at 60 kB.
 
+A list is cut to the web's entry cap exactly, keeping its first entries
+(SPEC IB3): a neighbour snapshot's ``neighbors`` and a trace's ``hops``, each
+entry of which the web app stores as a node.  One UDP datagram carries 16,000
+route entries or 4,000 neighbours.  Every entry the ingestor posts names a
+node, so the web app keeps the same first entries from the cut list as from
+the whole one.
+
 :func:`bound_post_payload` runs once per payload, in
 :func:`~data.mesh_ingestor.queue._queue_post_json`, the one place every POST
 to the web app passes.
@@ -32,7 +39,7 @@ to the web app passes.
 
 from __future__ import annotations
 
-from typing import Final, Mapping
+from typing import Callable, Final, Mapping
 
 LOOSE_MARGIN_BYTES: Final[int] = 64
 """Bytes kept past a web cap; the web's cut reads the same margin."""
@@ -60,6 +67,12 @@ CAPS: Final[Mapping[str, int]] = {
     "INGESTOR_VERSION": 64,
 }
 """Web caps in UTF-8 bytes, named as the web's ``<NAME>_BYTES`` constants."""
+
+ENTRY_CAPS: Final[Mapping[str, int]] = {
+    "NEIGHBOR": 16,
+    "TRACE_HOP": 16,
+}
+"""Web caps in list entries, named as the web's ``<NAME>_ENTRIES`` constants."""
 
 _NODE_FIELDS: Final[Mapping[tuple[str, ...], int]] = {
     ("user", "longName"): CAPS["LONG_NAME"],
@@ -131,6 +144,12 @@ ROUTE_FIELDS: Final[Mapping[str, Mapping[tuple[str, ...], int]]] = {
 }
 """Capped string fields of each POST route, as nested key paths."""
 
+ROUTE_LISTS: Final[Mapping[str, Mapping[tuple[str, ...], int]]] = {
+    "/api/neighbors": {("neighbors",): ENTRY_CAPS["NEIGHBOR"]},
+    "/api/traces": {("hops",): ENTRY_CAPS["TRACE_HOP"]},
+}
+"""Capped list fields of each POST route, as key paths (SPEC IB3)."""
+
 _KEYED_ROUTES: Final[frozenset[str]] = frozenset({"/api/nodes"})
 """Routes whose payload maps a node id to each record."""
 
@@ -162,28 +181,76 @@ def loose_cut(text: str, cap: int) -> str:
     return encoded[:limit].decode("utf-8", "ignore")
 
 
-def _bound_path(value: object, path: tuple[str, ...], cap: int) -> object:
-    """Trim the string at ``path`` inside ``value``, copying what changes.
+def _cut_text(value: object, cap: int) -> object:
+    """Trim a string field loosely; leave any other value alone.
+
+    Parameters:
+        value: Value of a capped string field.
+        cap: Web cap of the field in UTF-8 bytes.
+
+    Returns:
+        :func:`loose_cut` of a string, or ``value`` itself.
+    """
+
+    return loose_cut(value, cap) if isinstance(value, str) else value
+
+
+def _cut_list(value: object, cap: int) -> object:
+    """Keep the first ``cap`` entries of a list field (SPEC IB3).
+
+    Parameters:
+        value: Value of a capped list field.
+        cap: Web cap of the field in entries.
+
+    Returns:
+        ``value`` itself when it is no list or fits, otherwise a new list of
+        its first ``cap`` entries.
+    """
+
+    if isinstance(value, list) and len(value) > cap:
+        return value[:cap]
+    return value
+
+
+_Rule = tuple[tuple[str, ...], int, Callable[[object, int], object]]
+"""A capped field: its key path, its cap, and the cut that applies it."""
+
+_ROUTE_RULES: Final[Mapping[str, tuple[_Rule, ...]]] = {
+    route: tuple(
+        [(path, cap, _cut_text) for path, cap in ROUTE_FIELDS.get(route, {}).items()]
+        + [(path, cap, _cut_list) for path, cap in ROUTE_LISTS.get(route, {}).items()]
+    )
+    for route in ROUTE_FIELDS.keys() | ROUTE_LISTS.keys()
+}
+"""Every cut of each POST route: its string fields, then its list fields."""
+
+
+def _bound_path(
+    value: object,
+    path: tuple[str, ...],
+    cap: int,
+    cut: Callable[[object, int], object],
+) -> object:
+    """Cut the field at ``path`` inside ``value``, copying what changes.
 
     Parameters:
         value: Mapping at the current level, or any other value.
         path: Remaining keys, outermost first.
-        cap: Web cap of the field in UTF-8 bytes.
+        cap: Web cap of the field, in bytes or entries.
+        cut: :func:`_cut_text` or :func:`_cut_list`.
 
     Returns:
-        ``value`` itself when nothing at ``path`` needs a trim, otherwise a
-        shallow copy of each level down to the trimmed string.
+        ``value`` itself when nothing at ``path`` needs a cut, otherwise a
+        shallow copy of each level down to the cut value.
     """
 
     if not isinstance(value, dict) or path[0] not in value:
         return value
     current = value[path[0]]
     if len(path) > 1:
-        bounded = _bound_path(current, path[1:], cap)
-    elif isinstance(current, str):
-        bounded = loose_cut(current, cap)
+        bounded = _bound_path(current, path[1:], cap, cut)
     else:
-        bounded = current
+        bounded = cut(current, cap)
     if bounded is current:
         return value
     copy = dict(value)
@@ -191,25 +258,25 @@ def _bound_path(value: object, path: tuple[str, ...], cap: int) -> object:
     return copy
 
 
-def _bound_record(record: object, fields: Mapping[tuple[str, ...], int]) -> object:
-    """Trim every capped field of one record.
+def _bound_record(record: object, rules: tuple[_Rule, ...]) -> object:
+    """Cut every capped field of one record.
 
     Parameters:
         record: One record of a payload.
-        fields: Capped field paths of the route, with their caps.
+        rules: Capped fields of the route, with their caps and cuts.
 
     Returns:
-        ``record`` itself when every field fits, otherwise a trimmed copy.
+        ``record`` itself when every field fits, otherwise a cut copy.
     """
 
     bounded = record
-    for path, cap in fields.items():
-        bounded = _bound_path(bounded, path, cap)
+    for path, cap, cut in rules:
+        bounded = _bound_path(bounded, path, cap, cut)
     return bounded
 
 
 def bound_post_payload(path: str, payload: object) -> object:
-    """Trim the oversized strings of a payload bound for ``path``.
+    """Trim the oversized strings and lists of a payload bound for ``path``.
 
     The payload is never modified: a payload whose fields all fit comes back
     as the same object, and one with an oversized field comes back as a copy
@@ -224,30 +291,32 @@ def bound_post_payload(path: str, payload: object) -> object:
         The payload, trimmed.
     """
 
-    fields = ROUTE_FIELDS.get(path)
-    if fields is None:
+    rules = _ROUTE_RULES.get(path)
+    if rules is None:
         return payload
     if isinstance(payload, list):
-        records = [_bound_record(record, fields) for record in payload]
+        records = [_bound_record(record, rules) for record in payload]
         if all(new is old for new, old in zip(records, payload)):
             return payload
         return records
     if path in _KEYED_ROUTES and isinstance(payload, dict):
         bounded = payload
         for key, record in payload.items():
-            trimmed = _bound_record(record, fields)
+            trimmed = _bound_record(record, rules)
             if trimmed is not record:
                 if bounded is payload:
                     bounded = dict(payload)
                 bounded[key] = trimmed
         return bounded
-    return _bound_record(payload, fields)
+    return _bound_record(payload, rules)
 
 
 __all__ = [
     "CAPS",
+    "ENTRY_CAPS",
     "LOOSE_MARGIN_BYTES",
     "ROUTE_FIELDS",
+    "ROUTE_LISTS",
     "bound_post_payload",
     "loose_cut",
 ]

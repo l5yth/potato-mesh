@@ -4667,14 +4667,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "removes stale neighbors in chunked deletes" do
-        initial_neighbors = Array.new(1_100) do |i|
-          { "node_id" => format("!%08x", 0x2000_0000 + i), "snr" => -2.0 }
+        # A snapshot keeps 16 entries (SPEC IB3), so the 1,100 stale rows are
+        # stored directly, as rows written before that cap.
+        rx_time = reference_time.to_i - 35
+        with_db do |db|
+          db.execute("INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?, ?, ?)", [NEIGHBOR_CHUNK_ROOT_ID, rx_time, rx_time])
+          1_100.times do |i|
+            neighbor_id = format("!%08x", 0x2000_0000 + i)
+            db.execute("INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?, ?, ?)", [neighbor_id, rx_time, rx_time])
+            db.execute("INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES (?, ?, -2.0, ?)", [NEIGHBOR_CHUNK_ROOT_ID, neighbor_id, rx_time])
+          end
         end
-        initial = {
-          "node_id" => NEIGHBOR_CHUNK_ROOT_ID,
-          "rx_time" => reference_time.to_i - 35,
-          "neighbors" => initial_neighbors,
-        }
         update = {
           "node_id" => NEIGHBOR_CHUNK_ROOT_ID,
           "rx_time" => reference_time.to_i - 25,
@@ -4683,8 +4686,6 @@ RSpec.describe "Potato Mesh Sinatra app" do
           ],
         }
 
-        post "/api/neighbors", initial.to_json, auth_headers
-        expect(last_response.status).to eq(201)
         post "/api/neighbors", update.to_json, auth_headers
         expect(last_response.status).to eq(201)
 
@@ -4713,7 +4714,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
-      it "handles large neighbor lists without SQLite bind overflows" do
+      it "keeps the first 16 entries of a large neighbor list (SPEC IB3)" do
         neighbors = Array.new(1_100) do |i|
           { "node_id" => format("!%08x", 0x1000_0000 + i), "snr" => -1.0 }
         end
@@ -4733,7 +4734,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
             SELECT_NEIGHBOR_COUNT_BY_NODE_SQL,
             ["!1a2b3c20"],
           )
-          expect(count).to eq(1_100)
+          expect(count).to eq(16)
         end
       end
     end
