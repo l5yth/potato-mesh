@@ -183,6 +183,7 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: the map builds a neighbor or trace line's tooltip when it opens instead of on every repaint, and short-name badges render faster; a live repaint with 800 nodes and 4,000 neighbor lines takes about half as long (SPEC MT1-MT3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

@@ -36,6 +36,41 @@ import {
 import { isMeshcoreProtocol, isReticulumProtocol } from '../protocol-helpers.js';
 
 /**
+ * What a name needs the segmenter for: a CR or a code unit beyond ASCII. UAX
+ * #29 joins no two ASCII characters but CR LF (GB3), so the grapheme count of
+ * any other ASCII name is its length (SPEC MT2).
+ *
+ * @type {RegExp}
+ */
+const NEEDS_SEGMENTER = /[\r\u0080-\uffff]/;
+
+/**
+ * The one grapheme segmenter every badge shares (SPEC MT2), built on first
+ * use: a new ``Intl.Segmenter`` per badge was about half of a badge's cost.
+ * Its ``segment()`` returns an independent iterator on every call, so one
+ * instance serves every badge.
+ *
+ * @type {?Intl.Segmenter}
+ */
+let sharedSegmenter = null;
+
+/**
+ * Count the grapheme clusters of a badge label as a new ``Intl.Segmenter()``
+ * per call counted them (SPEC MT2): with the shared segmenter, without any for
+ * ASCII without CR, and in UTF-16 code units where ``Intl.Segmenter`` is
+ * missing, as before.
+ *
+ * @param {string} text Label text.
+ * @returns {number} Number of grapheme clusters.
+ */
+function countGraphemes(text) {
+  if (typeof Intl === 'undefined' || !Intl.Segmenter) return text.length;
+  if (!NEEDS_SEGMENTER.test(text)) return text.length;
+  if (!sharedSegmenter) sharedSegmenter = new Intl.Segmenter();
+  return [...sharedSegmenter.segment(text)].length;
+}
+
+/**
  * The protocol a badge names in ``data-protocol`` (SPEC LA5): the one whose
  * palette paints it, so ``meshtastic`` for an absent or unknown protocol, as
  * {@link getRoleColor} reads it. ``base.css`` gives a MeshCore badge the
@@ -112,9 +147,7 @@ export function renderShortHtml(short, role, longName, nodeData = null, { protoc
   // on each side — grapheme width varies too much for character-count
   // centering to work reliably.
   const raw = String(short);
-  const graphemeCount = typeof Intl !== 'undefined' && Intl.Segmenter
-    ? [...new Intl.Segmenter().segment(raw)].length
-    : raw.length;
+  const graphemeCount = countGraphemes(raw);
   let centred;
   if (graphemeCount >= 4) {
     centred = raw;
