@@ -132,7 +132,9 @@ def test_index_error_swallowed_and_logged(monkeypatch):
     assert kwargs["error_class"] == "IndexError"
     assert kwargs["error_message"] == "index out of range"
     assert kwargs["packet_len"] == 4
-    assert kwargs["packet_hex"] == "01020304"
+    # The frame's code, never its bytes (SPEC DC7).
+    assert kwargs["packet_code"] == 0x01
+    assert "packet_hex" not in kwargs
 
 
 def test_unrelated_return_value_preserved():
@@ -151,9 +153,9 @@ def test_unrelated_return_value_preserved():
     assert instance.received == [b"\x00"]
 
 
-def test_packet_dump_truncated_to_max(monkeypatch):
-    """Large frames must be truncated in the hex dump so a noisy device
-    cannot flood the log."""
+def test_log_names_the_frame_code_never_its_bytes(monkeypatch):
+    """A message frame the reader fails on keeps its text out of the
+    warning: the line names the frame's code and length only (SPEC DC7)."""
 
     class Target(_FakeReader):
         pass
@@ -170,30 +172,27 @@ def test_packet_dump_truncated_to_max(monkeypatch):
 
     monkeypatch.setattr(config, "_debug_log", _capture_log)
 
-    payload = bytes(range(256)) * 2  # 512 bytes
+    # A CONTACT_MSG_RECV_V3 push: code 0x10, a 15-byte header, the text.
+    payload = b"\x10" + bytes(15) + b"the door code is 4711"
     result = _run(instance.handle_rx(payload))
     assert result is None
 
     kwargs = emitted[-1]
-    # Hex length is exactly 2 * cap bytes.
-    expected_len = 2 * _meshcore_patches._PACKET_LOG_MAX_BYTES
-    assert len(kwargs["packet_hex"]) == expected_len
-    # And matches the first N real bytes of the payload.
-    assert (
-        kwargs["packet_hex"] == payload[: _meshcore_patches._PACKET_LOG_MAX_BYTES].hex()
-    )
-    assert kwargs["packet_len"] == 512
+    values = " ".join(str(value) for value in kwargs.values())
+    assert "door code" not in values
+    assert b"door code".hex() not in values
+    assert kwargs["packet_code"] == 0x10
+    assert kwargs["packet_len"] == len(payload)
 
 
-def test_hex_preview_handles_non_bytes():
-    """Defensive: ``_hex_preview`` accepts bytearray / memoryview and any
-    object convertible via ``bytes(...)`` without raising."""
+def test_frame_code_handles_non_bytes():
+    """Defensive: ``_frame_code`` reads bytes, bytearray and memoryview and
+    answers ``None`` for an empty frame or anything else, without raising."""
 
-    assert (
-        _meshcore_patches._hex_preview(bytearray(b"\xde\xad\xbe\xef"), 4) == "deadbeef"
-    )
-    assert _meshcore_patches._hex_preview(memoryview(b"\x01\x02"), 8) == "0102"
-    assert _meshcore_patches._hex_preview("not-bytes", 4) == ""
+    assert _meshcore_patches._frame_code(bytearray(b"\xde\xad")) == 0xDE
+    assert _meshcore_patches._frame_code(memoryview(b"\x01\x02")) == 0x01
+    assert _meshcore_patches._frame_code(b"") is None
+    assert _meshcore_patches._frame_code("not-bytes") is None
 
 
 def test_safe_len_handles_unsized():

@@ -79,3 +79,4 @@ web/pages/*.md
 # Debug symbols
 ignored.txt
 ignored-*.txt
+ignored-*.txt.1

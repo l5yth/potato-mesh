@@ -60,7 +60,9 @@ def _record_meshcore_message(message: object, *, source: str) -> None:
     """Persist a MeshCore message to :data:`ignored-meshcore.txt` when ``DEBUG=1``.
 
     When ``DEBUG`` is not set the function returns immediately without any
-    I/O so that production deployments are not burdened by file writes.
+    I/O so that production deployments are not burdened by file writes.  The
+    file rotates at 10 MB and keeps one previous file, like
+    ``ignored-meshtastic.txt`` (SPEC DC2).
 
     Parameters:
         message: The raw message object received from the MeshCore node.
@@ -77,6 +79,11 @@ def _record_meshcore_message(message: object, *, source: str) -> None:
     log_path = getattr(pkg, "_IGNORED_MESSAGE_LOG_PATH", _IGNORED_MESSAGE_LOG_PATH)
     log_lock = getattr(pkg, "_IGNORED_MESSAGE_LOCK", _IGNORED_MESSAGE_LOCK)
 
+    # Deferred like the handlers' other imports of the package's handlers
+    # (see ``_make_event_handlers``): one rotation for both captures, at
+    # 10 MB with one previous file (SPEC DC2).
+    from ...handlers.ignored import _append_line
+
     timestamp = datetime.now(timezone.utc).isoformat()
     entry = {
         "message": _to_json_safe(message),
@@ -84,7 +91,6 @@ def _record_meshcore_message(message: object, *, source: str) -> None:
         "timestamp": timestamp,
     }
     payload = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+    line = f"{payload}\n".encode("utf-8")
     with log_lock:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(f"{payload}\n")
+        _append_line(log_path, line)
