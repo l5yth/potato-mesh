@@ -57,6 +57,9 @@ class _MeshcoreInterface:
         self.isConnected: bool = False
         self._self_info_payload: dict | None = None
         """Most recent SELF_INFO payload received from the device, or ``None``."""
+        self._roster_posted: bool = False
+        """``True`` once the connection's first ``CONTACTS`` listing, the
+        radio's whole roster, has posted every contact (SPEC CU2)."""
         self._route = RouteTracker()
         """RX-log copies and the default flood scope for channel-message routes."""
 

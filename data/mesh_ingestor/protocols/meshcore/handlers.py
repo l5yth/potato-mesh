@@ -166,7 +166,11 @@ def _process_contacts(
 
 
 def _process_contact_update(
-    contact: dict, iface: _MeshcoreInterface, handlers: object
+    contact: dict,
+    iface: _MeshcoreInterface,
+    handlers: object,
+    *,
+    post: bool = True,
 ) -> None:
     """Apply a single ``NEW_CONTACT`` or ``NEXT_CONTACT`` event.
 
@@ -174,6 +178,11 @@ def _process_contact_update(
         contact: Contact dict containing at minimum ``public_key``.
         iface: Active interface whose contact snapshot will be updated.
         handlers: Module reference for :func:`~data.mesh_ingestor.handlers`.
+        post: ``True`` upserts the node and posts its position, as a
+            ``NEW_CONTACT`` does.  ``False`` for a ``NEXT_CONTACT``: the
+            library raises one per contact of a ``CONTACTS`` listing, which
+            posts the contact, so the event only updates the roster
+            (SPEC CU1).
     """
     pub_key = contact.get("public_key", "")
     node_id = _meshcore_node_id(pub_key)
@@ -183,23 +192,24 @@ def _process_contact_update(
     # Raises a roster member's timestamp only, never adds a member: the radio
     # pushes NEW_CONTACT for an advert from a key it did not add (SPEC SG5).
     _raise_roster_advert(pub_key, contact.get("last_advert"))
-    handlers.upsert_node(node_id, _contact_to_node_dict(contact))
-    lat = contact.get("adv_lat")
-    lon = contact.get("adv_lon")
-    if lat is not None and lon is not None and (lat or lon):
-        last_advert = contact.get("last_advert")
-        # Roster replay, not a live reception: stamp rx_time from the contact's
-        # real last_advert so the web app does not warm a long-dead contact's
-        # last_heard to now (issue #853, SPEC RS1).
-        _store_meshcore_position(
-            node_id,
-            lat,
-            lon,
-            last_advert,
-            handlers.host_node_id(),
-            pub_key,
-            rx_time=last_advert,
-        )
+    if post:
+        handlers.upsert_node(node_id, _contact_to_node_dict(contact))
+        lat = contact.get("adv_lat")
+        lon = contact.get("adv_lon")
+        if lat is not None and lon is not None and (lat or lon):
+            last_advert = contact.get("last_advert")
+            # Roster replay, not a live reception: stamp rx_time from the
+            # contact's real last_advert so the web app does not warm a
+            # long-dead contact's last_heard to now (issue #853, SPEC RS1).
+            _store_meshcore_position(
+                node_id,
+                lat,
+                lon,
+                last_advert,
+                handlers.host_node_id(),
+                pub_key,
+                rx_time=last_advert,
+            )
     # Contact update follows an advert already counted at RX_LOG_DATA: clock
     # only, so the same reception is not counted twice (Model A).
     handlers._mark_packet_activity()
@@ -243,18 +253,26 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     # The first CONTACTS listing of a connection is the radio's whole roster:
     # each connection builds a new MeshCore, whose first fetch asks with
     # since = 0.  Later listings come from the auto-update re-fetch, which asks
-    # only for contacts changed since the newest lastmod (SPEC SG5).
-    full_listing_seen = False
-
+    # only for contacts changed since the newest lastmod (SPEC SG5).  Once the
+    # whole roster has posted, the daemon's snapshot leaves the contacts out
+    # (SPEC CU2); a listing that raises leaves the flag unset.
     async def on_contacts(evt) -> None:
-        nonlocal full_listing_seen
         _process_contacts(
-            evt.payload or {}, iface, _handlers, full_listing=not full_listing_seen
+            evt.payload or {}, iface, _handlers, full_listing=not iface._roster_posted
         )
-        full_listing_seen = True
+        iface._roster_posted = True
 
     async def on_contact_update(evt) -> None:
         _process_contact_update(evt.payload or {}, iface, _handlers)
+
+    async def on_listed_contact(evt) -> None:
+        # One contact of a CONTACTS listing, raised before the listing itself
+        # (reader.py:136-163): the listing posts it (SPEC CU1).  This handler
+        # only updates the roster.  The library also raises NEXT_CONTACT for
+        # get_contact_by_key (contact.py:194-210), which the ingestor does not
+        # call: a contact fetched that way would update the roster and post
+        # nothing.
+        _process_contact_update(evt.payload or {}, iface, _handlers, post=False)
 
     async def on_advertisement(evt) -> None:
         # A bare ADVERTISEMENT push carries only the advertiser's public key.
@@ -506,7 +524,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         "SELF_INFO": on_self_info,
         "CONTACTS": on_contacts,
         "NEW_CONTACT": on_contact_update,
-        "NEXT_CONTACT": on_contact_update,
+        "NEXT_CONTACT": on_listed_contact,
         "ADVERTISEMENT": on_advertisement,
         "CHANNEL_MSG_RECV": on_channel_msg,
         "CONTACT_MSG_RECV": on_contact_msg,
