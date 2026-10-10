@@ -176,6 +176,9 @@
 * Web: the unused `/potatomesh-logo.svg` route is removed; the static handler serves the logo as before (SPEC HD7)
 * Docs: `deploy/nginx.example.conf` and `DOCKER.md` clear the `Forwarded` request header, so the scheme of generated URLs comes from `X-Forwarded-Proto` (SPEC HD4)
 * Data: the MeshCore ingestor posts each roster contact's node once per connect instead of three times, and its position once instead of twice; a re-advert of a known contact posts its node and position once each instead of twice, or twice instead of three times on firmware 1.16 and later (SPEC CU1-CU3)
+* Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
+* Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
+* Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
