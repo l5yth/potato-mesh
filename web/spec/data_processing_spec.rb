@@ -2435,12 +2435,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
           yield
         end
 
-        def update_prometheus_metrics(*); end
-
-        def prom_report_ids
-          []
-        end
-
         def private_mode?
           false
         end
@@ -2874,12 +2868,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
           yield
         end
 
-        def update_prometheus_metrics(*); end
-
-        def prom_report_ids
-          []
-        end
-
         def private_mode?
           false
         end
@@ -2979,12 +2967,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
         def with_busy_retry
           yield
-        end
-
-        def update_prometheus_metrics(*); end
-
-        def prom_report_ids
-          []
         end
 
         def private_mode?
@@ -3113,12 +3095,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
           yield
         end
 
-        def update_prometheus_metrics(*); end
-
-        def prom_report_ids
-          []
-        end
-
         def private_mode?
           false
         end
@@ -3184,12 +3160,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
         def with_busy_retry
           yield
-        end
-
-        def update_prometheus_metrics(*); end
-
-        def prom_report_ids
-          []
         end
 
         def private_mode?

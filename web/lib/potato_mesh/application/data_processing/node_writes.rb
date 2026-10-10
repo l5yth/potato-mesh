@@ -432,7 +432,7 @@ module PotatoMesh
       # @param protocol [String] protocol identifier (default +meshtastic+).
       # @return [void]
       def upsert_node(db, node_id, n, protocol: "meshtastic")
-        n = bound_node_payload(n) # SPEC SL3/SL10: bounded, Prometheus labels and gauges included
+        n = bound_node_payload(n) # SPEC SL3/SL10: bounded before any column, which /metrics reads (PG2)
         user = n["user"] || {}
         met = pick_alias(n, "deviceMetrics", "device_metrics") || {}
         pos = n["position"] || {}
@@ -502,13 +502,6 @@ module PotatoMesh
         # not come from, are held off by the key binding (SPEC NI2, NI3): a
         # record under another key leaves the row's identity as stored.
         key_mismatch = record_under_another_key?(db, node_id, n, protocol)
-
-        # The prometheus helper still receives the raw `pos` so that gauges
-        # not affected by sentinel handling (e.g. precision_bits) keep
-        # updating; the latitude/longitude guards inside +update_prometheus_metrics+
-        # are responsible for skipping sentinel coordinates.  A record under
-        # another key reaches only the telemetry gauges.
-        update_prometheus_metrics(node_id, key_mismatch ? nil : user, role, met, key_mismatch ? nil : pos)
 
         lora_freq = coerce_integer(n["lora_freq"] || n["loraFrequency"])
         modem_preset = string_or_nil(n["modem_preset"] || n["modemPreset"])
@@ -919,12 +912,6 @@ module PotatoMesh
         precision = coerce_integer(precision_bits)
         snr_val = coerce_float(snr)
 
-        update_prometheus_metrics(node_id, nil, nil, nil, {
-          "latitude" => lat,
-          "longitude" => lon,
-          "altitude" => alt,
-        })
-
         # When a position packet carries real coordinates but no usable
         # `position_time` (either omitted or collapsed by the sentinel guard
         # above), the `excluded.position_time IS NOT NULL` clauses below would
@@ -1057,14 +1044,6 @@ module PotatoMesh
         channel_util = coerce_float(metrics[:channel_utilization] || metrics["channel_utilization"])
         air_util_tx = coerce_float(metrics[:air_util_tx] || metrics["air_util_tx"])
         uptime = coerce_integer(metrics[:uptime_seconds] || metrics["uptime_seconds"])
-
-        update_prometheus_metrics(node_id, nil, nil, {
-          "batteryLevel" => battery,
-          "voltage" => voltage,
-          "uptimeSeconds" => uptime,
-          "channelUtilization" => channel_util,
-          "airUtilTx" => air_util_tx,
-        }, nil)
 
         assignments = []
         params = []

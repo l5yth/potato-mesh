@@ -14,6 +14,8 @@
 
 # frozen_string_literal: true
 
+require "prometheus/middleware/collector"
+
 module PotatoMesh
   module App
     module Prometheus
@@ -101,168 +103,235 @@ module PotatoMesh
         # Ignore duplicate registrations when the code is reloaded.
       end
 
-      # Update per-node Prometheus gauges for a single node event.
-      #
-      # The method is a no-op when the configured report-ID list is empty or when
-      # +node_id+ does not match an entry in that list.  When the wildcard +*+ is
-      # present all nodes are reported.
-      #
-      # @param node_id [String, nil] canonical node identifier (+!xxxxxxxx+ form).
-      # @param user [Hash, nil] user payload hash containing +shortName+,
-      #   +longName+, and +hwModel+ keys.
-      # @param role [String] node role label; an empty string skips the NODE_GAUGE.
-      # @param met [Hash, nil] device metrics hash containing keys such as
-      #   +batteryLevel+, +voltage+, +uptimeSeconds+, +channelUtilization+, and
-      #   +airUtilTx+.
-      # @param pos [Hash, nil] position payload hash containing +latitude+,
-      #   +longitude+, and +altitude+.
-      # @return [void]
-      def update_prometheus_metrics(node_id, user = nil, role = "", met = nil, pos = nil)
-        ids = prom_report_ids
-        return if ids.empty? || !node_id
+      # Per-node gauges that read one node-row column each, mapped to that
+      # column (SPEC PG2).  {#prometheus_node_series} builds the presence
+      # gauge and the coordinate gauges itself.
+      NODE_COLUMN_GAUGES = {
+        NODE_BATTERY_LEVEL => "battery_level",
+        NODE_VOLTAGE => "voltage",
+        NODE_UPTIME => "uptime_seconds",
+        NODE_CHANNEL_UTIL => "channel_utilization",
+        NODE_AIR_UTIL_TX => "air_util_tx",
+      }.freeze
 
-        return unless ids[0] == "*" || ids.include?(node_id)
+      # Node-row columns one scrape reads (SPEC PG2).
+      NODE_SERIES_COLUMNS = %w[
+        node_id short_name long_name hw_model role latitude longitude altitude
+        battery_level voltage uptime_seconds channel_utilization air_util_tx
+      ].freeze
 
-        if user && user.is_a?(Hash) && role && role != ""
-          NODE_GAUGE.set(
-            1,
-            labels: {
-              node: node_id,
-              short_name: user["shortName"],
-              long_name: user["longName"],
-              hw_model: user["hwModel"],
-              role: role,
-            },
-          )
+      # Role the presence gauge reports for a row without one: the role
+      # +query_nodes+ gives it, so +/metrics+ and +GET /api/nodes+ agree (PG2).
+      DEFAULT_ROLE = "CLIENT"
+
+      # Latitudes on the globe, in degrees, ends included: the bound SPEC IB2
+      # gives +normalize_lat_lon+, mirrored for the coordinate gauges (PG3).
+      LATITUDE_RANGE = (-90.0..90.0)
+
+      # Longitudes on the globe, in degrees, ends included (SPEC IB2, PG3).
+      LONGITUDE_RANGE = (-180.0..180.0)
+
+      # +path+ label of a static file Sinatra's static handler sent (SPEC PG1).
+      STATIC_ROUTE = "static"
+
+      # +path+ label of the Exporter's own response (SPEC PG1).
+      METRICS_ROUTE = "metrics"
+
+      # +path+ label of any other request no Sinatra route answered, such as
+      # an unknown path (SPEC PG1).
+      UNMATCHED_ROUTE = "unmatched"
+
+      # Path the Exporter answers: the gem's default, which +application.rb+
+      # keeps.
+      METRICS_PATH = "/metrics"
+
+      # Rack middleware recording the HTTP request metrics of
+      # +Prometheus::Middleware::Collector+, labelled by route (SPEC PG1).
+      #
+      # The gem labels a request with its raw path and rewrites only UUID and
+      # all-digit segments, so every distinct path (a node id in
+      # +/api/nodes/:id+, any 404) added series that were never removed.  The
+      # metric names and the +code+, +method+ and +exception+ labels are the
+      # gem's.
+      class RouteCollector < ::Prometheus::Middleware::Collector
+        # Readable label of a route Sinatra matched.  Sinatra writes a
+        # regular-expression route as Ruby prints the regexp, slashes escaped
+        # (+GET \/map\/?+); the label unescapes them and drops an optional
+        # trailing slash (+GET /map+).  A string route reads as written
+        # (+GET /api/nodes/:id+).
+        #
+        # @param route [String] +env["sinatra.route"]+, +VERB pattern+.
+        # @return [String] route label.
+        def self.route_label(route)
+          route.gsub("\\/", "/").delete_suffix("/?")
         end
 
-        if met && met.is_a?(Hash)
-          if met["batteryLevel"]
-            NODE_BATTERY_LEVEL.set(met["batteryLevel"], labels: { node: node_id })
-          end
+        protected
 
-          if met["voltage"]
-            NODE_VOLTAGE.set(met["voltage"], labels: { node: node_id })
-          end
+        # The +path+ label of one request: the {.route_label} of the route
+        # Sinatra matched (+env["sinatra.route"]+), also when that route
+        # answers 404; else {STATIC_ROUTE} for a static file, {METRICS_ROUTE}
+        # for the Exporter's own response and {UNMATCHED_ROUTE} for any other
+        # request, all of which come before or without routing.
+        #
+        # @param env [Hash] Rack environment after the application answered.
+        # @return [String] route label.
+        def generate_path(env)
+          route = env["sinatra.route"]
+          return self.class.route_label(route) if route
+          return STATIC_ROUTE if env["sinatra.static_file"]
+          return METRICS_ROUTE if env["PATH_INFO"] == METRICS_PATH
 
-          if met["uptimeSeconds"]
-            NODE_UPTIME.set(met["uptimeSeconds"], labels: { node: node_id })
-          end
-
-          if met["channelUtilization"]
-            NODE_CHANNEL_UTIL.set(met["channelUtilization"], labels: { node: node_id })
-          end
-
-          if met["airUtilTx"]
-            NODE_AIR_UTIL_TX.set(met["airUtilTx"], labels: { node: node_id })
-          end
-        end
-
-        if pos && pos.is_a?(Hash)
-          lat = pos["latitude"]
-          lon = pos["longitude"]
-          # Issue #782: paired ``(0, 0)`` is the Meshtastic "no GPS lock"
-          # sentinel.  In Ruby ``0.0`` is truthy, so the previous
-          # ``if pos["latitude"]`` guard let the gauge be clobbered to 0
-          # on every sentinel nodeinfo.  Skip both gauges when the pair is
-          # sentinel so each retains its last real value.  Single-axis
-          # zero — a legitimate equator / prime-meridian fix — survives.
-          is_null_island = lat.is_a?(Numeric) && lon.is_a?(Numeric) &&
-                           lat.abs < 1e-9 && lon.abs < 1e-9
-          unless is_null_island
-            NODE_LATITUDE.set(lat, labels: { node: node_id }) if lat
-            NODE_LONGITUDE.set(lon, labels: { node: node_id }) if lon
-          end
-
-          if pos["altitude"]
-            NODE_ALTITUDE.set(pos["altitude"], labels: { node: node_id })
-          end
+          UNMATCHED_ROUTE
         end
       end
 
-      # Refresh all Prometheus node metrics from the current database snapshot.
+      # Number of nodes +GET /api/nodes+ lists, without its row cap (SPEC PG4).
       #
-      # Queries up to 1 000 nodes and updates the {NODES_GAUGE} with the total
-      # count.  For each node that matches the report-ID filter the per-node
-      # gauges are refreshed via {#update_prometheus_metrics}.
+      # The filters of the bulk read in +query_nodes+: heard since
+      # +node_window_floor+ (seven days), neither name carrying the opt-out
+      # marker and, with +PRIVATE=1+, a role other than +CLIENT_HIDDEN+.
+      #
+      # @param db [SQLite3::Database, nil] open handle to count on; nil opens
+      #   and closes a read-only one.
+      # @param now [Integer] reference unix time.
+      # @return [Integer] node count.
+      def prometheus_node_count(db = nil, now: Time.now.to_i)
+        handle = db || open_database(readonly: true)
+        where_clauses = ["last_heard >= ?"]
+        params = [node_window_floor(nil, now)]
+        where_clauses << hidden_client_filter if private_mode?
+        append_opt_out_filter(where_clauses, params, opt_out_self_filter)
+        handle.get_first_value("SELECT COUNT(*) FROM nodes WHERE #{where_clauses.join(" AND ")}", params).to_i
+      ensure
+        handle&.close unless db
+      end
+
+      # Seed {NODES_GAUGE} from the database at boot (SPEC PG4).  The per-node
+      # series need no seeding: every scrape builds them from the node rows
+      # (SPEC PG2).
       #
       # @return [void]
       def update_all_prometheus_metrics_from_nodes
-        nodes = query_nodes(1000)
-
-        NODES_GAUGE.set(nodes.size)
-
-        ids = prom_report_ids
-        unless ids.empty?
-          nodes.each do |n|
-            node_id = n["node_id"]
-
-            next if ids[0] != "*" && !ids.include?(node_id)
-
-            update_prometheus_metrics(
-              node_id,
-              {
-                "shortName" => n["short_name"] || "",
-                "longName" => n["long_name"] || "",
-                "hwModel" => n["hw_model"] || "",
-              },
-              n["role"] || "",
-              {
-                "batteryLevel" => n["battery_level"],
-                "voltage" => n["voltage"],
-                "uptimeSeconds" => n["uptime_seconds"],
-                "channelUtilization" => n["channel_utilization"],
-                "airUtilTx" => n["air_util_tx"],
-              },
-              {
-                "latitude" => n["latitude"],
-                "longitude" => n["longitude"],
-                "altitude" => n["altitude"],
-              },
-            )
-          end
-        end
+        NODES_GAUGE.set(prometheus_node_count)
       end
 
-      # Node ids whose per-node series a scrape may print (SPEC PM1/PM2).
+      # Node rows whose series a scrape exports (SPEC PM1, PM2, PG2).
       #
-      # Runs one read-only query with the filter +GET /api/nodes+ applies:
-      # neither name carries the opt-out marker and, with +PRIVATE=1+, the
-      # role is not +CLIENT_HIDDEN+.  It has no age window and no row cap,
-      # so the gauges keep their meaning; a node whose row retention deleted
-      # is absent, so its series are dropped too.
+      # One read-only query with the filter +GET /api/nodes+ applies: neither
+      # name carries the opt-out marker and, with +PRIVATE=1+, the role is not
+      # +CLIENT_HIDDEN+.  It has no age window and no row cap; a node whose row
+      # retention deleted is absent.  +PROM_REPORT_IDS+ narrows it: +*+ as the
+      # first entry keeps every node, a list keeps the nodes it names, and an
+      # empty setting runs no query.
       #
-      # @return [Set<String>] node ids a scrape may export.
-      def prometheus_visible_node_ids
+      # @param ids [Array<String>] configured report ids.
+      # @return [Array<Hash>] rows holding {NODE_SERIES_COLUMNS}, by node id.
+      def prometheus_node_rows(ids = prom_report_ids)
+        return [] if ids.empty?
+
         db = open_database(readonly: true)
         db.results_as_hash = true
         where_clauses = []
         params = []
         where_clauses << hidden_client_filter if private_mode?
         append_opt_out_filter(where_clauses, params, opt_out_self_filter)
-        sql = "SELECT node_id FROM nodes WHERE #{where_clauses.join(" AND ")}"
-        db.execute(sql, params).each_with_object(Set.new) { |row, ids| ids << row["node_id"] }
+        unless ids[0] == "*"
+          where_clauses << "node_id IN (#{Array.new(ids.length, "?").join(", ")})"
+          params.concat(ids)
+        end
+        db.execute(
+          "SELECT #{NODE_SERIES_COLUMNS.join(", ")} FROM nodes WHERE #{where_clauses.join(" AND ")} ORDER BY node_id",
+          params,
+        )
       ensure
         db&.close
       end
 
-      # Registry view that +/metrics+ prints in place of the registry
-      # (SPEC PM1/PM2).
+      # Per-node series of one scrape, built from {#prometheus_node_rows}
+      # (SPEC PG2, PG3).
       #
-      # Ingest keeps writing every series to the registry, and
-      # prometheus-client 5 cannot remove a label set, so the filter runs at
-      # export.  Each {#metrics} call asks +source+ once for the visible node
-      # ids and keeps a series of a family labelled +node+ only when its node
-      # is in that set.  Families without a +node+ label pass through
-      # unchanged.  If the lookup raises, the scrape carries no per-node
-      # family at all (fail closed).
+      # The series are the reported nodes' own: a rename replaces its node's
+      # presence series, and a node that leaves the rows (opt-out, retention,
+      # +PRIVATE=1+) takes every series with it.  Per row: +meshtastic_node+
+      # 1, labelled with the stored names and hardware model (NULL reads as
+      # empty) and the stored role, {DEFAULT_ROLE} when there is none; one
+      # series for each {NODE_COLUMN_GAUGES} column that holds a number; and,
+      # for a position {#prometheus_coordinates} keeps, its latitude,
+      # longitude and altitude, each when it is a number.
+      #
+      # @return [Hash{Symbol => Hash{Hash => Float}}] label set to value by
+      #   family name; a family without a series is absent.
+      def prometheus_node_series
+        prometheus_node_rows.each_with_object({}) do |row, series|
+          node = { node: row["node_id"] }
+          presence = node.merge(
+            short_name: row["short_name"].to_s,
+            long_name: row["long_name"].to_s,
+            hw_model: row["hw_model"].to_s,
+            role: (row["role"] || DEFAULT_ROLE).to_s,
+          )
+          prometheus_add_series(series, NODE_GAUGE, presence, 1.0)
+          NODE_COLUMN_GAUGES.each do |metric, column|
+            prometheus_add_series(series, metric, node, coerce_float(row[column]))
+          end
+          lat, lon = prometheus_coordinates(row["latitude"], row["longitude"])
+          next if lat.nil? && lon.nil?
+
+          prometheus_add_series(series, NODE_LATITUDE, node, lat)
+          prometheus_add_series(series, NODE_LONGITUDE, node, lon)
+          prometheus_add_series(series, NODE_ALTITUDE, node, coerce_float(row["altitude"]))
+        end
+      end
+
+      # Add one series to a {#prometheus_node_series} result.
+      #
+      # @param series [Hash{Symbol => Hash}] result being built.
+      # @param metric [Prometheus::Client::Metric] family of the series.
+      # @param labels [Hash{Symbol => String}] label set.
+      # @param value [Float, nil] value; nil adds nothing.
+      # @return [void]
+      def prometheus_add_series(series, metric, labels, value)
+        return if value.nil?
+
+        (series[metric.name] ||= {})[labels] = value
+      end
+
+      # Coordinates a node's gauges export (SPEC PG3).
+      #
+      # +normalize_lat_lon+ coerces both axes and drops the #782 +(0, 0)+
+      # sentinel; a latitude outside {LATITUDE_RANGE} or a longitude outside
+      # {LONGITUDE_RANGE} then drops the pair, one axis being enough, as SPEC
+      # IB2 has +normalize_lat_lon+ do.  A single axis on the globe is kept,
+      # as the write path keeps it.
+      #
+      # @param lat [Object] stored latitude.
+      # @param lon [Object] stored longitude.
+      # @return [Array(Float, Float)] +[lat, lon]+, nil on each axis dropped.
+      def prometheus_coordinates(lat, lon)
+        lat_f, lon_f = normalize_lat_lon(lat, lon)
+        return [nil, nil] if (lat_f && !LATITUDE_RANGE.cover?(lat_f)) || (lon_f && !LONGITUDE_RANGE.cover?(lon_f))
+
+        [lat_f, lon_f]
+      end
+
+      # Registry view that +/metrics+ prints in place of the registry
+      # (SPEC PM1, PM2, PG2).
+      #
+      # Nothing writes the per-node gauges: each {#metrics} call asks
+      # +source+ once for the per-node series of the visible, reported nodes,
+      # built from their stored rows, and a family labelled +node+ prints
+      # those series under its own name, type and help.  A family labelled
+      # +node+ that the build does not fill prints none.  Families without a
+      # +node+ label pass through unchanged.  If the lookup raises, the scrape
+      # carries no per-node family at all (fail closed).
       class ExportRegistry
         # Label that marks a metric family as per-node.
         NODE_LABEL = :node
 
-        # @param registry [#metrics] registry the gauges write to.
-        # @param source [#prometheus_visible_node_ids, #warn_log] object that
-        #   runs the visibility query and logs a failed lookup.
+        # @param registry [#metrics] registry the metrics are registered in.
+        # @param source [#prometheus_node_series, #warn_log] object that
+        #   builds the per-node series and logs a failed lookup.
         def initialize(registry, source)
           @registry = registry
           @source = source
@@ -275,22 +344,22 @@ module PotatoMesh
         # @return [Array<#name, #type, #docstring, #values>] families to
         #   print; per-node families are wrapped in {NodeFamily}.
         def metrics
-          visible = visible_node_ids
+          series = node_series
           @registry.metrics.filter_map do |metric|
             next metric unless metric.labels.include?(NODE_LABEL)
 
-            NodeFamily.new(metric, visible) if visible
+            NodeFamily.new(metric, series.fetch(metric.name, {})) if series
           end
         end
 
         private
 
-        # Look up the visible node ids, logging a failure instead of raising.
+        # Build the per-node series, logging a failure instead of raising.
         #
-        # @return [Set<String>, nil] visible node ids, or +nil+ when the
-        #   lookup raised.
-        def visible_node_ids
-          @source.prometheus_visible_node_ids
+        # @return [Hash{Symbol => Hash}, nil] series by family name, or +nil+
+        #   when the lookup raised.
+        def node_series
+          @source.prometheus_node_series
         rescue StandardError => e
           @source.warn_log(
             "Withheld per-node metrics: visible node lookup failed",
@@ -301,16 +370,15 @@ module PotatoMesh
           nil
         end
 
-        # One per-node family limited to the series of visible nodes.  It
-        # offers the readers the text formatter calls (+name+, +type+,
-        # +docstring+, +values+) plus +labels+, and never writes to the
-        # wrapped metric.
+        # One per-node family holding the series one scrape built.  It offers
+        # the readers the text formatter calls (+name+, +type+, +docstring+,
+        # +values+) plus +labels+, and never writes to the wrapped metric.
         class NodeFamily
           # @param metric [Prometheus::Client::Metric] family labelled +node+.
-          # @param visible_node_ids [#include?] node ids whose series stay.
-          def initialize(metric, visible_node_ids)
+          # @param values [Hash{Hash => Float}] label set to value.
+          def initialize(metric, values)
             @metric = metric
-            @visible_node_ids = visible_node_ids
+            @values = values
           end
 
           # @return [Symbol] metric name.
@@ -333,11 +401,11 @@ module PotatoMesh
             @metric.labels
           end
 
-          # Series of visible nodes with their current values.
+          # Series of the family's reported nodes, with their stored values.
           #
-          # @return [Hash{Hash => Object}] label set to value.
+          # @return [Hash{Hash => Float}] label set to value.
           def values
-            @metric.values.select { |label_set, _value| @visible_node_ids.include?(label_set[NODE_LABEL]) }
+            @values
           end
         end
       end

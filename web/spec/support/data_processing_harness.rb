@@ -21,7 +21,7 @@ require "tmpdir"
 # in isolation (+data_processing_spec.rb+, +meshcore_dedup_spec.rb+).
 module DataProcessingHarness
   # Build a minimal host class so the module methods can be called in
-  # isolation: logging, retry, metrics and privacy collaborators are stubbed,
+  # isolation: logging, retry and privacy collaborators are stubbed,
   # and node references normalize to their canonical id without a lookup.
   #
   # @param protocol [String] value the stubbed +resolve_protocol+ returns.
@@ -41,12 +41,6 @@ module DataProcessingHarness
 
       def with_busy_retry
         yield
-      end
-
-      def update_prometheus_metrics(*); end
-
-      def prom_report_ids
-        []
       end
 
       def private_mode?
