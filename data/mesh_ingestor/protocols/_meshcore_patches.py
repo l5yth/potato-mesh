@@ -46,10 +46,6 @@ from .. import config
 # includes the project slug so we can grep for it while diagnosing.
 _PATCH_MARKER = "_potato_mesh_patched"
 
-# Cap on hex bytes dumped into the log per failure.  Keeps the log line
-# under a few hundred characters even for maximum-sized frames.
-_PACKET_LOG_MAX_BYTES = 32
-
 
 def apply() -> bool:
     """Install every known-needed patch on the upstream ``meshcore`` library.
@@ -104,8 +100,9 @@ def _wrap_handle_rx(reader_cls: Any) -> bool:
         ``asyncio.create_task(reader.handle_rx(data))`` task spawned by the
         upstream connection layer, surfacing as ``Task exception was never
         retrieved`` in stderr and losing the event silently.  We log once
-        with the first few bytes of the offending frame for forensics and
-        then return ``None`` so the task exits cleanly.
+        with the offending frame's code and length for forensics, never its
+        bytes: a message frame carries its text in clear (SPEC DC7).  Then
+        we return ``None`` so the task exits cleanly.
         """
         try:
             return await original(self, data, *args, **kwargs)
@@ -122,7 +119,7 @@ def _wrap_handle_rx(reader_cls: Any) -> bool:
                 error_class=type(exc).__name__,
                 error_message=str(exc),
                 packet_len=_safe_len(data),
-                packet_hex=_hex_preview(data, _PACKET_LOG_MAX_BYTES),
+                packet_code=_frame_code(data),
             )
             return None
 
@@ -142,20 +139,21 @@ def _safe_len(data: Any) -> int | None:
         return None
 
 
-def _hex_preview(data: Any, limit: int) -> str:
-    """Return the first *limit* bytes of ``data`` as a lowercase hex string.
+def _frame_code(data: Any) -> int | None:
+    """Return the first byte of ``data``: the companion frame's code.
 
-    Accepts anything that is a :class:`bytes`-like or supports ``bytes(data)``.
-    On conversion failure returns an empty string — the log caller still gets
-    the error class and message.
+    The code names the frame type (a ``DEVICE_INFO`` reply, a message push)
+    and none of its content.
+
+    Parameters:
+        data: The frame the reader failed on.
+
+    Returns:
+        The code, or ``None`` when ``data`` is empty or not bytes-like.
     """
-    try:
-        if not isinstance(data, (bytes, bytearray, memoryview)):
-            data = bytes(data)
-    except Exception:  # noqa: BLE001 — pure diagnostic path, never raise.
-        return ""
-    prefix = bytes(data[:limit])
-    return prefix.hex()
+    if isinstance(data, (bytes, bytearray, memoryview)) and len(data):
+        return data[0]
+    return None
 
 
 __all__ = ["apply"]

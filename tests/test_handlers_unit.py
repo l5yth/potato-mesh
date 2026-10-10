@@ -288,8 +288,8 @@ class TestRecordIgnoredPacket:
         assert record["reason"] == "unsupported-port"
         assert "timestamp" in record
 
-    def test_bytes_in_packet_are_base64(self, monkeypatch, tmp_path):
-        """Byte values in the packet are Base64-encoded in the log."""
+    def test_bytes_in_packet_are_never_written(self, monkeypatch, tmp_path):
+        """Byte values in the packet stay out of the log (SPEC DC1)."""
         import json
         import threading
 
@@ -298,8 +298,10 @@ class TestRecordIgnoredPacket:
         monkeypatch.setattr(ignored_mod, "_IGNORED_PACKET_LOG_PATH", log_path)
         monkeypatch.setattr(ignored_mod, "_IGNORED_PACKET_LOCK", threading.Lock())
         ignored_mod._record_ignored_packet({"data": b"\x00\x01"}, reason="test")
-        record = json.loads(log_path.read_text().strip())
-        assert record["packet"]["data"] == base64.b64encode(b"\x00\x01").decode()
+        content = log_path.read_text()
+        assert base64.b64encode(b"\x00\x01").decode() not in content
+        record = json.loads(content.strip())
+        assert record == {"reason": "test", "timestamp": record["timestamp"]}
 
 
 # ---------------------------------------------------------------------------

@@ -581,14 +581,12 @@ def store_packet_dict(packet: Mapping) -> None:
     to_id = _first(packet, "toId", "to_id", "to", default=None)
 
     if (from_id is None or str(from_id) == "") and config.DEBUG:
-        try:
-            raw = json.dumps(packet, default=str)
-        except Exception:
-            raw = str(packet)
+        # The packet's metadata, never the packet: a MeshCore direct message
+        # from outside the roster arrives here with its text (SPEC DC7).
         config._debug_log(
             "Packet missing from_id",
             context="handlers.store_packet_dict",
-            packet=raw,
+            **_ignored_mod._packet_metadata(packet),
         )
 
     snr = _first(packet, "snr", "rx_snr", "rxSnr", default=None)
