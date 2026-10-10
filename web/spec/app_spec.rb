@@ -3865,7 +3865,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row("SELECT text, ingestor FROM messages WHERE id = ?", [first_payload["id"]])
-        expect(row["text"]).to eq("updated text")
+        # A later copy never replaces the stored text (SPEC KC2).
+        expect(row["text"]).to eq("first reporter")
         expect(row["ingestor"]).to eq(FIRST_MESSAGE_INGESTOR_ID)
       end
 

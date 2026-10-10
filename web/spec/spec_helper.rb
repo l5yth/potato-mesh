@@ -62,10 +62,12 @@ RSpec.configure do |config|
   config.include Rack::Test::Methods
 
   # Federation keeps process-wide peer state: the fetch cooldown, backoff and
-  # revalidation store per host, and the registrations in flight. Every
-  # example starts without it.
+  # revalidation store per host, and the registrations in flight. Ingest
+  # keeps the windows of the collision-warning limiter (SPEC KC5). Every
+  # example starts without them.
   config.before do
     PotatoMesh::Application.clear_federation_crawl_state!
+    PotatoMesh::App::DataProcessing.collision_warning_limiter.reset!
   end
 
   config.after(:suite) do

@@ -164,6 +164,11 @@
 * Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
 * Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
 * Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
+* Web: a later message from another sender under a stored message's id no longer replaces that message's sender, recipient and text; it is dropped with a warning (SPEC KC1, KC3)
+* Web: a later copy of a stored message fills a missing recipient, text, reply, emoji or portnum and no longer replaces them (SPEC KC2)
+* Web: a position, telemetry reading or trace under an id another node already holds no longer replaces that node's row; it is dropped with a warning (SPEC KC4)
+* Web: a message naming its sender only by `from_num` stores that number's `!xxxxxxxx` id as `from_id`; such a copy of another sender's message is dropped (SPEC KC1)
+* Web: the warnings of dropped messages and records log at most 10 lines a minute per writer, then one line with the number suppressed (SPEC KC5)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
