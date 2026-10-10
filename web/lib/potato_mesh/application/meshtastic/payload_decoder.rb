@@ -15,12 +15,22 @@
 # frozen_string_literal: true
 
 require "json"
-require "open3"
+require_relative "decoder_process"
 
 module PotatoMesh
   module App
     module Meshtastic
       # Decode Meshtastic protobuf payloads via the Python helper script.
+      #
+      # Every decode starts one interpreter (+decode_payload.py+), so three
+      # bounds hold the cost (SPEC DB1-DB3): a deadline per decode, a cap per
+      # ingest request and a limit on decoders running at once.  A decode a
+      # bound stops returns nil, as a failed decode does, and logs one debug
+      # line naming the bound.  Measured 2026-10-09 on an Intel Core Ultra 9
+      # 185H (8 CPUs) with the pinned venv: median 157 ms per decode, slowest
+      # of 40 201 ms, slowest of 8 at once 379 ms, 43.6 MiB peak RSS; with the
+      # CPU capped at 12% of one core, about a Raspberry Pi 4 core, median
+      # 1.98 s and slowest 2.19 s.
       module PayloadDecoder
         module_function
 
@@ -29,20 +39,80 @@ module PotatoMesh
         DEFAULT_DECODER_RELATIVE = File.join("data", "mesh_ingestor", "decode_payload.py")
         FALLBACK_PYTHON_NAMES = ["python3", "python"].freeze
 
+        # Seconds one decode may take, from start to reap (SPEC DB1): 20
+        # times the slowest decode measured here and 1.8 times the slowest at
+        # the Pi 4 figure.  Past it the decoder's process group is killed.
+        DECODE_DEADLINE_SECONDS = 4
+
+        # Decodes one ingest request may start (SPEC DB2).  Four take about
+        # 0.6 s here and 8 s at the Pi 4 figure, inside the ingestor's 10 s
+        # POST timeout; the shipped ingestor posts one message per request.
+        MAX_DECODES_PER_REQUEST = 4
+
+        # Decoders the web process runs at once (SPEC DB3): about 87 MiB and
+        # two of a Raspberry Pi's four cores.
+        MAX_CONCURRENT_DECODES = 2
+
+        # Seconds a decode waits for a free decoder slot (SPEC DB3).  With the
+        # deadline, one message spends at most 5 s on decoding, half the
+        # ingestor's POST timeout.
+        SLOT_WAIT_SECONDS = 1
+
+        # Free decoder slots of the process, one token each (SPEC DB3).
+        DECODE_SLOTS = Thread::Queue.new(Array.new(MAX_CONCURRENT_DECODES, true))
+
+        # The decodes one ingest request may still start (SPEC DB2).
+        #
+        # A route builds one per request and hands it down through
+        # +insert_message+ and +store_decrypted_payload+.  Every decode that
+        # would start takes one, whether it then gets a slot or not, so one
+        # request spends at most +MAX_DECODES_PER_REQUEST+ slot waits and
+        # deadlines on decoding.  A request runs on one thread; the budget is
+        # not shared between threads.
+        class Budget
+          # @param limit [Integer] decodes the request may start.
+          def initialize(limit = MAX_DECODES_PER_REQUEST)
+            @remaining = limit
+          end
+
+          # Take one decode from the budget.
+          #
+          # @return [Boolean] true when the request may start one more decode.
+          def take
+            return false unless @remaining.positive?
+
+            @remaining -= 1
+            true
+          end
+        end
+
         # Decode a protobuf payload using the Meshtastic helper.
         #
         # @param portnum [Integer] Meshtastic port number.
         # @param payload_b64 [String] base64-encoded payload bytes.
-        # @return [Hash, nil] decoded payload hash or nil when decoding fails.
-        def decode(portnum:, payload_b64:)
+        # @param budget [Budget, nil] the ingest request's decodes (SPEC DB2);
+        #   nil sets no per-request cap.
+        # @param message_id [Integer, nil] message the payload belongs to, for
+        #   the log line of a skipped decode.
+        # @return [Hash, nil] decoded payload hash or nil when decoding fails
+        #   or a bound skips it.
+        def decode(portnum:, payload_b64:, budget: nil, message_id: nil)
           return nil unless portnum && payload_b64
 
           decoder_path = decoder_script_path
           python_path = python_executable_path
           return nil unless decoder_path && python_path
 
+          # The request's cap first: it never waits (SPEC DB2).
+          return skip_decode("cap", portnum, message_id) if budget && !budget.take
+
           input = JSON.generate({ portnum: portnum, payload_b64: payload_b64 })
-          stdout, stderr, status = Open3.capture3(python_path, decoder_path, stdin_data: input)
+          # Then a short wait for one of the process's slots (SPEC DB3).
+          result = run_in_slot([python_path, decoder_path], input)
+          return skip_decode("concurrency", portnum, message_id) if result == :no_slot
+          return skip_decode("deadline", portnum, message_id) unless result
+
+          stdout, status = result
           return nil unless status.success?
 
           parsed = JSON.parse(stdout)
@@ -55,6 +125,51 @@ module PotatoMesh
         rescue Errno::ENOENT
           nil
         rescue ArgumentError
+          nil
+        end
+
+        # Run the decoder under one of the process's slots (SPEC DB3).
+        #
+        # The slot is taken inside the region whose +ensure+ gives it back,
+        # and interrupts from other threads, such as Puma's forced shutdown,
+        # are held back there: one can land only while +DecoderProcess.run+
+        # waits on the child, and the slot still goes back.
+        #
+        # @param argv [Array<String>] interpreter and decoder script.
+        # @param input [String] the decoder's request.
+        # @return [Array(String, Process::Status), Symbol, nil] the decoder's
+        #   stdout and exit status; +:no_slot+ when no slot freed within
+        #   +SLOT_WAIT_SECONDS+; nil when the deadline passed.
+        def run_in_slot(argv, input)
+          Thread.handle_interrupt(Object => :never) do
+            slot = nil
+            begin
+              slot = DECODE_SLOTS.pop(timeout: SLOT_WAIT_SECONDS)
+              return :no_slot unless slot
+
+              DecoderProcess.run(argv, input: input, deadline_seconds: DECODE_DEADLINE_SECONDS)
+            ensure
+              DECODE_SLOTS.push(slot) if slot
+            end
+          end
+        end
+
+        # Log a decode a bound skipped and report it as a failed decode.
+        #
+        # @param reason [String] the bound: +cap+, +concurrency+ or +deadline+.
+        # @param portnum [Integer] Meshtastic port number of the payload.
+        # @param message_id [Integer, nil] message the payload belongs to.
+        # @return [nil]
+        def skip_decode(reason, portnum, message_id)
+          PotatoMesh::Logging.log(
+            PotatoMesh::Logging.logger_for,
+            :debug,
+            "Skipped Meshtastic payload decode",
+            context: "meshtastic.payload_decoder",
+            reason: reason,
+            message_id: message_id,
+            portnum: portnum,
+          )
           nil
         end
 
@@ -113,7 +228,7 @@ module PotatoMesh
           nil
         end
 
-        private_class_method :find_executable
+        private_class_method :find_executable, :skip_decode, :run_in_slot
       end
     end
   end

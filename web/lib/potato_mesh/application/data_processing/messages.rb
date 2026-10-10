@@ -88,8 +88,11 @@ module PotatoMesh
       # @param db [SQLite3::Database] open database handle.
       # @param message [Hash] inbound message payload.
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
+      # @param decode_budget [PotatoMesh::App::Meshtastic::PayloadDecoder::Budget, nil]
+      #   the ingest request's payload decodes (SPEC DB2); nil sets no
+      #   per-request cap.
       # @return [void]
-      def insert_message(db, message, protocol_cache: nil)
+      def insert_message(db, message, protocol_cache: nil, decode_budget: nil)
         message = bound_message_payload(message) # SPEC SL3/SL5/SL10: nil skips the message
         return unless message.is_a?(Hash)
 
@@ -373,6 +376,7 @@ module PotatoMesh
             hop_limit: message["hop_limit"],
             snr: message["snr"],
             rssi: message["rssi"],
+            decode_budget: decode_budget,
           )
         end
 
