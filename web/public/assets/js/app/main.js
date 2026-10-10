@@ -240,7 +240,7 @@ import {
   buildProtocolIconImg,
   buildReticulumIconImg,
 } from './main/protocol-icons.js';
-import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
+import { neighborTooltipContent, traceTooltipContent } from './main/tooltip-html.js';
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
 import { createBasemapLayer } from './basemap-config.js';
 import { createTileFailurePolicy } from './main/tile-failure-policy.js';
@@ -5047,13 +5047,15 @@ export function initializeApp(config) {
           // overlay or tooltip onto it after the next rebuild.
           lineBySegmentKey.set(neighborSegmentKey(segment.sourceId, segment.targetId), polyline);
           if (polyline && typeof polyline.bindTooltip === 'function') {
-            const tooltipHtml = buildNeighborTooltipHtml({
+            // SPEC MT1: Leaflet builds the badges when the tooltip opens, not
+            // for every line on every repaint.
+            const tooltipContent = neighborTooltipContent({
               ...segment,
               sourceNode: nodesById.get(segment.sourceId),
               targetNode: nodesById.get(segment.targetId)
             });
-            if (tooltipHtml) {
-              polyline.bindTooltip(tooltipHtml, {
+            if (tooltipContent) {
+              polyline.bindTooltip(tooltipContent, {
                 direction: 'center',
                 opacity: 0.92,
                 sticky: true,
@@ -5120,9 +5122,10 @@ export function initializeApp(config) {
           const traceKey = traceSegmentKey(segment.traceId, hop);
           if (traceKey) lineBySegmentKey.set(traceKey, polyline);
           if (polyline && typeof polyline.bindTooltip === 'function') {
-            const tooltipHtml = buildTraceTooltipHtml(segment.pathNodes);
-            if (tooltipHtml) {
-              polyline.bindTooltip(tooltipHtml, {
+            // Built on open, like the neighbour tooltips (SPEC MT1).
+            const tooltipContent = traceTooltipContent(segment.pathNodes);
+            if (tooltipContent) {
+              polyline.bindTooltip(tooltipContent, {
                 direction: 'center',
                 opacity: 0.92,
                 sticky: true,

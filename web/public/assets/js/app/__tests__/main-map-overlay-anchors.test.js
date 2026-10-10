@@ -32,7 +32,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NOW, clickLayer, runMapApp, settle } from './live-map-harness.js';
+import { NOW, clickLayer, drawnLines, runMapApp, settle } from './live-map-harness.js';
 
 /**
  * Two positioned nodes, a neighbour link and a trace between them, and one
@@ -65,17 +65,6 @@ function mapResponses() {
  */
 function touchNodeB(responses, battery) {
   responses['/api/nodes'][1] = { ...responses['/api/nodes'][1], battery_level: battery };
-}
-
-/**
- * The newest polyline the map drew with ``className``.
- *
- * @param {Object} leaflet Leaflet stub.
- * @param {string} className Exact class list of the line.
- * @returns {Object} Stub polyline.
- */
-function newestLine(leaflet, className) {
-  return leaflet._recorded.polylines.filter(line => line.options.className === className).at(-1);
 }
 
 /**
@@ -116,7 +105,7 @@ const TRACE_LINE = 'neighbor-connection-line trace-connection-line';
 test('an open neighbour-line overlay and its tooltip follow the rebuilt line (DR2)', async () => {
   const responses = mapResponses();
   await runMapApp({ responses }, async ctx => {
-    const line = newestLine(ctx.leaflet, NEIGHBOR_LINE);
+    const line = drawnLines(ctx.leaflet, NEIGHBOR_LINE).at(-1);
     clickLayer(line);
     await settle();
     const [overlay] = ctx.overlays();
@@ -126,7 +115,7 @@ test('an open neighbour-line overlay and its tooltip follow the rebuilt line (DR
     touchNodeB(responses, 55);
     await ctx.ping('nodes');
 
-    const rebuiltLine = newestLine(ctx.leaflet, NEIGHBOR_LINE);
+    const rebuiltLine = drawnLines(ctx.leaflet, NEIGHBOR_LINE).at(-1);
     assert.notEqual(rebuiltLine, line, 'the map rebuilt the line');
     assert.equal(line.getElement().__connected(), false, 'the old line left the document');
     assert.equal(ctx.overlays().length, 1, 'the overlay stays open');
@@ -142,12 +131,12 @@ test('an open neighbour-line overlay and its tooltip follow the rebuilt line (DR
 test('an open trace-line tooltip follows its rebuilt hop line (DR2)', async () => {
   const responses = mapResponses();
   await runMapApp({ responses }, async ctx => {
-    const line = newestLine(ctx.leaflet, TRACE_LINE);
+    const line = drawnLines(ctx.leaflet, TRACE_LINE).at(-1);
     clickLayer(line);
     assert.equal(line.isTooltipOpen(), true);
     touchNodeB(responses, 56);
     await ctx.ping('nodes');
-    const rebuiltLine = newestLine(ctx.leaflet, TRACE_LINE);
+    const rebuiltLine = drawnLines(ctx.leaflet, TRACE_LINE).at(-1);
     assert.notEqual(rebuiltLine, line);
     assert.equal(rebuiltLine.isTooltipOpen(), true, 'the trace tooltip reopens on the rebuilt hop');
   });
@@ -253,7 +242,7 @@ test('an overlay on a fanned-out colocated marker follows the rebuilt member (DR
 test('an overlay on a line the rebuild drops is closed (DR2)', async () => {
   const responses = mapResponses();
   await runMapApp({ responses }, async ctx => {
-    clickLayer(newestLine(ctx.leaflet, NEIGHBOR_LINE));
+    clickLayer(drawnLines(ctx.leaflet, NEIGHBOR_LINE).at(-1));
     await settle();
     assert.equal(ctx.overlays().length, 1);
     // B moves out of reach of any line: the neighbour row stays but its

@@ -78,6 +78,13 @@ function attachElement(layer) {
 /**
  * Give a stub polyline Leaflet's event and tooltip surface.
  *
+ * The bound tooltip keeps its ``content``. As in Leaflet 1.9.4, every
+ * ``openTooltip()`` fills it, an open one too (``_prepareOpen`` ends in
+ * ``update()``): a content function, which the map binds (SPEC MT1), is
+ * called with the layer, and a string is shown as given. ``html`` holds what
+ * the tooltip shows (``null`` until it first opens) and ``builds`` counts the
+ * content function's calls.
+ *
  * @param {Object} line Stub polyline.
  * @returns {Object} The same line.
  */
@@ -90,8 +97,8 @@ function addLineSurface(line) {
     handlers.get(event).push(handler);
     return line;
   };
-  line.bindTooltip = (html, options) => {
-    tooltip = { html, options, open: false, latLng: null };
+  line.bindTooltip = (content, options) => {
+    tooltip = { content, options, open: false, latLng: null, html: null, builds: 0 };
     tooltip.getLatLng = () => tooltip.latLng;
     return line;
   };
@@ -100,6 +107,12 @@ function addLineSurface(line) {
   line.isTooltipOpen = () => tooltip.open;
   line.openTooltip = latLng => {
     if (!tooltip) return line;
+    if (typeof tooltip.content === 'function') {
+      tooltip.builds += 1;
+      tooltip.html = tooltip.content(line);
+    } else {
+      tooltip.html = tooltip.content;
+    }
     tooltip.open = true;
     tooltip.latLng = latLng || { lat: 0, lng: 0, centre: true };
     return line;
@@ -230,6 +243,20 @@ function buildCloningFetch(responses, fetchOverride) {
       return respond([]);
     },
   };
+}
+
+/**
+ * The lines with ``className`` that the newest render drew, in drawing order:
+ * a cleared layer group no longer lists the lines of earlier renders.
+ *
+ * @param {Object} leaflet Leaflet stub of {@link runMapApp}.
+ * @param {string} className Exact class list of the line.
+ * @returns {Array<Object>} Stub polylines.
+ */
+export function drawnLines(leaflet, className) {
+  return leaflet._recorded.polylines.filter(
+    line => line.options.className === className && line._addedTo && line._addedTo._layers.includes(line),
+  );
 }
 
 /**
