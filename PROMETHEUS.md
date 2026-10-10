@@ -8,9 +8,9 @@ PotatoMesh exposes runtime telemetry at `/metrics` for Prometheus scraping.
 ## Runtime integration
 
 No configuration required. `/metrics` is served automatically on the same
-port as the dashboard as soon as the web app runs. Gauges are seeded from the
-database at startup and updated in near real time as `POST` ingest requests
-arrive.
+port as the dashboard as soon as the web app runs. Each scrape reads the
+per-node gauges from the stored node rows. `meshtastic_nodes` is set at startup
+and on each `POST /api/nodes`.
 
 ## Selecting which nodes are exported
 
@@ -21,15 +21,15 @@ time series):
 - `PROM_REPORT_IDS=*`: export metrics for every node.
 - `PROM_REPORT_IDS='!abcd1234,!0a2f0001'`: export metrics for the listed node ids only. Ids are `!` plus 8 lowercase hex digits, as `/api/nodes` shows them. Quote the value; shells and YAML treat `!` specially.
 
-Applies to both the initial refresh and incremental updates. Opted-out nodes are never exported, and with `PRIVATE=1` neither are hidden clients.
+Opted-out nodes are never exported, and with `PRIVATE=1` neither are hidden clients.
 
 ## Available metrics
 
 | Metric name | Type | Labels | Description |
 | --- | --- | --- | --- |
 | `meshtastic_messages_total` | Counter | _none_ | Increments each time the ingest pipeline accepts a new message payload. |
-| `meshtastic_nodes` | Gauge | _none_ | Tracks the number of nodes currently stored in the database. |
-| `meshtastic_node` | Gauge | `node`, `short_name`, `long_name`, `hw_model`, `role` | Reports a node as present (value `1`) along with identity metadata. |
+| `meshtastic_nodes` | Gauge | _none_ | Number of nodes heard in the last 7 days, without opted-out nodes and, with `PRIVATE=1`, hidden clients: the nodes `/api/nodes` lists, with no 1000-node cap. |
+| `meshtastic_node` | Gauge | `node`, `short_name`, `long_name`, `hw_model`, `role` | Reports a node as present (value `1`) with its current names, hardware model and role. One series per node. |
 | `meshtastic_node_battery_level` | Gauge | `node` | Most recent battery percentage reported by the node. |
 | `meshtastic_node_voltage` | Gauge | `node` | Most recent battery voltage reading. |
 | `meshtastic_node_uptime_seconds` | Gauge | `node` | Uptime reported by the device in seconds. |
@@ -38,10 +38,15 @@ Applies to both the initial refresh and incremental updates. Opted-out nodes are
 | `meshtastic_node_latitude` | Gauge | `node` | Latitude component of the last known position. |
 | `meshtastic_node_longitude` | Gauge | `node` | Longitude component of the last known position. |
 | `meshtastic_node_altitude` | Gauge | `node` | Altitude (in metres) of the last known position. |
+| `http_server_requests_total` | Counter | `code`, `method`, `path` | Requests answered. `path` is the route that answered, for example `GET /api/nodes/:id` or `GET /map`, also when it answers 404; `static` for a static file; `metrics` for `/metrics`; `unmatched` for any other request, such as an unknown path. |
+| `http_server_request_duration_seconds` | Histogram | `method`, `path` | Response time, with the same `path` values. |
+| `http_server_exceptions_total` | Counter | `exception` | Exceptions raised while answering, by class. |
 
 Per-node gauges are emitted only for ids in `PROM_REPORT_IDS`, and never for
 an opted-out node. A gauge does not appear until the device has sent the
-corresponding telemetry or position update at least once.
+corresponding telemetry or position update at least once. The latitude,
+longitude and altitude gauges do not appear for a position off the globe or at
+`(0, 0)`.
 
 ## Accessing the `/metrics` endpoint
 

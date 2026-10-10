@@ -104,14 +104,13 @@ RSpec.describe "Node identity binding" do
     end
 
     it "keeps names, role, hardware model, key and position against a record under another key" do
-      allow(dp).to receive(:update_prometheus_metrics)
       db = open_db
       seed_owner(db)
       post_profile(db, key: k2)
       row = node_row(db, id)
       db.close
-      # The record's profile and position reach no metric; its telemetry does.
-      expect(dp).to have_received(:update_prometheus_metrics).with(id, nil, "CLIENT", { "batteryLevel" => 42 }, nil)
+      # /metrics reads this row (SPEC PG2), so the record's profile and
+      # position reach no metric; its telemetry does.
       expect(row.slice("long_name", "short_name", "role", "hw_model", "public_key", "latitude", "last_advert_heard")).to eq(
         "long_name" => "Owner", "short_name" => "OWNR", "role" => "ROUTER", "hw_model" => "RAK4631",
         "public_key" => k1, "latitude" => 52.52, "last_advert_heard" => now - 600,

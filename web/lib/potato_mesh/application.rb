@@ -245,9 +245,9 @@ module PotatoMesh
       # pin stale JS between commits (SPEC AV6).
       use PotatoMesh::App::AssetCacheControl,
           immutable: APP_VERSION_PINNED
-      use ::Prometheus::Middleware::Collector
-      # The Exporter and the /metrics route print this one view, which drops
-      # per-node series of nodes /api/nodes would not list (SPEC PM1/PM2).
+      use App::Prometheus::RouteCollector # path label: the matched route (SPEC PG1)
+      # The Exporter and the /metrics route print this one view, which builds
+      # the per-node series from the rows /api/nodes would list (SPEC PM1, PG2).
       set :prometheus_export_registry,
           App::Prometheus::ExportRegistry.new(::Prometheus::Client.registry, self)
       use ::Prometheus::Middleware::Exporter, registry: prometheus_export_registry
