@@ -133,6 +133,11 @@ repository root when unset:
 - Well-known document: `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`
 - Database: `$XDG_DATA_HOME/potato-mesh`
 
+If the web app exits at boot with `Instance private key file cannot be parsed`,
+restore the file it names from a backup, or delete that file to start with a new
+key. A new key gives the instance a new id; peers replace its old record when it
+next announces.
+
 Outbound requests. The map loads basemap tiles from two third-party CDNs on
 every viewport: OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
 (`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent - no key,

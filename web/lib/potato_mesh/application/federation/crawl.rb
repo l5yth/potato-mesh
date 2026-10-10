@@ -509,7 +509,8 @@ module PotatoMesh
         begin
           store_crawled_instance(db, crawl, host, attributes, signature)
           ingest_known_instances_from!(db, domain, crawl: crawl, per_response_limit: per_response_limit)
-        rescue ArgumentError => e
+        rescue ArgumentError, SQLite3::Exception => e
+          # One entry's database error ends that entry only (SPEC FK2).
           warn_log(
             "Failed to persist remote instance",
             context: "federation.instances",

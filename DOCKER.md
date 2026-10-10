@@ -83,6 +83,12 @@ the container, storing the instance private key and staged
 `/.well-known/potato-mesh` documents. Credentials survive reboot and re-deploy
 as long as this volume persists.
 
+If the web container restarts in a loop, or exits, and its log shows
+`Instance private key file cannot be parsed`, restore the file it names
+(`keyfile` in this volume) from a backup, or delete that file to start with a new
+key. A new key gives the instance a new id; peers replace its old record when it
+next announces.
+
 The `potatomesh_pages` volume mounts to `/app/pages` and holds operator-managed
 Markdown files that are rendered as static content pages in the web UI. On first
 start the default `1-about.md` page is copied from the image into the volume.
