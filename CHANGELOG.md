@@ -183,6 +183,8 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Data: the Reticulum ingestor posts interface names without peer addresses: a TCP, Backbone, UDP or AutoInterface peer name keeps its class and the operator-given name and drops the address and port, an outbound I2P peer drops its I2P destination, a Weave peer posts its class, and RNode names are unchanged (SPEC RI1)
+* Web: interface names are stored without peer addresses whatever the ingestor posts, and stored names that carry one lose it at the next boot, so `GET /api/destinations` serves none, with or without `PRIVATE=1` (SPEC RI2/RI3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
