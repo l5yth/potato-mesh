@@ -164,6 +164,12 @@
 * Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
 * Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
 * Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
+* Web: HTML pages send a `Content-Security-Policy` and every response `Referrer-Policy: strict-origin-when-cross-origin`; basemap tiles and images on custom pages must use `https://` (SPEC HD1-HD3)
+* Web: the canonical link, `og:image`, `robots.txt`, `sitemap.xml` and the `/og-image.png` capture keep the scheme `INSTANCE_DOMAIN` names, and otherwise take only `http` or `https` from forwarded headers (SPEC HD4)
+* Web: the Chromium that renders `/og-image.png` starts without `API_TOKEN` or the app's other environment variables (SPEC HD5)
+* Web: the header and footer print `SITE_NAME` and the version as text, and asset URLs, module preloads and the import map carry the version URL-encoded (SPEC HD6)
+* Web: the unused `/potatomesh-logo.svg` route is removed; the static handler serves the logo as before (SPEC HD7)
+* Docs: `deploy/nginx.example.conf` and `DOCKER.md` clear the `Forwarded` request header, so the scheme of generated URLs comes from `X-Forwarded-Proto` (SPEC HD4)
 * Data: the MeshCore ingestor posts each roster contact's node once per connect instead of three times, and its position once instead of twice; a re-advert of a known contact posts its node and position once each instead of twice, or twice instead of three times on firmware 1.16 and later (SPEC CU1-CU3)
 
 ### Features

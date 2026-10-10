@@ -294,6 +294,60 @@ RSpec.describe PotatoMesh::OgImage do
         ENV["FERRUM_BROWSER_PATH"] = original if original
       end
     end
+
+    # The variable names a child process sees when it is spawned the way
+    # Ferrum 0.18 spawns Chromium: +Process.spawn+ with Ferrum's +env+
+    # option merged over nothing (no Xvfb in headless mode).
+    #
+    # @return [Array<String>] the child's environment variable names.
+    def chromium_child_env_keys
+      require "ferrum"
+      require "open3"
+      env = Hash(Ferrum::Browser::Options.new(described_class.browser_options).env)
+      out, status = Open3.capture2(env, RbConfig.ruby, "-e", "print ENV.keys.join(10.chr)")
+      expect(status).to be_success
+      out.split("\n")
+    end
+
+    it "starts Chromium without API_TOKEN or the app's other variables (SPEC HD5)" do
+      added = { "API_TOKEN" => "spec-secret", "LC_TIME" => "C", "TZ" => "UTC" }
+      originals = added.keys.to_h { |key| [key, ENV[key]] }
+      added.each { |key, value| ENV[key] = value }
+      begin
+        keys = chromium_child_env_keys
+
+        expect(keys & %w[API_TOKEN XDG_DATA_HOME XDG_CONFIG_HOME INSTANCE_DOMAIN RACK_ENV]).to eq([])
+        expect(%w[PATH LC_TIME TZ] - keys).to eq([])
+      ensure
+        originals.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+      end
+    end
+  end
+
+  describe ".chromium_env" do
+    it "keeps what Chromium needs and unsets every other variable (SPEC HD5)" do
+      kept = {
+        "PATH" => "/usr/bin", "HOME" => "/home/app", "TMPDIR" => "/tmp/app",
+        "LANG" => "C.UTF-8", "LANGUAGE" => "en", "LC_ALL" => "C", "LC_TIME" => "C", "TZ" => "UTC",
+        "DISPLAY" => ":0", "WAYLAND_DISPLAY" => "wayland-0", "XAUTHORITY" => "/x", "XDG_RUNTIME_DIR" => "/run/user/1",
+        "FONTCONFIG_FILE" => "/f", "FONTCONFIG_PATH" => "/fp", "CHROME_DEVEL_SANDBOX" => "/s",
+        "http_proxy" => "http://p", "https_proxy" => "http://p", "all_proxy" => "http://p", "no_proxy" => "localhost",
+        "HTTP_PROXY" => "http://p", "HTTPS_PROXY" => "http://p", "ALL_PROXY" => "http://p", "NO_PROXY" => "localhost",
+      }
+      dropped = {
+        "API_TOKEN" => "secret", "XDG_DATA_HOME" => "/d", "XDG_CONFIG_HOME" => "/c", "XDG_CACHE_HOME" => "/k",
+        "INSTANCE_DOMAIN" => "mesh.example", "FEDERATION" => "1", "RUBYOPT" => "-rbundler/setup",
+        "BUNDLE_GEMFILE" => "/app/Gemfile", "LD_PRELOAD" => "/evil.so", "LCX" => "1", "path" => "/x",
+      }
+
+      env = described_class.chromium_env(kept.merge(dropped))
+
+      expect(env).to eq(kept.merge(dropped.transform_values { nil }))
+    end
+
+    it "reads the process environment by default" do
+      expect(described_class.chromium_env.keys).to match_array(ENV.keys)
+    end
   end
 
   describe ".default_capture" do

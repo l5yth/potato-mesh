@@ -19,7 +19,7 @@
  *
  * Acts as a thin barrel re-exporting the public surface assembled in the
  * focused submodules under ``./node-page/`` so existing consumers
- * (``views/node_detail.erb``, ``node-detail-overlay.js``, ``charts-page.js``,
+ * (``node-page-boot.js``, ``node-detail-overlay.js``, ``charts-page.js``,
  * and the unit-test suite) keep working unchanged.
  *
  * @module node-page
