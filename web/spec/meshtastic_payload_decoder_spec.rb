@@ -17,6 +17,7 @@
 require "spec_helper"
 require "fileutils"
 require "tmpdir"
+require_relative "support/stub_interpreter"
 
 RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
   def with_env(key, value)
@@ -29,6 +30,7 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
 
   def with_repo_root(path)
     allow(PotatoMesh::Config).to receive(:repo_root).and_return(path)
+    yield
   end
 
   it "prefers a configured python path" do
@@ -107,42 +109,83 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
     end
   end
 
-  it "returns nil when the decoder process fails" do
+  # Point the decoder at a stub interpreter that replies +reply+ and exits
+  # with +status+ (+support/stub_interpreter.rb+).
+  #
+  # @param dir [String] directory that receives the stub.
+  # @param reply [String] stdout of the stub.
+  # @param status [Integer] exit status of the stub.
+  # @return [void]
+  def use_replying_interpreter(dir, reply, status: 0)
     allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
-    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
-    allow(Open3).to receive(:capture3).and_return(["{}", "boom", instance_double(Process::Status, success?: false)])
+    allow(described_class).to receive(:python_executable_path).and_return(
+      StubInterpreter.replying(dir, reply, status: status),
+    )
+  end
 
-    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  it "returns the decoder's reply as a hash" do
+    Dir.mktmpdir do |dir|
+      use_replying_interpreter(dir, StubInterpreter::POSITION_REPLY)
+
+      expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to eq(JSON.parse(StubInterpreter::POSITION_REPLY))
+    end
+  end
+
+  it "runs the decoder script with the request as JSON on stdin" do
+    Dir.mktmpdir do |dir|
+      allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+      allow(described_class).to receive(:python_executable_path).and_return(
+        StubInterpreter.write(dir, %(echo "$@" > "#{dir}/argv"\ncat > "#{dir}/request.json"\nprintf '%s' '{}')),
+      )
+
+      expect(described_class.decode(portnum: 67, payload_b64: "AQI=")).to eq({})
+      expect(File.read(File.join(dir, "argv"))).to eq("/tmp/decoder.py\n")
+      expect(JSON.parse(File.read(File.join(dir, "request.json")))).to eq("portnum" => 67, "payload_b64" => "AQI=")
+    end
+  end
+
+  it "returns nil when the decoder process fails" do
+    Dir.mktmpdir do |dir|
+      use_replying_interpreter(dir, "{}", status: 1)
+
+      expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+    end
   end
 
   it "returns nil when decoder output is invalid JSON" do
-    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
-    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
-    allow(Open3).to receive(:capture3).and_return(["not-json", "", instance_double(Process::Status, success?: true)])
+    Dir.mktmpdir do |dir|
+      use_replying_interpreter(dir, "not-json")
 
-    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+      expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+    end
   end
 
   it "returns nil when decoder output includes an error" do
-    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
-    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
-    allow(Open3).to receive(:capture3).and_return([JSON.generate("error" => "boom"), "", instance_double(Process::Status, success?: true)])
+    Dir.mktmpdir do |dir|
+      use_replying_interpreter(dir, JSON.generate("error" => "boom"))
 
-    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+      expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+    end
   end
 
   it "returns nil when decoder output is not a hash" do
-    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
-    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
-    allow(Open3).to receive(:capture3).and_return([JSON.generate([1, 2, 3]), "", instance_double(Process::Status, success?: true)])
+    Dir.mktmpdir do |dir|
+      use_replying_interpreter(dir, JSON.generate([1, 2, 3]))
 
-    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+      expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+    end
   end
 
   it "returns nil when the decoder executable is missing" do
     allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
     allow(described_class).to receive(:python_executable_path).and_return("/missing/python")
-    allow(Open3).to receive(:capture3).and_raise(Errno::ENOENT)
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when the interpreter path cannot be passed to the system" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3\0")
 
     expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
   end

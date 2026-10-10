@@ -201,6 +201,14 @@ Single message payload:
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"`, `"meshcore"`, or `"reticulum"`) - explicit per-record protocol stamp. Takes precedence over the value inherited from the registered ingestor; values outside the whitelist fall back to the ingestor lookup, then to `"meshtastic"`. Ingestors SHOULD stamp this on every message so the web app classifies senders correctly even before the ingestor heartbeat is processed.
 
+Decrypted payloads (SPEC DB1-DB4). The web app decrypts a Meshtastic message that carries `encrypted` and no `text` with `MESHTASTIC_PSK_B64`. A decrypted POSITION, NODEINFO, TELEMETRY, TRACEROUTE or NEIGHBORINFO payload (portnum 3, 4, 67, 70, 71) is decoded by one `decode_payload.py` process. The message's `encrypted` is cleared when, and only when, the decoded payload is stored as a position, node, telemetry, trace or neighbor record. A payload that is not stored leaves the message still encrypted, without `text`: a decode that failed or a bound skipped, or a decoded payload the web app drops, such as a NodeInfo or NeighborInfo that names another node (SPEC NI1, see Canonical node identity). Each decode is bounded:
+
+- Deadline: a decode that runs 4 s is killed with its process group.
+- Per request: one `POST /api/messages` decodes at most 4 messages. Every decode that would start counts, including one that finds no free decoder.
+- Per process: each web process runs at most 2 decoders at once, and a decode waits at most 1 s for one. The limit is per process, not per host: Puma reads `WEB_CONCURRENCY`, and each of its workers runs its own 2.
+
+A message past a bound is stored as when decoding fails, and the request still answers 201. Each skipped decode logs a debug line `Skipped Meshtastic payload decode` with `reason` `deadline`, `cap` or `concurrency`, the `message_id` and the `portnum`.
+
 Cross-ingestor deduplication. The `id` field is the sole dedup key - the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. A later copy fills the `to_id`, `text`, `reply_id`, `emoji` and `portnum` the stored row lacks and never replaces them (SPEC KC2). A copy of any protocol but MeshCore that names a `from_id` other than the stored row's is another message under a reused `id`: the stored row stays, and the copy is dropped and logged at `warn`, with no decrypted payload stored and no node created or refreshed for it (SPEC KC1). MeshCore copies rank their senders instead (SPEC MR3). Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
 
 For MeshCore the canonical fingerprint is:
