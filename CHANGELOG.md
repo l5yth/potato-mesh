@@ -168,6 +168,7 @@
 * Web: a latitude outside -90 to 90 or a longitude outside -180 to 180 stores no coordinates for a position, node or waypoint; the rest of the record is stored (SPEC IB2)
 * Web/Data: a neighbor snapshot keeps its first 16 neighbors and a trace its first 16 hops; the ingestor cuts both lists before posting (SPEC IB3)
 * Web: a heartbeat `packets` count above 1,000,000,000 records no activity row, and `/api/stats` and `/api/stats/activity` count each stored row at most 1,000,000,000 (SPEC IB4)
+* Data: the MeshCore ingestor posts each roster contact's node once per connect instead of three times, and its position once instead of twice; a re-advert of a known contact posts its node and position once each instead of twice, or twice instead of three times on firmware 1.16 and later (SPEC CU1-CU3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

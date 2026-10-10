@@ -4191,9 +4191,10 @@ def test_process_contact_update_queues_position_when_latlon_present(monkeypatch)
 
 
 def test_process_contact_update_position_rx_time_uses_last_advert(monkeypatch):
-    """A single NEW_CONTACT / NEXT_CONTACT roster entry must stamp the position
-    rx_time from last_advert, not now (issue #853) — the per-contact roster path
-    warms last_heard the same way the bulk path does."""
+    """A single NEW_CONTACT roster entry must stamp the position rx_time from
+    last_advert, not now (issue #853): the per-contact roster path warms
+    last_heard the same way the bulk path does.  A NEXT_CONTACT posts nothing;
+    its listing posts it (SPEC CU1)."""
     import time as _time
     import data.mesh_ingestor.protocols.meshcore as _mod
 
@@ -4315,7 +4316,11 @@ def test_on_contacts_updates_contacts(monkeypatch):
 
 
 def test_on_new_contact_and_next_contact_update_iface(monkeypatch):
-    """NEW_CONTACT and NEXT_CONTACT must both update the contact snapshot."""
+    """NEW_CONTACT and NEXT_CONTACT must both update the contact snapshot.
+
+    Only NEW_CONTACT upserts: a NEXT_CONTACT is one contact of a CONTACTS
+    listing, and the listing posts it (SPEC CU1).
+    """
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
     import data.mesh_ingestor.protocols.meshcore as _mod
@@ -4326,17 +4331,19 @@ def test_on_new_contact_and_next_contact_update_iface(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     monkeypatch.setattr(_mesh_pkg, "handlers", stub)
 
-    pub_key = "aabbccdd" + "00" * 28
-
-    class _Evt:
-        payload = {"public_key": pub_key, "adv_name": "D"}
+    new_key = "aabbccdd" + "00" * 28
+    listed_key = "11223344" + "00" * 28
 
     iface = _MeshcoreInterface(target=None)
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
-    asyncio.run(hmap["NEW_CONTACT"](_Evt()))
-    asyncio.run(hmap["NEXT_CONTACT"](_Evt()))
+    asyncio.run(hmap["NEW_CONTACT"](_FakeEvt({"public_key": new_key})))
+    asyncio.run(hmap["NEXT_CONTACT"](_FakeEvt({"public_key": listed_key})))
 
-    assert upserted.count("!aabbccdd") == 2
+    assert upserted == ["!aabbccdd"]
+    assert {nid for nid, _node in iface.contacts_snapshot()} == {
+        "!aabbccdd",
+        "!11223344",
+    }
 
 
 # ---------------------------------------------------------------------------

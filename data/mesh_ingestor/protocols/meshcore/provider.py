@@ -82,9 +82,11 @@ class MeshcoreProvider:
                 **and** the initial contact fetch
                 (``mc.ensure_contacts()``) within
                 :data:`_CONNECT_TIMEOUT_SECS` seconds.  Since issue #788, the
-                readiness signal is deferred until contacts have been fetched
-                so the daemon's first snapshot sees a populated contact list;
-                the timeout therefore bounds both steps rather than just the
+                readiness signal is deferred until that fetch has returned, so
+                the daemon's first snapshot follows it: the snapshot carries
+                the self node only once the listing has posted every contact,
+                and the roster when the listing never completed (SPEC CU2).
+                The timeout therefore bounds both steps rather than just the
                 appstart handshake.
         """
         target: str | None = active_candidate or config.CONNECTION
@@ -178,12 +180,18 @@ class MeshcoreProvider:
         return node_id, _self_info_to_node_dict(payload)
 
     def node_snapshot_items(self, iface: object) -> list[tuple[str, dict]]:
-        """Return a snapshot of all known MeshCore contacts as node entries.
+        """Return the MeshCore nodes the daemon's connect snapshot posts.
 
         Includes the host self-node when a ``SELF_INFO`` payload has already
         been received, so that the initial snapshot sent by the daemon
         covers the local device even when the background event loop delivers
         ``SELF_INFO`` before the snapshot is taken.
+
+        The known contacts are included only while the connection's first
+        ``CONTACTS`` listing has not posted (SPEC CU2): that listing posts
+        every contact once.  A listing that never completed (a lost
+        ``CONTACT_END``, a failed fetch) leaves the contacts the
+        ``NEXT_CONTACT`` events put in the roster to this snapshot.
 
         Parameters:
             iface: Active :class:`_MeshcoreInterface` instance.  Any other
@@ -195,7 +203,9 @@ class MeshcoreProvider:
         """
         if not isinstance(iface, _MeshcoreInterface):
             return []
-        items: list[tuple[str, dict]] = list(iface.contacts_snapshot())
+        items: list[tuple[str, dict]] = (
+            [] if iface._roster_posted else list(iface.contacts_snapshot())
+        )
         self_item = self.self_node_item(iface)
         if self_item is not None:
             items.append(self_item)
