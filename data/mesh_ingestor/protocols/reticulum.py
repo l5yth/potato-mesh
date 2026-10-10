@@ -588,7 +588,8 @@ def _announce_to_node_dict(
         aspect: Destination aspect this announce arrived on, e.g.
             ``lxmf.delivery``.  Maps to the role via :data:`_ASPECT_ROLES`.
         interface: Interface the announce was heard on, when known — the honest
-            answer to "is this a LoRa peer" (SPEC RN4).
+            answer to "is this a LoRa peer" (SPEC RN4).  Posted without its
+            peer address (SPEC RI1).
         hops: Hop count travelled by the announce, when known.
         last_heard: Unix seconds of announce receipt; defaults to now.
 
@@ -634,7 +635,7 @@ def _announce_to_node_dict(
     if hash_hex is not None and len(hash_hex) >= 8:
         node["destination"] = {"id": hash_hex, "aspect": aspect, "role": role}
     if interface:
-        node["interface"] = interface
+        node["interface"] = reticulum_interfaces.public_interface_name(interface)
     # Radio metadata rides on the node record (SPEC RL3). The web upsert already
     # reads these keys; a Reticulum node never received them because the other
     # protocols stamp them from position and telemetry payloads, and an announce
@@ -645,7 +646,7 @@ def _announce_to_node_dict(
     # only, so a peer heard over an IP interface must not be stamped with them.
     # The posted record is stamped anyway: handlers.upsert_node applies the
     # configured values to every node (ACCEPTANCE Known gap RL-A3).
-    _attach_radio_metadata(node)
+    _attach_radio_metadata(node, interface)
     if hops is not None:
         node["hopsAway"] = hops
     return node
@@ -1015,7 +1016,7 @@ def _is_lora_interface(interface: object) -> bool:
     return isinstance(interface, str) and _is_rnode_interface(interface)
 
 
-def _attach_radio_metadata(node: dict) -> None:
+def _attach_radio_metadata(node: dict, interface: str | None = None) -> None:
     """Stamp the resolved LoRa frequency and preset onto a node record.
 
     The other protocols reach ``nodes.lora_freq`` / ``nodes.modem_preset``
@@ -1033,9 +1034,11 @@ def _attach_radio_metadata(node: dict) -> None:
 
     Parameters:
         node: Node dict destined for ``POST /api/nodes``.
+        interface: The interface's name as RNS printed it, or ``None``.  The
+            record carries it without its address (SPEC RI1), a name the
+            stack's stats do not list, so the class test reads this one.
     """
-    interface = node.get("interface")
-    if interface is not None and not _is_lora_interface(interface):
+    if interface and not _is_lora_interface(interface):
         return
     frequency = getattr(config, "LORA_FREQ", None)
     preset = getattr(config, "MODEM_PRESET", None)
@@ -1240,8 +1243,8 @@ def _host_destination_nodes(identity_hash: str) -> list[dict]:
         }
         interface = local.get(dest_hex)
         if interface:
-            record["interface"] = interface
-        _attach_radio_metadata(record)
+            record["interface"] = reticulum_interfaces.public_interface_name(interface)
+        _attach_radio_metadata(record, interface)
         records.append(record)
     transport = _transport_identity_hash()
     if transport and _transport_enabled():

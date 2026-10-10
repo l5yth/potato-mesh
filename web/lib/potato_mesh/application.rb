@@ -257,6 +257,7 @@ module PotatoMesh
       perform_initial_filesystem_setup!
       cleanup_legacy_well_known_artifacts
       ensure_schema_upgrades
+      scrub_destination_interfaces # SPEC RI3: needs the destinations table, so after the upgrades
       init_db unless db_schema_present?
 
       log_instance_domain_resolution
