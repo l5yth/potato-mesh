@@ -59,13 +59,29 @@ RSpec.describe "Security headers" do
   end
 
   # Every inline script the policy governs, exactly as served: a +<script>+
-  # without +src+ whose type is not the JSON-LD data block.
+  # without +src+ whose type is not the JSON-LD data block. Tag and
+  # attribute names match in any letter case and an end tag in any form
+  # (+</script >+, +</SCRIPT x>+), as HTML parses them (SPEC CQ4).
   #
   # @param html [String] the served page.
   # @return [Array<Array(String, String)>] attributes and body of each script.
   def inline_scripts(html)
-    html.scan(%r{<script([^>]*)>(.*?)</script>}m).reject do |attrs, _body|
-      attrs.include?("src=") || attrs.include?("application/ld+json")
+    html.scan(%r{<script\b([^>]*)>(.*?)</script[^>]*>}im).reject do |attrs, _body|
+      attrs.match?(/\bsrc\s*=/i) || attrs.match?(%r{application/ld\+json}i)
+    end
+  end
+
+  describe "the inline script finder" do
+    it "finds a script tag in any letter case, with any end-tag form (SPEC CQ4)" do
+      html = <<~HTML
+        <SCRIPT>upper()</SCRIPT>
+        <script type="module">a()</script >
+        <Script>mixed()</script	data-x="1">
+        <script src="/x.js"></script>
+        <script type="application/ld+json">{}</script>
+      HTML
+
+      expect(inline_scripts(html).map(&:last)).to eq(["upper()", "a()", "mixed()"])
     end
   end
 
