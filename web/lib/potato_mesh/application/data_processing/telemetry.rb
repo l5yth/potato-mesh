@@ -335,7 +335,9 @@ module PotatoMesh
 
       private :coerce_float_array_json
 
-      # Persist a telemetry packet and refresh the related node row.
+      # Persist a telemetry packet and refresh the related node row.  A
+      # telemetry row stored under its id for another node is left as it is
+      # (SPEC KC4).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param payload [Hash] inbound telemetry payload.
@@ -578,7 +580,11 @@ module PotatoMesh
                          ingestor=COALESCE(NULLIF(telemetry.ingestor,''), excluded.ingestor),
                          protocol=COALESCE(NULLIF(telemetry.protocol,'meshtastic'), excluded.protocol),
                          telemetry_type=COALESCE(excluded.telemetry_type,telemetry.telemetry_type)#{EXTENDED_TELEMETRY_UPSERT_SQL}
+                       WHERE telemetry.node_id IS NULL OR telemetry.node_id = excluded.node_id
                      SQL
+          # Another node's reading under a stored id leaves that row alone;
+          # the record still refreshes its own node below (SPEC KC4).
+          warn_dropped_record(db, "telemetry", "node_id", telemetry_id, node_id, context: "data_processing.insert_telemetry") if db.changes.zero?
         end
 
         update_node_from_telemetry(

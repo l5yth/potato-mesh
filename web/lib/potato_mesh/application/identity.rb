@@ -16,6 +16,11 @@
 
 module PotatoMesh
   module App
+    # Raised at boot when the instance keyfile exists but does not parse as
+    # a private key. The boot stops and the file is left as it is: a new key
+    # would be a new instance identity (SPEC FK3).
+    class InstanceKeyfileError < StandardError; end
+
     module Identity
       # Resolve the current application version string. Always +"v"+-prefixed
       # (e.g. +"v0.7.4"+) so every build shape — git, baked-Docker, or constant
@@ -139,28 +144,20 @@ module PotatoMesh
 
       # Load the persisted instance private key or generate a new one when absent.
       #
+      # A keyfile that exists but does not parse stops the boot, and the file
+      # is left as it is (SPEC FK3). The key loads while the application class
+      # is defined, before its logger is set, so the error is raised rather
+      # than logged: it leaves the boot and Ruby prints it on stderr.
+      #
       # @return [Array<OpenSSL::PKey::RSA, Boolean>] tuple of key and generation flag.
+      # @raise [InstanceKeyfileError] when the keyfile, or the legacy keyfile
+      #   it would be migrated from, does not parse.
       def load_or_generate_instance_private_key
         keyfile_path = PotatoMesh::Config.keyfile_path
         migrate_legacy_keyfile_for_identity!(keyfile_path)
         FileUtils.mkdir_p(File.dirname(keyfile_path))
-        if File.exist?(keyfile_path)
-          contents = File.binread(keyfile_path)
-          return [OpenSSL::PKey.read(contents), false]
-        end
+        return [read_instance_private_key(keyfile_path), false] if File.exist?(keyfile_path)
 
-        key = OpenSSL::PKey::RSA.new(2048)
-        File.open(keyfile_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
-          file.write(key.export)
-        end
-        [key, true]
-      rescue OpenSSL::PKey::PKeyError, ArgumentError => e
-        warn_log(
-          "Failed to load instance private key",
-          context: "identity.keys",
-          error_class: e.class.name,
-          error_message: e.message,
-        )
         key = OpenSSL::PKey::RSA.new(2048)
         File.open(keyfile_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
           file.write(key.export)
@@ -168,10 +165,31 @@ module PotatoMesh
         [key, true]
       end
 
+      # Read the private key a keyfile holds (SPEC FK3).
+      #
+      # @param path [String] keyfile path.
+      # @return [OpenSSL::PKey::PKey] the parsed key.
+      # @raise [InstanceKeyfileError] naming +path+ when the file does not
+      #   parse.
+      # @raise [SystemCallError] when the file cannot be read.
+      def read_instance_private_key(path)
+        OpenSSL::PKey.read(File.binread(path))
+      rescue OpenSSL::PKey::PKeyError, ArgumentError => e
+        raise InstanceKeyfileError,
+              "Instance private key file cannot be parsed: #{path} (#{e.class}: #{e.message}). " \
+              "Restore it from a backup, or delete it to start with a new key and instance id."
+      end
+
       # Migrate an existing legacy keyfile into the configured destination.
+      #
+      # A legacy keyfile that does not parse is not copied: the boot stops
+      # and the error names the legacy file, which the operator then restores
+      # or deletes (SPEC FK3). A copy would be named instead, and deleting it
+      # would only copy the legacy file again at the next boot.
       #
       # @param destination_path [String] absolute path where the keyfile should reside.
       # @return [void]
+      # @raise [InstanceKeyfileError] when the legacy keyfile does not parse.
       def migrate_legacy_keyfile_for_identity!(destination_path)
         return if File.exist?(destination_path)
 
@@ -180,6 +198,7 @@ module PotatoMesh
           next if candidate == destination_path
 
           begin
+            read_instance_private_key(candidate)
             FileUtils.mkdir_p(File.dirname(destination_path))
             FileUtils.cp(candidate, destination_path)
             File.chmod(0o600, destination_path)
@@ -206,7 +225,7 @@ module PotatoMesh
         end
       end
 
-      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root,
+      private :migrate_legacy_keyfile_for_identity!, :read_instance_private_key, :locate_git_repo_root,
               :fallback_app_version, :normalize_version, :normalize_git_description
 
       # Return the directory used to store well-known documents.

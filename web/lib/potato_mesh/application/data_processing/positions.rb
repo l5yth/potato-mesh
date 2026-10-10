@@ -20,7 +20,8 @@ module PotatoMesh
       # Persist a position payload, populate the +nodes+ table for newly seen
       # senders, and update node rows with the freshest GPS fields.  A payload
       # carrying +public_key+ updates the node row only under the key the row
-      # is bound to (SPEC NI3).
+      # is bound to (SPEC NI3), and a position row stored under its id for
+      # another node is left as it is (SPEC KC4).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param payload [Hash] inbound position payload.
@@ -220,7 +221,11 @@ module PotatoMesh
                          payload_b64=COALESCE(excluded.payload_b64,positions.payload_b64),
                          ingestor=COALESCE(NULLIF(positions.ingestor,''), excluded.ingestor),
                          protocol=COALESCE(NULLIF(positions.protocol,'meshtastic'), excluded.protocol)
+                       WHERE positions.node_id IS NULL OR positions.node_id = excluded.node_id
                      SQL
+          # Another node's position under a stored id leaves that row alone;
+          # the record still refreshes its own node below (SPEC KC4).
+          warn_dropped_record(db, "positions", "node_id", pos_id, node_id, context: "data_processing.insert_position") if db.changes.zero?
         end
 
         # A MeshCore advert's position carries the advert's full key: under

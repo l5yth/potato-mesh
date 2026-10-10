@@ -81,7 +81,9 @@ module PotatoMesh
       end
 
       # Persist a chat-layer message payload, performing meshcore content
-      # dedup, decryption, and per-protocol bookkeeping.
+      # dedup, decryption, and per-protocol bookkeeping.  A copy of a stored
+      # message merges into it through {#merge_message_copy}, which drops a
+      # copy that names another sender (SPEC KC1-KC3).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param message [Hash] inbound message payload.
@@ -125,6 +127,10 @@ module PotatoMesh
             message["from_num"] ||= canonical_parts[1]
           end
         end
+        # A copy naming its sender only by number names the node that number
+        # canonicalises to, the node the writes below touch, so the row and
+        # the merge into a stored copy hold it to that sender (SPEC KC1).
+        from_id ||= canonical_node_parts(nil, message["from_num"])&.first
         sender_present = !from_id.nil? || !coerce_integer(message["from_num"]).nil? || !trimmed_from_id.nil?
 
         raw_to_id = message["to_id"]
@@ -217,6 +223,15 @@ module PotatoMesh
           ingestor,
           protocol,
         ]
+
+        # This copy's fields as the merge into a stored copy reads them.
+        copy = {
+          from_id: from_id, to_id: to_id, text: text, encrypted: encrypted, portnum: portnum,
+          lora_freq: lora_freq, modem_preset: modem_preset, channel_name: channel_name,
+          reply_id: reply_id, emoji: emoji, ingestor: ingestor, protocol: protocol, scope: scope,
+          hops: hops, path: path, rx_time: rx_time, rx_iso: rx_iso,
+          sender_present: sender_present, message: message,
+        }
 
         # Sender id that survives collapse with any copy already stored (SPEC
         # MR3).  Starts as this copy's own sender and is narrowed below when an
@@ -318,146 +333,8 @@ module PotatoMesh
             end
           end
 
-          existing = db.get_first_row(
-            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol, scope FROM messages WHERE id = ?",
-            [target_id],
-          )
-          if existing
-            updates = {}
-            existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
-            existing_text_str = existing_text&.to_s
-            existing_has_text = existing_text_str && !existing_text_str.strip.empty?
-            existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
-            existing_from_str = existing_from&.to_s
-            return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
-            existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
-            existing_encrypted_str = existing_encrypted&.to_s
-            decrypted_precedence = text && existing_encrypted_str && !existing_encrypted_str.strip.empty?
-
-            if from_id
-              should_update = existing_from_str.nil? || existing_from_str.strip.empty?
-              if !should_update && existing_from != from_id
-                # A second copy of the same physical message disagrees about the
-                # sender.  For MeshCore that disagreement is expected (each
-                # ingestor resolves the sender against its own roster), so the
-                # better-evidenced id wins rather than the last writer (SPEC
-                # MR3).  Other protocols carry a firmware-assigned sender and
-                # keep the historical overwrite.
-                should_update = if protocol == "meshcore"
-                    meshcore_sender_supersedes?(db, existing_from, from_id)
-                  else
-                    true
-                  end
-              end
-              updates["from_id"] = from_id if should_update
-              # Everything downstream (placeholder synthesis, last-heard touch)
-              # must follow the id that actually survived, so a losing copy
-              # never grants liveness to the identity it names.
-              resolved_from_id = should_update ? from_id : (string_or_nil(existing_from) || from_id)
-            end
-
-            if to_id
-              existing_to = existing.is_a?(Hash) ? existing["to_id"] : existing[1]
-              existing_to_str = existing_to&.to_s
-              should_update = existing_to_str.nil? || existing_to_str.strip.empty?
-              should_update ||= existing_to != to_id
-              updates["to_id"] = to_id if should_update
-            end
-
-            if decrypted_precedence && existing_encrypted_str && !existing_encrypted_str.strip.empty?
-              updates["encrypted"] = nil if existing_encrypted
-            elsif encrypted && !existing_has_text
-              should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
-              should_update ||= existing_encrypted != encrypted
-              updates["encrypted"] = encrypted if should_update
-            end
-
-            if text
-              should_update = existing_text_str.nil? || existing_text_str.strip.empty?
-              should_update ||= existing_text != text
-              updates["text"] = text if should_update
-            end
-
-            if decrypted_precedence
-              updates["channel"] = message["channel"] if message.key?("channel")
-              updates["snr"] = message["snr"] if message.key?("snr")
-              updates["rssi"] = message["rssi"] if message.key?("rssi")
-              updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
-              updates["hops"] = hops unless hops.nil?
-              updates["path"] = path if path
-              updates["lora_freq"] = lora_freq unless lora_freq.nil?
-              updates["modem_preset"] = modem_preset if modem_preset
-              updates["channel_name"] = channel_name if channel_name
-              updates["rx_time"] = rx_time if rx_time
-              updates["rx_iso"] = rx_iso if rx_iso
-            end
-
-            if portnum
-              existing_portnum = existing.is_a?(Hash) ? existing["portnum"] : existing[9]
-              existing_portnum_str = existing_portnum&.to_s
-              should_update = existing_portnum_str.nil? || existing_portnum_str.strip.empty?
-              should_update ||= existing_portnum != portnum
-              should_update ||= decrypted_precedence
-              updates["portnum"] = portnum if should_update
-            end
-
-            unless lora_freq.nil?
-              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[4]
-              updates["lora_freq"] = lora_freq if existing_lora != lora_freq
-            end
-
-            if modem_preset
-              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[5]
-              existing_preset_str = existing_preset&.to_s
-              should_update = existing_preset_str.nil? || existing_preset_str.strip.empty?
-              should_update ||= existing_preset != modem_preset
-              updates["modem_preset"] = modem_preset if should_update
-            end
-
-            if channel_name
-              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[6]
-              existing_channel_str = existing_channel&.to_s
-              should_update = existing_channel_str.nil? || existing_channel_str.strip.empty?
-              should_update ||= existing_channel != channel_name
-              updates["channel_name"] = channel_name if should_update
-            end
-
-            unless reply_id.nil?
-              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[7]
-              updates["reply_id"] = reply_id if existing_reply != reply_id
-            end
-
-            if emoji
-              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[8]
-              existing_emoji_str = existing_emoji&.to_s
-              should_update = existing_emoji_str.nil? || existing_emoji_str.strip.empty?
-              should_update ||= existing_emoji != emoji
-              updates["emoji"] = emoji if should_update
-            end
-
-            if ingestor
-              existing_ingestor = existing.is_a?(Hash) ? existing["ingestor"] : existing[10]
-              existing_ingestor = string_or_nil(existing_ingestor)
-              updates["ingestor"] = ingestor if existing_ingestor.nil?
-            end
-
-            # A later copy fills a NULL scope or names a stored "?", nothing
-            # more; hops, path, snr and rssi stay with the first ingestor
-            # (SPEC SC6).
-            if scope
-              existing_scope = existing.is_a?(Hash) ? existing["scope"] : existing[12]
-              updates["scope"] = scope if message_scope_supersedes?(existing_scope, scope)
-            end
-
-            existing_protocol = existing.is_a?(Hash) ? existing["protocol"] : existing[11]
-            return if existing_protocol && existing_protocol != "meshtastic" && existing_protocol != protocol
-            updates["protocol"] = protocol if (existing_protocol.nil? || existing_protocol == "meshtastic") && protocol != "meshtastic"
-
-            unless updates.empty?
-              assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
-              db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [target_id])
-            end
-          else
+          existing = stored_message_for_merge(db, target_id)
+          unless existing
             PotatoMesh::App::Prometheus::MESSAGES_TOTAL.increment
 
             begin
@@ -466,73 +343,17 @@ module PotatoMesh
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
-              existing_row = db.get_first_row(
-                "SELECT text, encrypted, ingestor, protocol, from_id, scope FROM messages WHERE id = ?",
-                [msg_id],
-              )
-              existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
-              existing_text_str = existing_text&.to_s
-              allow_encrypted_update = existing_text_str.nil? || existing_text_str.strip.empty?
-              existing_encrypted = existing_row.is_a?(Hash) ? existing_row["encrypted"] : existing_row&.[](1)
-              existing_encrypted_str = existing_encrypted&.to_s
-              existing_ingestor = existing_row.is_a?(Hash) ? existing_row["ingestor"] : existing_row&.[](2)
-              existing_ingestor = string_or_nil(existing_ingestor)
-              existing_fallback_protocol = existing_row.is_a?(Hash) ? existing_row["protocol"] : existing_row&.[](3)
-              # Guard against cross-protocol contamination in the constraint fallback path,
-              # mirroring the same guard applied in the primary update path above.
-              return if existing_fallback_protocol && existing_fallback_protocol != "meshtastic" && existing_fallback_protocol != protocol
-              decrypted_precedence = text && existing_encrypted_str && !existing_encrypted_str.strip.empty?
-
-              fallback_updates = {}
-              if from_id
-                # Same sender-resolution rule as the primary update path (SPEC
-                # MR3); this branch is the INSERT race between two ingestors
-                # posting the same message, exactly where competing sender ids
-                # meet.
-                existing_fallback_from = existing_row.is_a?(Hash) ? existing_row["from_id"] : existing_row&.[](4)
-                existing_fallback_from_str = string_or_nil(existing_fallback_from)
-                supersedes =
-                  existing_fallback_from_str.nil? ||
-                  existing_fallback_from_str == from_id ||
-                  protocol != "meshcore" ||
-                  meshcore_sender_supersedes?(db, existing_fallback_from_str, from_id)
-                fallback_updates["from_id"] = from_id if supersedes
-                resolved_from_id = supersedes ? from_id : existing_fallback_from_str
-              end
-              fallback_updates["to_id"] = to_id if to_id
-              fallback_updates["text"] = text if text
-              fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
-              fallback_updates["portnum"] = portnum if portnum
-              if decrypted_precedence
-                fallback_updates["channel"] = message["channel"] if message.key?("channel")
-                fallback_updates["snr"] = message["snr"] if message.key?("snr")
-                fallback_updates["rssi"] = message["rssi"] if message.key?("rssi")
-                fallback_updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
-                fallback_updates["hops"] = hops unless hops.nil?
-                fallback_updates["path"] = path if path
-                fallback_updates["portnum"] = portnum if portnum
-                fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
-                fallback_updates["modem_preset"] = modem_preset if modem_preset
-                fallback_updates["channel_name"] = channel_name if channel_name
-                fallback_updates["rx_time"] = rx_time if rx_time
-                fallback_updates["rx_iso"] = rx_iso if rx_iso
-              else
-                fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
-                fallback_updates["modem_preset"] = modem_preset if modem_preset
-                fallback_updates["channel_name"] = channel_name if channel_name
-              end
-              fallback_updates["reply_id"] = reply_id unless reply_id.nil?
-              fallback_updates["emoji"] = emoji if emoji
-              fallback_updates["ingestor"] = ingestor if ingestor && existing_ingestor.nil?
-              # Same flood-scope precedence as the update path (SPEC SC6).
-              existing_fallback_scope = existing_row.is_a?(Hash) ? existing_row["scope"] : existing_row&.[](5)
-              fallback_updates["scope"] = scope if message_scope_supersedes?(existing_fallback_scope, scope)
-              fallback_updates["protocol"] = protocol if (existing_fallback_protocol.nil? || existing_fallback_protocol == "meshtastic") && protocol != "meshtastic"
-              unless fallback_updates.empty?
-                assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
-                db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])
-              end
+              # Another ingestor's copy landed between the lookup and the
+              # INSERT, precisely where two ingestors' copies meet (SPEC MR3):
+              # merge into it as an id hit does (SPEC KC3).
+              target_id = msg_id
+              existing = stored_message_for_merge(db, target_id)
             end
+          end
+
+          if existing
+            merged, resolved_from_id = merge_message_copy(db, target_id, existing, copy)
+            return unless merged
           end
         end
 

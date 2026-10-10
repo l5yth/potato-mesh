@@ -112,10 +112,12 @@
   <script src="<%= asset_url("/assets/js/background.js") %>" defer></script>
 
   <!-- Leaflet CSS/JS (CDN) -->
+  <%# The pinned URLs and hashes live in LeafletAssets, from which the
+      Content-Security-Policy derives the one unpkg source it admits (SPEC HD1). %>
   <link
     rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    href="<%= PotatoMesh::App::LeafletAssets::CSS_URL %>"
+    integrity="<%= PotatoMesh::App::LeafletAssets::CSS_INTEGRITY %>"
     crossorigin=""
   />
   <%# `defer` so this external script does not block first paint on the unpkg
@@ -124,8 +126,8 @@
       is ready by the time the app initialises (a missing L still degrades to the
       "map unavailable" placeholder). %>
   <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    src="<%= PotatoMesh::App::LeafletAssets::JS_URL %>"
+    integrity="<%= PotatoMesh::App::LeafletAssets::JS_INTEGRITY %>"
     crossorigin=""
     defer
   ></script>
@@ -172,7 +174,7 @@
           <h1 class="site-title">
             <a href="/" class="site-title__link">
               <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-              <span class="site-title-text"><%= site_name %></span>
+              <span class="site-title-text"><%= Rack::Utils.escape_html(site_name) %></span>
             </a>
           </h1>
           <%# Header glyphs (region, menu, close) are inline SVG drawn in the
@@ -335,10 +337,6 @@
     </div>
   </template>
 
-  <script>
-    const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
-    const current_view_mode = '<%= view_mode %>';
-  </script>
   <script type="module" src="<%= asset_url("/assets/js/app/index.js") %>"></script>
 </body>
 </html>

@@ -15,7 +15,9 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "open3"
 require "openssl"
+require "rbconfig"
 
 RSpec.describe PotatoMesh::App::Identity do
   let(:harness_class) do
@@ -89,28 +91,123 @@ RSpec.describe PotatoMesh::App::Identity do
       allow(File).to receive(:binread).and_call_original
     end
 
-    it "generates a fresh key and returns generated=true when the keyfile content is corrupt" do
+    # A keyfile that does not parse stops the boot: the error names the file,
+    # the file keeps its bytes and no key is generated (SPEC FK3).
+    {
+      "corrupt" => "this is not a valid PEM key\n{corrupted}",
+      "truncated" => OpenSSL::PKey::RSA.new(2048).export.byteslice(0, 300),
+      "empty" => "",
+    }.each do |label, contents|
+      it "raises an error naming the keyfile and leaves it as it is when it is #{label}" do
+        Dir.mktmpdir do |dir|
+          key_path = File.join(dir, "config", "potato-mesh", "keyfile")
+          FileUtils.mkdir_p(File.dirname(key_path))
+          File.binwrite(key_path, contents)
+
+          allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+          allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_return([])
+          allow(OpenSSL::PKey::RSA).to receive(:new).and_call_original
+
+          outcome = begin
+              harness_class.load_or_generate_instance_private_key
+            rescue StandardError => e
+              e
+            end
+
+          expect(File.binread(key_path)).to eq(contents.b)
+          expect(OpenSSL::PKey::RSA).not_to have_received(:new)
+          expect(outcome.class.name).to eq("PotatoMesh::App::InstanceKeyfileError")
+          expect(outcome.message).to eq(
+            "Instance private key file cannot be parsed: #{key_path} (OpenSSL::PKey::PKeyError: Could not parse PKey). " \
+            "Restore it from a backup, or delete it to start with a new key and instance id.",
+          )
+        end
+      ensure
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+        allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_call_original
+      end
+    end
+
+    it "names a legacy keyfile it cannot parse, copies nothing, and generates a key once that file is deleted" do
       Dir.mktmpdir do |dir|
         key_path = File.join(dir, "config", "potato-mesh", "keyfile")
-        FileUtils.mkdir_p(File.dirname(key_path))
-        # Write corrupt / non-PEM content so OpenSSL::PKey.read raises.
-        File.write(key_path, "this is not a valid PEM key\n{corrupted}")
+        legacy_key_path = File.join(dir, "web", ".config", "keyfile")
+        FileUtils.mkdir_p(File.dirname(legacy_key_path))
+        truncated = OpenSSL::PKey::RSA.new(2048).export.byteslice(0, 300)
+        File.binwrite(legacy_key_path, truncated)
 
         allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+        allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_return([legacy_key_path])
 
-        # The method rescues OpenSSL::PKey::PKeyError internally, generates a
-        # new key, writes it out, and returns [new_key, true].
+        outcome = begin
+            harness_class.load_or_generate_instance_private_key
+          rescue StandardError => e
+            e
+          end
+
+        expect(File.exist?(key_path)).to be(false)
+        expect(File.binread(legacy_key_path)).to eq(truncated)
+        expect(outcome.class.name).to eq("PotatoMesh::App::InstanceKeyfileError")
+        expect(outcome.message).to start_with(
+          "Instance private key file cannot be parsed: #{legacy_key_path} (OpenSSL::PKey::PKeyError: Could not parse PKey).",
+        )
+
+        # The operator deletes the file the error names, as the docs say.
+        File.delete(legacy_key_path)
+        loaded_key, generated = harness_class.load_or_generate_instance_private_key
+
+        expect(generated).to be(true)
+        expect(OpenSSL::PKey.read(File.binread(key_path)).to_pem).to eq(loaded_key.to_pem)
+      end
+    ensure
+      allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+      allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_call_original
+    end
+
+    it "generates and stores a key, readable by its owner only, when no keyfile exists" do
+      Dir.mktmpdir do |dir|
+        key_path = File.join(dir, "config", "potato-mesh", "keyfile")
+
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+        allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_return([])
+
         loaded_key, generated = harness_class.load_or_generate_instance_private_key
 
         expect(generated).to be(true)
         expect(loaded_key).to be_a(OpenSSL::PKey::RSA)
-        # Verify the new key was persisted to disk.
-        expect(File.exist?(key_path)).to be(true)
-        persisted = OpenSSL::PKey.read(File.binread(key_path))
-        expect(persisted.to_pem).to eq(loaded_key.to_pem)
+        expect(File.stat(key_path).mode & 0o777).to eq(0o600)
+        expect(OpenSSL::PKey.read(File.binread(key_path)).to_pem).to eq(loaded_key.to_pem)
       end
     ensure
       allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+      allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_call_original
+    end
+  end
+
+  describe "a boot with a keyfile that does not parse (FK3)" do
+    it "stops with the error on stderr and leaves the keyfile as it is" do
+      Dir.mktmpdir do |dir|
+        config_home = File.join(dir, "config")
+        key_path = File.join(config_home, "potato-mesh", "keyfile")
+        FileUtils.mkdir_p(File.dirname(key_path))
+        truncated = OpenSSL::PKey::RSA.new(2048).export.byteslice(0, 300)
+        File.binwrite(key_path, truncated)
+        env = {
+          "XDG_CONFIG_HOME" => config_home, "XDG_DATA_HOME" => File.join(dir, "data"),
+          "FEDERATION" => "0", "RACK_ENV" => "test",
+        }
+
+        # The application loads in a child process, as app.rb loads it.
+        _stdout, stderr, status = Open3.capture3(
+          env, RbConfig.ruby, "-e", 'require "./lib/potato_mesh/application"',
+          chdir: File.expand_path("..", __dir__),
+        )
+
+        expect(status.success?).to be(false)
+        expect(stderr).to include("Instance private key file cannot be parsed: #{key_path} (OpenSSL::PKey::PKeyError")
+        expect(stderr).to include("(PotatoMesh::App::InstanceKeyfileError)")
+        expect(File.binread(key_path)).to eq(truncated)
+      end
     end
   end
 

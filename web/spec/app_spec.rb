@@ -1436,12 +1436,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "returns 404 when the asset is missing" do
       svg_path = File.expand_path("potatomesh-logo.svg", Sinatra::Application.settings.public_folder)
-      allow(File).to receive(:exist?).and_return(false)
-      allow(File).to receive(:readable?).and_return(false)
+      allow(File).to receive(:file?).and_call_original
+      allow(File).to receive(:file?).with(svg_path).and_return(false)
 
       get "/potatomesh-logo.svg"
 
       expect(last_response.status).to eq(404)
+    end
+
+    it "is served by the static handler alone: the app defines no route for it (SPEC HD7)" do
+      paths = Sinatra::Application.routes.fetch("GET").map { |route| route.first.to_s }
+
+      expect(paths).to include("/favicon.ico")
+      expect(paths).not_to include("/potatomesh-logo.svg")
     end
   end
 
@@ -1653,7 +1660,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       expect(last_response.body).to include('class="federation-page"')
-      expect(last_response.body).to include("initializeFederationPage")
+      expect(last_response.body).to include('<script type="module" src="/assets/js/app/federation-page-boot.js?v=')
     end
 
     it "hides the meta-controls row entirely on the federation page" do
@@ -1727,7 +1734,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/charts"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include("initializeChartsPage")
+      expect(last_response.body).to include('<script type="module" src="/assets/js/app/charts-page-boot.js?v=')
       expect(last_response.body).not_to include('id="metaRow"')
       expect(last_response.body).not_to include('id="filterInput"')
       # Audit follow-up 08: no more slim footer variant.
@@ -3865,7 +3872,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row("SELECT text, ingestor FROM messages WHERE id = ?", [first_payload["id"]])
-        expect(row["text"]).to eq("updated text")
+        # A later copy never replaces the stored text (SPEC KC2).
+        expect(row["text"]).to eq("first reporter")
         expect(row["ingestor"]).to eq(FIRST_MESSAGE_INGESTOR_ID)
       end
 
@@ -7864,7 +7872,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       body = last_response.body
       expect(body).not_to include('<div id="chat"')
-      expect(body).to include("const CHAT_ENABLED = false;")
+      expect(body).to include("&quot;chatEnabled&quot;:false")
+      expect(body).not_to include("CHAT_ENABLED")
       expect(body).not_to include("Track nodes, messages, and coverage in real time.")
       expect(body).to include("Track nodes and coverage in real time.")
     end

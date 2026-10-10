@@ -61,7 +61,7 @@ module PotatoMesh
 
       # Unversioned site icons served from the app root (favicon + logo). They
       # bypass the +/assets/**+ pipeline entirely — Sinatra's static-file handler
-      # serves them straight off +public/+ (and the fallback routes use
+      # serves them straight off +public/+ (and the favicon fallback route uses
       # +send_file+), neither of which sets a +Cache-Control+, so the browser
       # revalidates them on every page load. They carry no +?v=+ buster, so a
       # bounded lifetime (not +immutable+) is used: a changed icon self-heals

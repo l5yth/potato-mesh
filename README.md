@@ -86,7 +86,7 @@ The web app can be configured with environment variables (defaults shown):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
-| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) used for metadata, federation, and generated API links. |
+| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) used for metadata, federation, and generated API links. With a scheme (`https://mesh.example.org`), generated URLs keep that scheme whatever a proxy forwards. |
 | `SITE_NAME` | `"PotatoMesh Demo"` | Title and header displayed in the UI. |
 | `MESHTASTIC_PRESET` | `"#LongFast"` | Meshtastic radio preset shown in the join strip, meta description, and federation directory (e.g. `MediumFast`). |
 | `MESHTASTIC_FREQ` | `"915MHz"` | Meshtastic frequency shown alongside the preset. |
@@ -133,11 +133,16 @@ repository root when unset:
 - Well-known document: `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`
 - Database: `$XDG_DATA_HOME/potato-mesh`
 
+If the web app exits at boot with `Instance private key file cannot be parsed`,
+restore the file it names from a backup, or delete that file to start with a new
+key. A new key gives the instance a new id; peers replace its old record when it
+next announces.
+
 Outbound requests. The map loads basemap tiles from two third-party CDNs on
 every viewport: OpenStreetMap HOT (`tile.openstreetmap.fr`) and CARTO
 (`basemaps.cartocdn.com`). Only `z/x/y` tile coordinates are sent - no key,
 cookie, or analytics parameter. Tiles are the only third-party request the
-dashboard makes.
+dashboard makes. Tile URLs must use `https://`; `http://` tiles do not load.
 
 ### Privacy
 
@@ -164,6 +169,7 @@ slug sets the URL and nav label:
 - Ships with a default `1-about.md`.
 - Docker: the directory is the `potatomesh_pages` volume (`/app/pages`) - edit pages without rebuilding.
 - Override the directory with `PAGES_DIR`.
+- Images in a page must use `https://` URLs; `http://` images do not load.
 
 ### Federation
 

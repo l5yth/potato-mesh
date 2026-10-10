@@ -37,10 +37,18 @@ RSpec.describe PotatoMesh::App::Routes::Root::Helpers do
   end
 
   let(:helper) { harness_class.new }
-  let(:request_double) { double("request", base_url: "http://upstream.example", scheme: "https") }
+
+  # Point the harness at a real request for +url+ with extra Rack env.
+  #
+  # @param url [String] the request URL.
+  # @param env [Hash] extra Rack env entries (headers as +HTTP_*+ keys).
+  # @return [void]
+  def request_to(url, env = {})
+    helper.request = Rack::Request.new(Rack::MockRequest.env_for(url).merge(env))
+  end
 
   before do
-    helper.request = request_double
+    request_to("https://upstream.example/")
   end
 
   describe "#public_base_url" do
@@ -52,22 +60,38 @@ RSpec.describe PotatoMesh::App::Routes::Root::Helpers do
 
     it "honors the request scheme when present" do
       helper.set_constant(:INSTANCE_DOMAIN, "potatomesh.net")
-      allow(request_double).to receive(:scheme).and_return("http")
+      request_to("http://upstream.example/")
 
       expect(helper.public_base_url).to eq("http://potatomesh.net")
     end
 
     it "defaults to https when the scheme is missing" do
       helper.set_constant(:INSTANCE_DOMAIN, "potatomesh.net")
-      allow(request_double).to receive(:scheme).and_return(nil)
+      request_to("http://upstream.example/", "rack.url_scheme" => nil)
 
       expect(helper.public_base_url).to eq("https://potatomesh.net")
     end
 
-    it "falls back to request.base_url when no instance domain is set" do
-      helper.set_constant(:INSTANCE_DOMAIN, nil)
+    it "takes http or https from the forwarded headers, never another scheme (SPEC HD4)" do
+      helper.set_constant(:INSTANCE_DOMAIN, "potatomesh.net")
+      request_to("http://upstream.example/", "HTTP_X_FORWARDED_PROTO" => "https", "HTTP_FORWARDED" => "proto=wss")
 
-      expect(helper.public_base_url).to eq("http://upstream.example")
+      expect(helper.public_base_url).to eq("https://potatomesh.net")
+    end
+
+    it "keeps the scheme INSTANCE_DOMAIN names over the request's (SPEC HD4)" do
+      helper.set_constant(:INSTANCE_DOMAIN, "potatomesh.net")
+      helper.set_constant(:INSTANCE_DOMAIN_SCHEME, "https")
+      request_to("http://upstream.example/", "HTTP_X_FORWARDED_PROTO" => "http")
+
+      expect(helper.public_base_url).to eq("https://potatomesh.net")
+    end
+
+    it "falls back to the request's host when no instance domain is set" do
+      helper.set_constant(:INSTANCE_DOMAIN, nil)
+      request_to("http://upstream.example:8080/", "HTTP_FORWARDED" => "proto=ws")
+
+      expect(helper.public_base_url).to eq("http://upstream.example:8080")
     end
   end
 

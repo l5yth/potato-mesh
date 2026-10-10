@@ -25,7 +25,9 @@ RSpec.describe "Asset cache-busting" do
 
   # The live, git-derived cache key; assertions interpolate it so the suite is
   # independent of the actual tag/commit the specs run against.
-  let(:version) { PotatoMesh::Application::APP_VERSION }
+  # The version as the URLs carry it: URL-encoded (SPEC HD6), so a git
+  # describe version's "+" reads "%2B".
+  let(:version) { ERB::Util.url_encode(PotatoMesh::Application::APP_VERSION) }
 
   describe "template-written asset URLs (AV2)" do
     before { get "/" }
@@ -65,12 +67,13 @@ RSpec.describe "Asset cache-busting" do
     end
   end
 
-  describe "inline ES-module imports (AV2)" do
-    it "version-stamps the charts page import specifier" do
+  describe "page boot modules (AV2, SPEC HD3)" do
+    it "version-stamps the charts page boot module and preloads its page module" do
       get "/charts"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include("/assets/js/app/charts-page.js?v=#{version}")
+      expect(last_response.body).to include(%(<script type="module" src="/assets/js/app/charts-page-boot.js?v=#{version}"></script>))
+      expect(last_response.body).to include(%(<link rel="modulepreload" href="/assets/js/app/charts-page.js?v=#{version}">))
     end
   end
 
