@@ -1685,6 +1685,57 @@ def test_millivolts_to_volts_bounds():
     assert mc_tel._millivolts_to_volts("4056") is None
 
 
+def test_voltage_to_battery_level_matches_curve():
+    """Voltage maps to percent via a 1S Li-ion OCV table.
+
+    Linear interpolation between 10% points, truncated to an
+    integer, clamped to 0–100.
+    """
+    mc_tel = _telemetry_module()
+    # At or above the 100% point (4.19 V).
+    assert mc_tel._voltage_to_battery_level(4.3) == 100
+    assert mc_tel._voltage_to_battery_level(4.19) == 100
+    # Exact table points.
+    assert mc_tel._voltage_to_battery_level(4.05) == 90
+    assert mc_tel._voltage_to_battery_level(3.72) == 50
+    assert mc_tel._voltage_to_battery_level(3.1) == 0
+    # Interpolated: 4.12 V is halfway through the 90–100% segment.
+    assert mc_tel._voltage_to_battery_level(4.12) == 95
+    # Firmware truncates rather than rounds: 3.75 V → 53.75 → 53.
+    assert mc_tel._voltage_to_battery_level(3.75) == 53
+    # Below the 0% point but above the no-battery floor clamps to 0.
+    assert mc_tel._voltage_to_battery_level(3.0) == 0
+    # Below noBatVolt (OCV[10] − 500 mV = 2.6 V) firmware reports "no
+    # battery" — we emit no estimate at all.
+    assert mc_tel._voltage_to_battery_level(2.5) is None
+
+
+def test_voltage_to_battery_level_honors_custom_curve(monkeypatch):
+    """A MESHCORE_OCV_MILLIVOLTS override replaces the built-in table.
+
+    The override is stored descending (config reverses the operator's
+    ascending list); the no-battery floor tracks the active curve's 0% point.
+    """
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_OCV_MILLIVOLTS", (4000, 3000))
+    assert mc_tel._voltage_to_battery_level(4.0) == 100
+    assert mc_tel._voltage_to_battery_level(3.5) == 50
+    assert mc_tel._voltage_to_battery_level(3.0) == 0
+    # Floor is the curve's 0% point minus 500 mV, not the default table's.
+    assert mc_tel._voltage_to_battery_level(2.6) == 0
+    assert mc_tel._voltage_to_battery_level(2.4) is None
+
+
+def test_voltage_to_battery_level_rejects_junk():
+    """Non-numeric and non-positive inputs yield no estimate."""
+    mc_tel = _telemetry_module()
+    assert mc_tel._voltage_to_battery_level(0) is None
+    assert mc_tel._voltage_to_battery_level(-1.0) is None
+    assert mc_tel._voltage_to_battery_level(True) is None
+    assert mc_tel._voltage_to_battery_level("4.05") is None
+    assert mc_tel._voltage_to_battery_level(None) is None
+
+
 def test_status_to_telemetry_section_maps_battery_and_uptime():
     """STATUS_RESPONSE bat/uptime map to deviceMetrics voltage/uptimeSeconds."""
     mc_tel = _telemetry_module()
@@ -1736,6 +1787,7 @@ def test_queue_meshcore_telemetry_packet_shape(monkeypatch):
     assert packet["protocol"] == "meshcore"
     assert packet["from_id"] == "!11223344"
     assert packet["decoded"]["portnum"] == "TELEMETRY_APP"
+    # MESHCORE_ESTIMATE_BATTERY defaults off, so no batteryLevel is derived.
     assert packet["decoded"]["telemetry"]["deviceMetrics"] == {"voltage": 4.05}
     assert packet["decoded"]["telemetry"]["time"] == 1_700_000_000
     assert isinstance(packet["id"], int) and 0 <= packet["id"] < (1 << 53)
@@ -1750,6 +1802,65 @@ def test_queue_meshcore_telemetry_packet_shape(monkeypatch):
         stub, "!11223344", {"deviceMetrics": {"voltage": 4.06}}, "status"
     )
     assert captured[2]["id"] != packet["id"]
+
+
+def test_queue_meshcore_telemetry_estimate_off_by_default(monkeypatch):
+    """Without MESHCORE_ESTIMATE_BATTERY=1 no batteryLevel is derived."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    assert mc_tel._queue_meshcore_telemetry(
+        stub, "!11223344", {"deviceMetrics": {"voltage": 3.72}}, "status"
+    )
+    device = captured[0]["decoded"]["telemetry"]["deviceMetrics"]
+    assert device == {"voltage": 3.72}
+
+
+def test_queue_meshcore_telemetry_estimates_battery_level(monkeypatch):
+    """With the flag on, a voltage-only section gains an estimated batteryLevel."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_ESTIMATE_BATTERY", True, raising=False)
+    section = {"deviceMetrics": {"voltage": 3.72}}
+    assert mc_tel._queue_meshcore_telemetry(stub, "!11223344", section, "status")
+    device = captured[0]["decoded"]["telemetry"]["deviceMetrics"]
+    assert device == {"voltage": 3.72, "batteryLevel": 50}
+    # The caller's section is not mutated.
+    assert section == {"deviceMetrics": {"voltage": 3.72}}
+
+
+def test_queue_meshcore_telemetry_keeps_reported_battery_level(monkeypatch):
+    """A genuine reported percentage (LPP type 120) is never overwritten."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_ESTIMATE_BATTERY", True, raising=False)
+    assert mc_tel._queue_meshcore_telemetry(
+        stub,
+        "!11223344",
+        {"deviceMetrics": {"voltage": 3.72, "batteryLevel": 87.0}},
+        "lpp",
+    )
+    device = captured[0]["decoded"]["telemetry"]["deviceMetrics"]
+    assert device == {"voltage": 3.72, "batteryLevel": 87.0}
+
+
+def test_queue_meshcore_telemetry_no_estimate_without_voltage(monkeypatch):
+    """Sections without a usable voltage gain no batteryLevel."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_ESTIMATE_BATTERY", True, raising=False)
+    assert mc_tel._queue_meshcore_telemetry(
+        stub,
+        "!11223344",
+        {"environmentMetrics": {"temperature": 21.5}},
+        "lpp",
+    )
+    telemetry = captured[0]["decoded"]["telemetry"]
+    assert "deviceMetrics" not in telemetry
+    # Below the no-battery floor no estimate is added either.
+    assert mc_tel._queue_meshcore_telemetry(
+        stub,
+        "!11223344",
+        {"deviceMetrics": {"voltage": 2.5}},
+        "status",
+    )
+    device = captured[1]["decoded"]["telemetry"]["deviceMetrics"]
+    assert device == {"voltage": 2.5}
 
 
 def test_queue_meshcore_telemetry_skips_incomplete(monkeypatch):
