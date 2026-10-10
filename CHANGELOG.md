@@ -169,6 +169,7 @@
 * Web: a position, telemetry reading or trace under an id another node already holds no longer replaces that node's row; it is dropped with a warning (SPEC KC4)
 * Web: a message naming its sender only by `from_num` stores that number's `!xxxxxxxx` id as `from_id`; such a copy of another sender's message is dropped (SPEC KC1)
 * Web: the warnings of dropped messages and records log at most 10 lines a minute per writer, then one line with the number suppressed (SPEC KC5)
+* Data: the MeshCore ingestor posts each roster contact's node once per connect instead of three times, and its position once instead of twice; a re-advert of a known contact posts its node and position once each instead of twice, or twice instead of three times on firmware 1.16 and later (SPEC CU1-CU3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

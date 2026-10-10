@@ -30,6 +30,11 @@ seeds when a test runs, and parse them with the pinned library's packet parser
 as the reader does for an RX-log push (SPEC SG1).  They are a second
 independent oracle: the signed bytes are rebuilt here, not taken from the code
 under test.
+
+The roster helpers build the companion frames of the contact book: a
+``CMD_GET_CONTACTS`` answer, the ``PUSH_CODE_ADVERT`` and
+``PUSH_CODE_NEW_ADVERT`` pushes, and the ``SELF_INFO`` answer to the
+handshake (SPEC CU1-CU3).
 """
 
 from __future__ import annotations
@@ -69,6 +74,12 @@ ROUTE_FLOOD = 1
 
 ROUTE_DIRECT = 2
 """Firmware ``ROUTE_TYPE_DIRECT``."""
+
+RESP_CODE_CONTACT = 0x03
+"""Companion ``RESP_CODE_CONTACT``: one contact of a ``CMD_GET_CONTACTS`` answer."""
+
+PUSH_CODE_NEW_ADVERT = 0x8A
+"""Companion ``PUSH_CODE_NEW_ADVERT``: an advert from a key the radio did not add."""
 
 
 def channel_secret(name: str = CHANNEL_NAME) -> bytes:
@@ -428,6 +439,108 @@ def rx_log_advert(
     return asyncio.run(MeshcorePacketParser().parsePacketPayload(raw, log))
 
 
+def contact_frame(
+    public_key: bytes,
+    name: str,
+    *,
+    last_advert: int,
+    lat_e6: int = 0,
+    lon_e6: int = 0,
+    code: int = RESP_CODE_CONTACT,
+) -> bytes:
+    """Build one contact the way ``MyMesh::writeContactRespFrame`` writes it.
+
+    The layout is the one the pinned reader parses (``reader.py:100-136``): a
+    chat node with no out path, whose ``last_advert`` doubles as ``lastmod``.
+
+    Parameters:
+        public_key: The contact's 32-byte public key.
+        name: Advertised name, at most 32 bytes.
+        last_advert: The contact's ``last_advert``, also sent as ``lastmod``.
+        lat_e6: Latitude in millionths of a degree; ``0`` with a ``0``
+            *lon_e6* is no position.
+        lon_e6: Longitude in millionths of a degree.
+        code: :data:`RESP_CODE_CONTACT` for a listed contact, or
+            :data:`PUSH_CODE_NEW_ADVERT` for the push of an advert from a key
+            the radio did not add.
+
+    Returns:
+        ``code + key(32) + type + flags + out_path_len + out_path(64) +
+        name(32) + last_advert + lat + lon + lastmod``.
+    """
+    return (
+        bytes([code])
+        + public_key
+        + bytes([1, 0, 0xFF])  # ADV_TYPE_CHAT, no flags, flood (no out path)
+        + bytes(64)
+        + name.encode("utf-8").ljust(32, b"\x00")
+        + struct.pack("<Iii", last_advert, lat_e6, lon_e6)
+        + struct.pack("<I", last_advert)
+    )
+
+
+def contacts_listing(contacts: list[bytes], *, lastmod: int) -> list[bytes]:
+    """Build a radio's answer to ``CMD_GET_CONTACTS``: start, contacts, end.
+
+    Parameters:
+        contacts: :func:`contact_frame` frames in roster order.
+        lastmod: Newest ``lastmod`` of the listing, which ``CONTACT_END``
+            carries and the library asks its next re-fetch with.
+
+    Returns:
+        ``CONTACT_START`` (``0x02`` + count), the contacts, then
+        ``CONTACT_END`` (``0x04`` + *lastmod*).
+    """
+    start = bytes([0x02]) + struct.pack("<I", len(contacts))
+    return [start, *contacts, bytes([0x04]) + struct.pack("<I", lastmod)]
+
+
+def advert_push(public_key: bytes) -> bytes:
+    """Build the ``PUSH_CODE_ADVERT`` push for an advert from a roster contact.
+
+    The radio sends it once it has updated that contact; with auto-update on,
+    the library answers it by re-fetching the changed contacts
+    (``meshcore.py:330-333``).
+
+    Parameters:
+        public_key: The advertiser's 32-byte public key.
+
+    Returns:
+        ``0x80 + key(32)``.
+    """
+    return bytes([0x80]) + public_key
+
+
+def self_info_frame(
+    public_key: bytes, name: str, *, lat_e6: int = 0, lon_e6: int = 0
+) -> bytes:
+    """Build the ``SELF_INFO`` answer to ``CMD_APP_START``.
+
+    A chat node on 869.525 MHz, 250 kHz, SF11, CR5, laid out as the pinned
+    reader parses it (``reader.py:166-192``).
+
+    Parameters:
+        public_key: The host radio's 32-byte public key.
+        name: The host radio's advertised name.
+        lat_e6: Latitude in millionths of a degree.
+        lon_e6: Longitude in millionths of a degree.
+
+    Returns:
+        ``0x05 + adv_type + tx_power + max_tx_power + key(32) + lat + lon +
+        multi_acks + advert_loc_policy + telemetry_modes + manual_add +
+        freq + bw + sf + cr + name``.
+    """
+    return (
+        bytes([0x05, 1, 22, 22])
+        + public_key
+        + struct.pack("<ii", lat_e6, lon_e6)
+        + bytes(4)
+        + struct.pack("<II", 869_525, 250_000)
+        + bytes([11, 5])
+        + name.encode("utf-8")
+    )
+
+
 class FakeConnection:
     """Serial-link stand-in for ``meshcore.MeshCore``; it never sends a byte."""
 
@@ -601,3 +714,28 @@ async def feed_reader(raw_frames: list, hmap: dict) -> None:
             await asyncio.gather(*list(mc.dispatcher._background_tasks))
     finally:
         await mc.dispatcher.stop()
+
+
+async def settle(mc) -> None:
+    """Wait until a live ``MeshCore``'s dispatcher has run every handler.
+
+    The dispatcher runs each coroutine handler as a background task, and a
+    handler can raise further events (the library's auto-update re-fetch
+    does), so the wait repeats until no event is queued and no handler but
+    the caller is left.  Leaving the caller out lets a handler settle the
+    dispatcher it runs on.
+
+    Parameters:
+        mc: A ``MeshCore`` whose dispatcher is running.
+    """
+    current = asyncio.current_task()
+    while True:
+        await mc.dispatcher.queue.join()
+        pending = [
+            task
+            for task in mc.dispatcher._background_tasks
+            if task is not current and not task.done()
+        ]
+        if not pending:
+            return
+        await asyncio.gather(*pending)
