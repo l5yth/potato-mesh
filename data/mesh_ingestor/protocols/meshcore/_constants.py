@@ -28,9 +28,11 @@ Bounds the whole startup sequence inside
 including the initial contact roster fetch: the appstart handshake
 (``mc.connect()``) **plus** the multiple serial round-trips performed by
 ``mc.ensure_contacts()``.  The signal that unblocks the caller is intentionally
-deferred until contacts have been fetched so that the daemon's first
-``_try_send_snapshot()`` sees a populated ``iface._contacts`` dict
-(issue #788).
+deferred until that fetch has returned, so that the daemon's first
+``_try_send_snapshot()`` follows it (issue #788): once the fetch's ``CONTACTS``
+listing has posted every contact the snapshot carries the self node only, and
+when the listing never completed the snapshot posts the roster the
+``NEXT_CONTACT`` events built (SPEC CU2).
 """
 
 _ANNOUNCE_SEND_TIMEOUT_SECS: float = 15.0

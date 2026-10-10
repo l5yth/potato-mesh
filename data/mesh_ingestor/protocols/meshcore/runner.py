@@ -234,9 +234,12 @@ async def _run_meshcore(
                 error=str(exc),
             )
 
-        # Signal readiness only after the initial contact roster has been
-        # fetched so the daemon's first ``_try_send_snapshot()`` observes a
-        # populated ``_contacts`` dict instead of an empty one (issue #788).
+        # Signal readiness only after the initial contact fetch has returned,
+        # so the daemon's first ``_try_send_snapshot()`` follows it (issue
+        # #788).  The listing's handlers finish before the fetch returns: once
+        # the listing has posted every contact the snapshot carries the self
+        # node only, and when it never completed the snapshot posts the roster
+        # the ``NEXT_CONTACT`` events built (SPEC CU2).
         connected_event.set()
 
         try:
