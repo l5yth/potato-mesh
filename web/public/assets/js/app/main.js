@@ -246,6 +246,7 @@ import { createBasemapLayer } from './basemap-config.js';
 import { createTileFailurePolicy } from './main/tile-failure-policy.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
+import { createPageOpenSequencer } from './main/page-open-sequencer.js';
 import { flashNodeTargets, flashMessageTargets, flashElement, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import {
@@ -680,7 +681,8 @@ export function initializeApp(config) {
    * refresh fetches only the delta (SPEC FC2). Cached rows are already the
    * render-ready ``all*`` form, so seeding is a direct assignment (messages are
    * re-hydrated against the seeded node map). No-op (returns false) when the
-   * cache is disabled or empty, leaving the normal cold fetch to proceed.
+   * cache is disabled or empty, leaving the normal cold fetch to proceed, and
+   * once a refresh has loaded network rows, which are newer (SPEC OR2).
    *
    * @returns {Promise<boolean>} True when any cached data seeded the state.
    */
@@ -703,6 +705,9 @@ export function initializeApp(config) {
     ]);
     const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds) : [];
     const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds) : [];
+    // SPEC OR2: a refresh loaded network rows while the cache was read; the
+    // cached rows are older, so they must not replace them.
+    if (pageOpen.hasNetworkData()) return false;
     if (
       nodeEntries.length === 0 &&
       messageEntries.length === 0 &&
@@ -5755,6 +5760,15 @@ export function initializeApp(config) {
         encryptedMessagesPromise,
         waypointsPromise
       ]);
+      // SPEC OR5: a full refresh whose fetches resolve after another refresh
+      // has loaded network rows (a first refresh that hung past the start
+      // bound while the stream's resync loaded the page) merges into them
+      // instead of replacing them, so the history paged in since stays.
+      const merge = useSince || pageOpen.hasNetworkData();
+      // SPEC OR2: network rows are in; a cache seed still reading must leave
+      // them in place. The collections and the high-water marks below are set
+      // before the next await (the message hydration); the messages after it.
+      pageOpen.markNetworkLoaded();
 
       // Update high-water marks for incremental fetching.
       const incomingNodeTs = maxRecordTimestamp(incomingNodes, ['last_heard']);
@@ -5814,34 +5828,34 @@ export function initializeApp(config) {
       // SPEC DR4: the raw collections before this merge, so the planner can
       // tell which ones the delta (or a window trim) actually changed.
       const rawBefore = rawCollections();
-      allNodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
-      allPositionEntries = useSince
+      allNodes = merge ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
+      allPositionEntries = merge
         ? trimToWindow(mergeById(allPositionEntries, incomingPositions, 'id'), recentWindowFloor)
         : incomingPositions;
-      allTelemetryEntries = useSince
+      allTelemetryEntries = merge
         ? trimToWindow(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), recentWindowFloor)
         : incomingTelemetry;
-      allNeighbors = useSince
+      allNeighbors = merge
         ? trimToWindow(mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id']), longWindowFloor)
         : incomingNeighbors;
-      allTraces = useSince
+      allTraces = merge
         ? trimToWindow(mergeById(allTraces, incomingTraces, 'id'), longWindowFloor)
         : incomingTraces;
       // Waypoints merge on the composite (id, protocol) — the server's upsert
       // key (SPEC W5) — so a re-broadcast replaces its row and same-id
       // waypoints from different protocols stay distinct.
-      allWaypoints = useSince
+      allWaypoints = merge
         ? trimToWindow(mergeByCompositeKey(allWaypoints, incomingWaypoints, ['id', 'protocol']), recentWindowFloor)
         : incomingWaypoints;
       // Encrypted blobs only feed the mixed Log tab (itself capped), so a count
       // cap is the right memory bound for them.
-      const encryptedMessages = useSince
+      const encryptedMessages = merge
         ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
         : incomingEncryptedMessages;
       // Plaintext chat is shown for the full seven-day window (issue #796), so
       // bound the retained set by that window rather than a row count — a count
       // cap would silently drop older-but-in-window messages on the next merge.
-      const messages = useSince
+      const messages = merge
         ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
         : incomingMessages;
 
@@ -5868,7 +5882,7 @@ export function initializeApp(config) {
       // backfill commit.  First load has no backfill yet, so it just takes the
       // newest page as-is.
       const chatBefore = { messages: allMessages, encrypted: allEncryptedMessages };
-      allMessages = useSince
+      allMessages = merge
         ? trimToWindow(mergeById(allMessages, hydratedChat, 'id'), messageWindowFloor)
         : hydratedChat;
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
@@ -5929,20 +5943,24 @@ export function initializeApp(config) {
         bodyClassList.contains("view-federation") ||
         bodyClassList.contains("view-node_detail")),
   );
+  // SPEC OR1-OR5: one initial load per page open. Paint from the persistent
+  // cache first (instant first paint, SPEC FC2), then refresh fetches only the
+  // delta; a disabled/empty cache makes seedFromCache a no-op so this is the
+  // normal cold load. Only then open the live stream and arm the poll, so the
+  // stream's first resync is a delta (PS5), never a second cold load. Both
+  // waits are bounded (OR5): a seed or a first refresh that never answers
+  // cannot keep the page empty or the stream and the poll off.
+  const pageOpen = createPageOpenSequencer({
+    seed: seedFromCache,
+    load: () => refresh(),
+    start: restartAutoRefresh,
+  });
   let initialLoadPromise;
   if (runsOwnPageModule) {
     // Header UI is already wired above; there is nothing to fetch or refresh.
     initialLoadPromise = Promise.resolve();
   } else {
-    // Kick off the first data load immediately then start the silent background
-    // auto-refresh timer. Paint from the persistent cache first (instant first
-    // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
-    // cache makes seedFromCache a no-op so this is the normal cold load.
-    initialLoadPromise = seedFromCache()
-      .catch(() => false)
-      .then(() => refresh());
-    void initialLoadPromise;
-    restartAutoRefresh();
+    initialLoadPromise = pageOpen.run();
   }
 
   // --- Auto-refresh play/pause toggle ---
@@ -5966,8 +5984,13 @@ export function initializeApp(config) {
         );
       } else {
         applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
-        refresh();
-        restartAutoRefresh();
+        // SPEC OR1/OR5: during the initial load, that load is the refresh and
+        // its pending start, which reads the pause state, resumes the stream
+        // and the poll once the load settles or its bound has passed.
+        if (!pageOpen.isPending()) {
+          refresh();
+          restartAutoRefresh();
+        }
       }
     });
   }
@@ -6293,6 +6316,8 @@ export function initializeApp(config) {
       },
       /** Stop the auto-refresh timer, live stream, and relative-time ticker (test teardown). */
       stopAutoRefresh: () => {
+        // SPEC OR3: a start still waiting on the initial load never runs after this.
+        pageOpen.cancelStart();
         if (refreshTimer) {
           clearInterval(refreshTimer);
           refreshTimer = null;
@@ -6403,8 +6428,18 @@ export function initializeApp(config) {
       dataCache,
       /** Seed in-memory state from the persistent cache (test use only). */
       seedFromCache,
-      /** Promise resolving once the initial seed + first refresh complete (test hook). */
+      /**
+       * Promise resolving once the initial seed + first refresh complete, or
+       * their bounds pass, and the deferred start of the stream and poll has
+       * run (SPEC OR1, OR5; test hook).
+       */
       initialLoad: initialLoadPromise,
+      /**
+       * Which page-open bounds fired (SPEC OR5; test and probe hook).
+       *
+       * @returns {{ seed: boolean, start: boolean }}
+       */
+      getPageOpenBounds: () => pageOpen.boundsHit(),
       /** Promise resolving once the latest cache write-back has flushed (test hook). */
       flushCacheWrites: () => pendingCacheWrite,
       /** Promise resolving once the one-shot chat-history backfill finishes (test hook). */
