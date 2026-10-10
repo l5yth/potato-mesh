@@ -18,7 +18,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createIndexedDbBackend } from '../data-cache-idb.js';
+import { createDataCache } from '../data-cache.js';
 import { createFakeIndexedDb } from '../../__tests__/fake-indexeddb.js';
+
+/**
+ * Let the fake IndexedDB's queued callbacks run.
+ *
+ * @returns {Promise<void>}
+ */
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 test('returns null when IndexedDB is unavailable', () => {
   assert.equal(createIndexedDbBackend({ indexedDB: undefined }), null);
@@ -73,4 +81,33 @@ test('a failing request rejects the operation', async () => {
   const be = createIndexedDbBackend({ indexedDB: factory, databaseName: 'db4' });
   setFailMode('request');
   await assert.rejects(() => be.write('nodes', '!a', { value: 1 }));
+});
+
+// A blocked open must not hang: the per-test timeout turns a regression into a failure.
+test('an open blocked by another tab rejects at once, and a handle that opens later is closed (SPEC OR5)', { timeout: 5000 }, async () => {
+  const fake = createFakeIndexedDb();
+  fake.setOpenMode('blocked');
+  const be = createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'db5' });
+  await assert.rejects(() => be.read('nodes', '!a'), /IndexedDB open blocked by another tab/);
+  await assert.rejects(() => be.write('nodes', '!a', { value: 1 }), /blocked/, 'every later call fails the same way');
+  fake.unblock(); // the other tab closes: the open now succeeds, after it was given up
+  await tick();
+  await tick();
+  assert.equal(fake.closedCount(), 1, 'the late handle was closed, so it blocks no later upgrade');
+});
+
+test('a failed open rejects with the request error (SPEC OR5)', async () => {
+  const fake = createFakeIndexedDb();
+  fake.setOpenMode('error');
+  const be = createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'db6' });
+  await assert.rejects(() => be.readAll('nodes'), /UnknownError: open failed/);
+});
+
+test('a data cache over a blocked open runs disabled: the app is network-only (FC7, SPEC OR5)', { timeout: 5000 }, async () => {
+  const fake = createFakeIndexedDb();
+  fake.setOpenMode('blocked');
+  const cache = createDataCache({ backend: createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'db7' }) });
+  await cache.ready();
+  assert.equal(cache.isDisabled(), true);
+  assert.deepEqual(await cache.getAll('nodes'), [], 'reads come back empty');
 });

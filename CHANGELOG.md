@@ -179,6 +179,7 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: opening the dashboard loads its data once; on slow devices the cached copy no longer replaces newer rows; the dashboard loads when another tab blocks its browser cache, and live updates start within 20 seconds when a request hangs (SPEC OR1-OR5)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
