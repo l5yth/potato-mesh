@@ -24,6 +24,7 @@ import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import {
   cloneRoleIndex,
   fetchNodeDetailsIntoIndex,
+  fillIndexFromRegistry,
   lookupNeighborDetails,
   normalizeNodeId,
   registerRoleCandidate,
@@ -107,19 +108,22 @@ export function collectTraceNodeFetchMap(traces, roleIndex) {
 }
 
 /**
- * Build a role index enriched with node metadata for trace hops.
+ * Build a role index enriched with node metadata for trace hops: from the
+ * node registry, and from API lookups for the hops it lacks (SPEC OV2).
  *
  * @param {Array<Object>} traces Trace payloads.
  * @param {{byId?: Map<string, string>, byNum?: Map<number, string>, detailsById?: Map<string, Object>, detailsByNum?: Map<number, Object>}} [baseIndex]
  *   Optional base role index to clone.
- * @param {{ fetchImpl?: Function }} [options] Fetch overrides.
+ * @param {{ fetchImpl?: Function, nodesById?: ?Map<string, Object> }} [options]
+ *   Fetch override and the node registry to fill from.
  * @returns {Promise<{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}>}
  *   Hydrated role index containing hop metadata.
  */
-export async function buildTraceRoleIndex(traces, baseIndex = null, { fetchImpl } = {}) {
+export async function buildTraceRoleIndex(traces, baseIndex = null, { fetchImpl, nodesById = null } = {}) {
   const roleIndex = cloneRoleIndex(baseIndex);
   const fetchIdMap = collectTraceNodeFetchMap(traces, roleIndex);
-  await fetchNodeDetailsIntoIndex(roleIndex, fetchIdMap, fetchImpl, 'trace node metadata');
+  const missing = fillIndexFromRegistry(roleIndex, fetchIdMap, nodesById);
+  await fetchNodeDetailsIntoIndex(roleIndex, missing, fetchImpl, 'trace node metadata');
   return roleIndex;
 }
 

@@ -179,6 +179,8 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: the node overlay takes neighbor and trace-hop roles and names from the dashboard's nodes instead of fetching the node list and each neighbor: 8 requests instead of 136 for a node with 127 neighbors (SPEC OV1/OV2)
+* Web: a node page fetches the node list beside the node's own reads and looks up only the neighbors and trace hops the list lacks: 9 requests instead of 136 for the same node (SPEC OV3)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

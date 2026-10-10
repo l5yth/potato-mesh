@@ -132,3 +132,39 @@ test('createNodeDetailOverlayManager surfaces errors and supports escape closing
   document.triggerKeydown?.('Escape');
   assert.equal(overlay.hidden, true);
 });
+
+test('createNodeDetailOverlayManager hands each open the registry getNodesById returns then (SPEC OV1)', async () => {
+  const { document } = createOverlayHarness();
+  const seen = [];
+  let registry = new Map([['!alpha', { node_id: '!alpha', role: 'ROUTER' }]]);
+  const manager = createNodeDetailOverlayManager({
+    document,
+    getNodesById: () => registry,
+    fetchNodeDetail: async (reference, options) => {
+      seen.push(options.nodesById);
+      return `<section class="node-detail">${reference.nodeId}</section>`;
+    },
+  });
+  const first = registry;
+  await manager.open({ nodeId: '!alpha' });
+  // The dashboard replaces its map on every refresh; the next open reads the new one.
+  registry = new Map();
+  await manager.open({ nodeId: '!alpha' });
+  assert.equal(seen.length, 2);
+  assert.strictEqual(seen[0], first);
+  assert.strictEqual(seen[1], registry);
+});
+
+test('createNodeDetailOverlayManager without getNodesById hands no registry (SPEC OV1)', async () => {
+  const { document } = createOverlayHarness();
+  const seen = [];
+  const manager = createNodeDetailOverlayManager({
+    document,
+    fetchNodeDetail: async (reference, options) => {
+      seen.push(options.nodesById);
+      return '<section class="node-detail"></section>';
+    },
+  });
+  await manager.open({ nodeId: '!alpha' });
+  assert.deepEqual(seen, [null]);
+});

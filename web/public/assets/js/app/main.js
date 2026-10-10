@@ -2339,6 +2339,10 @@ export function initializeApp(config) {
           nodeDetailOverlayManager = createNodeDetailOverlayManager({
             document,
             privateMode: isPrivateMode,
+            // Each open reads roles and names from the dashboard's node
+            // registry as of its last refresh (SPEC OV1). A rebuild replaces
+            // ``nodesById``, so the overlay gets a getter, not the map.
+            getNodesById: () => nodesById,
           });
           return nodeDetailOverlayManager;
         })

@@ -36,6 +36,31 @@ const TRACE_LIMIT = 200;
 /** Maximum number of nodes to request from the nodes API for the registry. */
 const NODES_LIMIT = 1000;
 
+/** The registry page: the newest {@link NODES_LIMIT} nodes. */
+const NODES_URL = `/api/nodes?limit=${NODES_LIMIT}`;
+
+/**
+ * Issue the node-registry request now and leave its response unread.
+ *
+ * The node page issues it beside the node's own reads and reads it with
+ * {@link fetchNodesById} only once those succeeded (SPEC OV3), so a page
+ * whose node read failed drops it unread. The returned promise is marked
+ * handled: a dropped request that fails raises no unhandled rejection and
+ * logs nothing.
+ *
+ * @param {{ fetchImpl?: Function }} [options] Fetch options.
+ * @returns {?Promise<Response>} The pending response, or ``null`` without a
+ *   fetch implementation.
+ */
+export function requestNodesById({ fetchImpl } = {}) {
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') return null;
+  // The executor turns a fetch that throws at once into a rejection.
+  const pending = new Promise(resolve => resolve(fetchFn(NODES_URL, DEFAULT_FETCH_OPTIONS)));
+  pending.catch(() => {});
+  return pending;
+}
+
 /**
  * Fetch the global node registry and return it as a Map keyed by node id.
  *
@@ -48,14 +73,16 @@ const NODES_LIMIT = 1000;
  * without crashing — mentions and reply badges simply degrade to plain
  * fallback text in that case.
  *
- * @param {{ fetchImpl?: Function }} [options] Fetch options.
+ * @param {{ fetchImpl?: Function, responsePromise?: ?Promise<Response> }} [options]
+ *   Fetch options; ``responsePromise`` is a request {@link requestNodesById}
+ *   issued earlier, read instead of issuing a new one.
  * @returns {Promise<Map<string, Object>>} Lookup map keyed by node id.
  */
-export async function fetchNodesById({ fetchImpl } = {}) {
+export async function fetchNodesById({ fetchImpl, responsePromise = null } = {}) {
   const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
-  if (typeof fetchFn !== 'function') return new Map();
+  if (!responsePromise && typeof fetchFn !== 'function') return new Map();
   try {
-    const response = await fetchFn(`/api/nodes?limit=${NODES_LIMIT}`, DEFAULT_FETCH_OPTIONS);
+    const response = await (responsePromise ?? fetchFn(NODES_URL, DEFAULT_FETCH_OPTIONS));
     if (!response.ok) return new Map();
     const payload = await response.json();
     if (!Array.isArray(payload)) return new Map();
