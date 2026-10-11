@@ -131,40 +131,126 @@ RSpec.describe "schema upgrades" do
     end
   end
 
-  # Hold the write lock in a second process, as a boot racing this one does:
-  # BEGIN IMMEDIATE, run +sql+, report the lock held, wait +hold+ seconds,
-  # then COMMIT. Returns once the lock is held.
-  #
-  # @param sql [String] statement the racing boot applies.
-  # @param hold [Float] seconds the lock is held after +sql+.
-  # @return [Integer] the child's pid, for +expect_clean_exit+.
-  def racing_boot(sql, hold:)
-    reader, writer = IO.pipe
-    pid = fork do
-      reader.close
-      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-      db.execute("BEGIN IMMEDIATE")
-      db.execute(sql)
-      writer.puts("locked")
-      writer.flush
-      sleep hold
-      db.execute("COMMIT")
-      db.close
-      exit!(0)
-    rescue StandardError
-      exit!(1)
+  # Racing processes the example has started and not reaped. The after hook
+  # kills and reaps each one, whichever way the example ended, so a failed
+  # expectation never leaves one holding its lock into later examples.
+  let(:racing_boots) { [] }
+
+  after do
+    racing_boots.each do |pid, release|
+      release.close unless release.closed?
+      begin
+        Process.kill("KILL", pid)
+      rescue Errno::ESRCH
+        nil
+      end
+      begin
+        Process.wait(pid)
+      rescue Errno::ECHILD
+        nil
+      end
     end
-    writer.close
-    expect(reader.gets).to eq("locked\n")
-    reader.close
-    pid
   end
 
-  # @param pid [Integer] a +racing_boot+ child.
+  # Seconds a racing process holds its lock at most when the example does
+  # not release it: a boot that never gives up then fails its example
+  # instead of hanging the run.
+  #
+  # @return [Integer] the safety release.
+  def racing_boot_safety_release
+    30
+  end
+
+  # The racing boot's program: take the write lock with BEGIN IMMEDIATE, run
+  # one statement, report "locked", hold the lock until its stdin closes or
+  # SAFETY seconds pass, then COMMIT. On a new file the COMMIT writes the
+  # first page and needs the exclusive lock, which waits out the boot's
+  # brief read lock under the busy timeout.
+  #
+  # @return [String] Ruby source for +ruby -e+, given PATH, SQL and SAFETY.
+  def racing_boot_script
+    <<~RUBY
+      require "sqlite3"
+      path, sql, safety = ARGV
+      db = SQLite3::Database.new(path)
+      db.busy_timeout = 5000
+      db.execute("BEGIN IMMEDIATE")
+      db.execute(sql)
+      $stdout.puts("locked")
+      $stdout.flush
+      IO.select([$stdin], nil, nil, Float(safety))
+      db.execute("COMMIT")
+      db.close
+    RUBY
+  end
+
+  # Hold the write lock in a second process, as a boot racing this one does:
+  # BEGIN IMMEDIATE, run +sql+, report the lock held, and keep it until the
+  # example releases it (+release_racing_boot+, +finish_racing_boot+) or the
+  # safety release passes. The process is a new Ruby, spawned rather than
+  # forked, so it shares no SQLite state, memory or file descriptor with this
+  # one, and +racing_boots+ holds it from the moment it starts. Returns once
+  # the lock is held.
+  #
+  # @param sql [String] statement the racing boot applies.
+  # @return [Array(Integer, IO)] the process id and the pipe that releases
+  #   it.
+  def racing_boot(sql)
+    release_r, release_w = IO.pipe
+    report_r, report_w = IO.pipe
+    # Only the sqlite3 gem on the load path, and no RUBYOPT: no Bundler, no
+    # SimpleCov, nothing of this process.
+    load_path = Gem.loaded_specs.fetch("sqlite3").full_require_paths.flat_map { |dir| ["-I", dir] }
+    argv = [RbConfig.ruby, *load_path, "-e", racing_boot_script, PotatoMesh::Config.db_path, sql, racing_boot_safety_release.to_s]
+    pid = Process.spawn({ "RUBYOPT" => nil }, *argv, in: release_r, out: report_w, close_others: true)
+    racing = [pid, release_w]
+    racing_boots << racing
+    release_r.close
+    report_w.close
+    expect(report_r.gets).to eq("locked\n")
+    racing
+  ensure
+    report_r&.close
+  end
+
+  # Let a +racing_boot+ process commit and exit: close its stdin.
+  #
+  # @param racing [Array(Integer, IO)] what +racing_boot+ returned.
   # @return [void]
-  def expect_clean_exit(pid)
-    _, status = Process.wait2(pid)
+  def release_racing_boot(racing)
+    release = racing.last
+    release.close unless release.closed?
+  end
+
+  # Release a +racing_boot+ process, reap it and expect a clean exit.
+  #
+  # @param racing [Array(Integer, IO)] what +racing_boot+ returned.
+  # @return [void]
+  def finish_racing_boot(racing)
+    release_racing_boot(racing)
+    _, status = Process.wait2(racing.first)
+    racing_boots.delete(racing)
     expect(status.exitstatus).to eq(0)
+  end
+
+  # Release +racing+ only once the boot's +with_busy_retry+ has seen the lock
+  # busy, so the boot can take the lock only by retrying. Counts the busy
+  # attempts.
+  #
+  # @param racing [Array(Integer, IO)] what +racing_boot+ returned.
+  # @return [Hash{Symbol => Integer}] +:busy+, the busy attempts so far.
+  def release_on_busy(racing)
+    seen = { busy: 0 }
+    allow(boot).to receive(:with_busy_retry).and_wrap_original do |original, *args, **kwargs, &block|
+      original.call(*args, **kwargs) do
+        block.call
+      rescue SQLite3::BusyException
+        seen[:busy] += 1
+        release_racing_boot(racing)
+        raise
+      end
+    end
+    seen
   end
 
   # Make the upgrade's connection raise +error+ when it prepares the first
@@ -339,13 +425,14 @@ RSpec.describe "schema upgrades" do
       load_fixture("v0.7.0")
       allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(20)
       allow(PotatoMesh::Config).to receive(:db_busy_max_retries).and_return(1)
-      pid = racing_boot("SELECT 1", hold: 1.0)
+      # The racing boot holds the lock until this boot has given up.
+      racing = racing_boot("SELECT 1")
 
       expect { boot.ensure_schema_upgrades }.to raise_error(
         PotatoMesh::App::SchemaUpgradeError,
         "Schema upgrade step failed: BEGIN IMMEDIATE (SQLite3::BusyException: database is locked)",
       )
-      expect_clean_exit(pid)
+      finish_racing_boot(racing)
     end
   end
 
@@ -505,11 +592,16 @@ RSpec.describe "schema upgrades" do
   describe "boots racing on one database (SPEC SU5)" do
     it "waits for a racing boot's upgrade, then adds nothing twice" do
       load_fixture("v0.7.0")
-      # The racing boot holds the lock with the first step this boot needs.
-      pid = racing_boot("ALTER TABLE nodes ADD COLUMN rssi INTEGER", hold: 0.4)
+      allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(50)
+      allow(PotatoMesh::Config).to receive(:db_busy_max_retries).and_return(20)
+      # The racing boot holds the lock with the first step this boot needs
+      # until this boot has found the lock busy.
+      racing = racing_boot("ALTER TABLE nodes ADD COLUMN rssi INTEGER")
+      seen = release_on_busy(racing)
 
       expect { boot.ensure_schema_upgrades }.not_to raise_error
-      expect_clean_exit(pid)
+      expect(seen[:busy]).to be >= 1
+      finish_racing_boot(racing)
       expect(columns("nodes").count("rssi")).to eq(1)
       expect(columns("telemetry")).to include("ch1_voltage", "one_wire_temperature")
       expect(indexes).to include("idx_nodes_num", "idx_nodes_identity_hash")
@@ -518,20 +610,29 @@ RSpec.describe "schema upgrades" do
     it "retries the write lock while a racing boot holds it past the busy timeout" do
       load_fixture("v0.7.0")
       allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(50)
-      pid = racing_boot("ALTER TABLE nodes ADD COLUMN rssi INTEGER", hold: 0.3)
+      # Retries enough to outlast a slow wake-up of the racing boot.
+      allow(PotatoMesh::Config).to receive(:db_busy_max_retries).and_return(20)
+      # Released only once the boot has found the lock busy: without the
+      # retry the boot cannot take it.
+      racing = racing_boot("ALTER TABLE nodes ADD COLUMN rssi INTEGER")
+      seen = release_on_busy(racing)
 
       expect { boot.ensure_schema_upgrades }.not_to raise_error
-      expect_clean_exit(pid)
+      expect(seen[:busy]).to be >= 1
+      finish_racing_boot(racing)
       expect(columns("telemetry")).to include("ch1_voltage")
     end
 
     it "retries the WAL switch while a racing boot holds a new database's write lock" do
       # A new file is in rollback-journal mode. Switching it to WAL takes the
       # write lock, and SQLite reports BUSY at once, without the busy timeout.
-      pid = racing_boot("SELECT 1", hold: 0.2)
+      allow(PotatoMesh::Config).to receive(:db_busy_max_retries).and_return(20)
+      racing = racing_boot("SELECT 1")
+      seen = release_on_busy(racing)
 
       expect { boot.ensure_schema_upgrades }.not_to raise_error
-      expect_clean_exit(pid)
+      expect(seen[:busy]).to be >= 1
+      finish_racing_boot(racing)
       expect(with_db { |db| db.get_first_value("PRAGMA journal_mode") }).to eq("wal")
       expect(with_db { |db| boot.missing_schema_objects(db) }).to be_empty
     end
