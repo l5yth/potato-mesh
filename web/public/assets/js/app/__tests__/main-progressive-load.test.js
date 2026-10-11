@@ -33,6 +33,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDomEnvironment } from './dom-environment.js';
+import { deferred } from './async-helpers.js';
 import { initializeApp } from '../main.js';
 import { MESSAGE_LIMIT } from '../message-limit.js';
 
@@ -57,15 +58,6 @@ function jsonResponse(body) {
     status: 200,
     json: () => Promise.resolve(body),
   });
-}
-
-/** A promise plus its externally callable resolver. */
-function deferred() {
-  let resolve;
-  const promise = new Promise(r => {
-    resolve = r;
-  });
-  return { promise, resolve };
 }
 
 /** Yield to pending microtasks/timers so async refresh work settles. */

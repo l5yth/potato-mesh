@@ -56,7 +56,7 @@ test('every live refresh path keeps the same channel select in #chat (MS-A4, #88
         },
       ],
       ['the safety poll', () => testUtils.refresh()],
-      ['a history backfill page', async () => testUtils.rerenderChatLog()],
+      ['a chat repaint, as the backfill runs it', async () => testUtils.rerenderChatLog()],
     ];
     for (const [label, run] of paths) {
       await run();

@@ -394,7 +394,8 @@ test('a refresh with one new message removes no element from #chat, on every ref
       assert.ok(after.some(element => element.dataset.messageId === id), `${label} adds the new message's entry`);
     }
 
-    // A backfill page with nothing new is the pure idle repaint.
+    // A chat repaint with nothing new is the pure idle repaint (since BK1 a
+    // backfill page that changes no row repaints nothing at all).
     const before = descendants(chat);
     model.stats.removed = 0;
     testUtils.rerenderChatLog();

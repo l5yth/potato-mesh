@@ -31,6 +31,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDomEnvironment } from './dom-environment.js';
+import { installIdleQueue } from './async-helpers.js';
 import { initializeApp } from '../main.js';
 import { NODE_LIMIT, TRACE_LIMIT } from '../main/constants.js';
 
@@ -256,27 +257,10 @@ test('the backfill schedules its coalesced repaint via requestIdleCallback when 
     return jsonResponse([]);
   }
 
-  // Install a spy requestIdleCallback / cancelIdleCallback pair so the scheduler
-  // takes its idle-callback branch (the browser path) instead of the setTimeout
-  // fallback. The queued callbacks are run explicitly on flush.
-  const idleQueue = new Map();
-  let idleSeq = 0;
-  const scheduled = [];
-  const cancelled = [];
-  const hadRIC = 'requestIdleCallback' in globalThis;
-  const hadCIC = 'cancelIdleCallback' in globalThis;
-  const originalRIC = globalThis.requestIdleCallback;
-  const originalCIC = globalThis.cancelIdleCallback;
-  globalThis.requestIdleCallback = cb => {
-    const id = ++idleSeq;
-    idleQueue.set(id, cb);
-    scheduled.push(id);
-    return id;
-  };
-  globalThis.cancelIdleCallback = id => {
-    cancelled.push(id);
-    idleQueue.delete(id);
-  };
+  // Install a queued requestIdleCallback / cancelIdleCallback pair so the
+  // scheduler takes its idle-callback branch (the browser path) instead of the
+  // setTimeout fallback. The queued callbacks never run; the final flush takes them.
+  const idle = installIdleQueue();
 
   const env = createDomEnvironment({ includeBody: true });
   const originalFetch = globalThis.fetch;
@@ -290,15 +274,14 @@ test('the backfill schedules its coalesced repaint via requestIdleCallback when 
 
     // The idle scheduler was used (browser branch), and the pending idle handle
     // was cancelled by the final flush (cancel branch).
-    assert.ok(scheduled.length >= 1, 'the coalesced repaint must be scheduled via requestIdleCallback');
-    assert.ok(cancelled.length >= 1, 'the final flush must cancel the pending idle callback');
+    assert.ok(idle.requested.length >= 1, 'the coalesced repaint must be scheduled via requestIdleCallback');
+    assert.ok(idle.cancelled.length >= 1, 'the final flush must cancel the pending idle callback');
     // Still coalesced to a single repaint, and every page merged in.
     assert.ok(_testUtils.getRenderCount() <= 1, `expected a coalesced repaint, got ${_testUtils.getRenderCount()}`);
     assert.equal(_testUtils.getLoadedNodeCount(), NODE_LIMIT * 2 + 1);
   } finally {
     globalThis.fetch = originalFetch;
-    if (hadRIC) globalThis.requestIdleCallback = originalRIC; else delete globalThis.requestIdleCallback;
-    if (hadCIC) globalThis.cancelIdleCallback = originalCIC; else delete globalThis.cancelIdleCallback;
+    idle.restore();
     env.cleanup();
   }
 });

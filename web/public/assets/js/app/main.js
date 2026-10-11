@@ -226,6 +226,7 @@ import {
   paginateMessages as paginateMessagesImpl,
   paginateCollection,
 } from './main/data-fetchers.js';
+import { createChatBackfill } from './main/chat-backfill.js';
 import {
   compareNumber,
   compareString,
@@ -480,8 +481,6 @@ export function initializeApp(config) {
   let lastWaypointTimestamp = 0;
   /** Whether the very first full fetch has completed. */
   let initialFetchDone = false;
-  /** Whether the background chat-history backfill is currently running. */
-  let chatBackfillRunning = false;
   /** One-shot guard: the chat-history backfill runs once after the first load. */
   let chatHistoryBackfilled = false;
   /**
@@ -3972,12 +3971,13 @@ export function initializeApp(config) {
 
   /**
    * Hydrate one page of older messages and merge it into the live chat state,
-   * then re-render the chat log.  The read-modify-write of ``allMessages`` is
-   * synchronous (no ``await`` between the merge and the assignment) so a
-   * concurrent incremental {@link refresh} cannot clobber the history this adds.
+   * then queue the backfill's coalesced repaint (SPEC BK1).  The read-modify-write
+   * of ``allMessages`` is synchronous (no ``await`` between the merge and the
+   * assignment) so a concurrent incremental {@link refresh} cannot clobber the
+   * history this adds.
    *
    * @param {Array<Object>} batch Raw older message rows from the backfill pager.
-   * @returns {Promise<void>} Resolves once the page is merged and rendered.
+   * @returns {Promise<void>} Resolves once the page is merged and its repaint queued.
    */
   async function commitHistoricalMessages(batch) {
     if (!Array.isArray(batch) || batch.length === 0) return;
@@ -3985,23 +3985,35 @@ export function initializeApp(config) {
     const rows = Array.isArray(hydrated) ? hydrated : [];
     if (rows.length === 0) return;
     const floor = Math.floor(Date.now() / 1000) - CHAT_RECENT_WINDOW_SECONDS;
+    const previousMessages = allMessages;
     allMessages = trimToWindow(mergeById(allMessages, rows, 'id'), floor);
-    rerenderChatLog();
+    // SPEC BK1: mark `messages` if a row changed (DR4) and join the idle repaint
+    // (FP-A2) instead of rendering the chat per page; the walk's end flushes it.
+    if (!repaintPlanner.noteRows('messages', previousMessages, allMessages)) return;
+    backfillRepaintDirty = true;
+    scheduleBackfillRepaint();
   }
+
+  /** The chat history walk: a page at a time, one flush at its end (SPEC BK1). */
+  const chatBackfill = createChatBackfill({
+    pages: before => paginateMessagesImpl(MESSAGE_LIMIT, { before, chatEnabled: CHAT_ENABLED, normaliseMessageLimit }),
+    commit: commitHistoricalMessages,
+    flush: flushBackfillRepaint,
+    logger: console,
+  });
 
   /**
    * Stream the rest of the chat window in the background once the initial load
    * has rendered the newest page (issue #802).  Pages backward from the oldest
-   * loaded message, committing and rendering each page as it arrives so the feed
-   * fills progressively while the main thread stays responsive — every awaited
-   * fetch yields to the event loop, so this is cooperative background work
-   * rather than a blocking burst (a true Worker cannot touch the DOM).  A guard
-   * prevents overlapping runs.
+   * loaded message, merging each page as it arrives and folding its paint into
+   * the backfill's coalesced idle repaint, so the feed fills progressively while
+   * the main thread stays responsive (SPEC BK1).  {@link chatBackfill} prevents
+   * overlapping runs.
    *
    * @returns {Promise<void>} Resolves when the window is exhausted (or on error).
    */
   async function backfillChatHistory() {
-    if (!CHAT_ENABLED || chatBackfillRunning) return;
+    if (!CHAT_ENABLED) return;
     // Page backward from the live frontier (oldest row of the newest delta
     // page), not the global-oldest loaded row. On a cold load they are equal;
     // on a warm-cache load the cache contributes older rows, so anchoring at the
@@ -4011,21 +4023,7 @@ export function initializeApp(config) {
     const before = chatLiveFrontier > 0
       ? chatLiveFrontier
       : minRecordTimestamp(allMessages, ['rx_time']);
-    if (!(before > 0)) return;
-    chatBackfillRunning = true;
-    try {
-      for await (const batch of paginateMessagesImpl(MESSAGE_LIMIT, {
-        before,
-        chatEnabled: CHAT_ENABLED,
-        normaliseMessageLimit,
-      })) {
-        await commitHistoricalMessages(batch);
-      }
-    } catch (err) {
-      console.warn('chat history backfill failed; showing the most recent page only', err);
-    } finally {
-      chatBackfillRunning = false;
-    }
+    await chatBackfill.run(before);
   }
 
   /**
@@ -4202,6 +4200,7 @@ export function initializeApp(config) {
   // coalesced onto an idle callback: a burst of pages folds into a single
   // repaint, and the repaint runs in idle time rather than blocking input. The
   // same rows render — only *when* and *how often* the repaint fires changes.
+  // The chat history backfill's pages join the same repaint (SPEC BK1).
   /** Distinct pending refine callbacks (deduped by identity across specs). */
   const pendingBackfillRefines = new Set();
   /** True when merged-but-not-yet-repainted backfill rows are waiting. */
@@ -5495,9 +5494,9 @@ export function initializeApp(config) {
 
   /**
    * Re-render only the chat log from the current message/node/telemetry state.
-   * Used both by {@link applyFilter} and by the background history backfill
-   * (issue #802) so each streamed page repaints the chat without re-running the
-   * full filter pipeline (node table, map, ``/api/stats`` fetch).
+   * Used by {@link renderFilteredOutputs} when the chat is due: a refresh, a
+   * filter change and the backfill's coalesced repaint, which the history
+   * backfill's pages join (issue #802, SPEC BK1).
    *
    * The paint also schedules the chat's next clock-driven repaint (SPEC DR4):
    * the chat drops entries older than its 7-day window and counts waypoint
