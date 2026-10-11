@@ -16,6 +16,11 @@
 
 module PotatoMesh
   module App
+    # Read-side SQL behind the +GET /api/*+ routes and the node page, mixed
+    # into the application.  This file holds the node, ingestor, destination
+    # and stats reads; the message, position, neighbor, trace, telemetry,
+    # waypoint and packet-rate reads sit in the other files of this
+    # directory, and +common.rb+ holds the filters they share.
     module Queries
       # Expand a node reference into every form it may be stored under.
       #
@@ -184,12 +189,15 @@ module PotatoMesh
 
       # Fetch node state optionally scoped by identifier and timestamp.
       #
-      # Each row carries +public_key+, the key the row is bound to (SPEC NI2),
-      # as stored: base64 for Meshtastic, hex for MeshCore and Reticulum
-      # (SPEC PK1).  +compact_api_row+ drops it from a row that holds none.  A
-      # key leaves only with its row, so the opt-out, private-mode and window
-      # filters below hide it with the row (PK2).  +identity_hash+ is not
-      # selected: +GET /api/destinations+ serves it (RE2).
+      # Each row carries +public_key+, its stored key, as stored: base64 for
+      # Meshtastic, hex for MeshCore and Reticulum (SPEC PK1).  A Meshtastic
+      # or MeshCore row is bound to that key (NI2); a Reticulum row is bound to
+      # its +identity_hash+ (NI3), so its key follows that identity's records
+      # under the freshness guard.  +compact_api_row+ drops the field from a
+      # row that holds no key.  A key leaves only with its row, so the
+      # opt-out, private-mode and window filters below hide it with the row
+      # (PK2).  +identity_hash+ is not selected: +GET /api/destinations+
+      # serves it (RE2).
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
@@ -302,6 +310,8 @@ module PotatoMesh
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @param before [Integer, nil] inclusive upper-bound +last_seen_time+ cursor
       #   for backward pagination (SPEC BP1); ingestors newer than this are excluded.
+      # @param protocol [String, nil] protocol the ingestors must report
+      #   (+meshtastic+, +meshcore+ or +reticulum+); +nil+ for every protocol.
       # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
       def query_ingestors(limit, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)

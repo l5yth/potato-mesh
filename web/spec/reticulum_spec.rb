@@ -33,15 +33,23 @@ RSpec.describe "Reticulum protocol support" do
   end
   let(:now) { Time.now.to_i }
 
+  # Node id of the Reticulum ingestor whose heartbeat the examples register.
   RETICULUM_INGESTOR_ID = "!feedf00d".freeze
+  # Node id the announce fixture posts under.
   RETICULUM_NODE_ID = "!a1b2c3d4".freeze
+  # Destination hash the announce fixture carries by default (+lxmf.delivery+).
   RETICULUM_DEST_HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90".freeze
   # A second destination (the peer's other announce aspect) resolving to the
   # same identity, and therefore to the same node row.
   RETICULUM_DEST_HASH2 = "00ff11ee22dd33cc44bb55aa66997788".freeze
+  # The announcing identity's public key: 64 bytes, as 128 hex digits.
   RETICULUM_PUBLIC_KEY = ("ab" * 64).freeze
+  # Identity hash the announce fixture carries: the field host's (RE7).  A
+  # stand-in pairing, not the hash RNS derives from +RETICULUM_PUBLIC_KEY+.
   RETICULUM_IDENTITY_HASH = "27716218762cfd2864141ef286c39940".freeze
+  # A second Reticulum node, for the examples that need two.
   RETICULUM_NODE_ID2 = "!0badcafe".freeze
+  # A Meshtastic node stored beside the Reticulum rows, for protocol scoping.
   MESHTASTIC_PEER_ID = "!12ab34cd".freeze
 
   # Announce-derived node fixture, exactly the shape the Reticulum ingestor
@@ -242,10 +250,12 @@ RSpec.describe "Reticulum protocol support" do
       end
     end
 
+    # The +nomadnetwork.node+ aspect, which RE10 ranks first for the headline.
     NODE_ASPECT = {
       aspect: "nomadnetwork.node", dest: RETICULUM_DEST_HASH,
       role: "NODE", name: "Department of Decentralization",
     }.freeze
+    # The +lxmf.delivery+ aspect, which RE10 ranks below +NODE_ASPECT+.
     PEER_ASPECT = {
       aspect: "lxmf.delivery", dest: RETICULUM_DEST_HASH2,
       role: "PEER", name: "Afri Nomad Orion",
@@ -413,9 +423,13 @@ RSpec.describe "Reticulum protocol support" do
     # the same pair. RETICULUM_DEST_HASH starts like RETICULUM_NODE_ID and
     # cannot tell the two forms apart.
     RETICULUM_HOST_NODE_ID = "!27716218".freeze
+    # The +lxmf.delivery+ destination RNS derives from the field host's
+    # identity (RE7).
     RETICULUM_HOST_LXMF = {
       "id" => "4cf985bf933c21b1aa8dabd407d4ef69", "aspect" => "lxmf.delivery", "role" => "PEER",
     }.freeze
+    # The +nomadnetwork.node+ destination RNS derives from the field host's
+    # identity (RE7).
     RETICULUM_HOST_NOMADNET = {
       "id" => "9c59da5e1516745d74cc908243e0ba2b", "aspect" => "nomadnetwork.node", "role" => "NODE",
     }.freeze
@@ -587,6 +601,10 @@ RSpec.describe "Reticulum protocol support" do
       },
     ].freeze
 
+    # Register the ingestor and POST one announce per +ASPECT_TIMES+ entry,
+    # so the identity holds three destinations heard at distinct times.
+    #
+    # @return [void]
     def seed_destinations
       register_reticulum_ingestor
       ASPECT_TIMES.each do |a|
@@ -602,6 +620,10 @@ RSpec.describe "Reticulum protocol support" do
       end
     end
 
+    # Destination ids +GET /api/destinations+ serves, in response order.
+    #
+    # @param query [String] query string appended to the path, with its +?+.
+    # @return [Array<String>] the +id+ of each served destination.
     def destination_ids(query = "")
       get "/api/destinations#{query}"
       expect(last_response.status).to eq(200)

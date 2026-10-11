@@ -18,13 +18,17 @@ require_relative "spec_helper"
 require "json"
 require "base64"
 require "cgi"
+require "digest"
 
 # The node read APIs serve each node's public key (SPEC PK1-PK5, ACCEPTANCE
-# PK-A1 to PK-A4): the key the row is bound to (NI2), as stored, on the rows
-# +GET /api/nodes+ and +GET /api/nodes/:id+ already serve.  A row without a
-# key has no field, and no other read route carries a key.  Every row is
-# stored through the real ingest routes, as an ingestor stores it, except the
-# name-derived placeholder, which only the MeshCore chat path creates.
+# PK-A1 to PK-A4): the row's stored key, as stored, on the rows
+# +GET /api/nodes+ and +GET /api/nodes/:id+ already serve.  For Meshtastic
+# and MeshCore it is the key the row is bound to (NI2).  A row without a key
+# has no field.  No other API route carries a key; the node page embeds the
+# row +GET /api/nodes/:id+ serves.  Every row is stored through the real
+# ingest routes, as an ingestor stores it, except the name-derived
+# placeholder, which only the MeshCore chat path creates; the takeover
+# example ages its keyed evidence in SQL.
 RSpec.describe "Node public keys on the read API" do
   let(:app) { Sinatra::Application }
   let(:api_token) { "node-public-key-spec-token" }
@@ -41,9 +45,11 @@ RSpec.describe "Node public keys on the read API" do
   let(:meshtastic_num) { 0x0c0de001 }
   let(:meshcore_id) { "!aabbccdd" }
   let(:meshcore_key) { "aabbccdd#{"11" * 28}" }
-  let(:reticulum_id) { "!27716218" }
   let(:reticulum_key) { "ab" * 64 }
-  let(:reticulum_identity) { "27716218762cfd2864141ef286c39940" }
+  # RNS derives the identity hash from the key, as the first 16 bytes of the
+  # SHA-256 of its 64 bytes, and the node id from the identity hash's head.
+  let(:reticulum_identity) { Digest::SHA256.digest([reticulum_key].pack("H*"))[0, 16].unpack1("H*") }
+  let(:reticulum_id) { "!#{reticulum_identity[0, 8]}" }
 
   around do |example|
     saved = ENV.to_h.slice("API_TOKEN", "PRIVATE", "FEDERATION")
@@ -125,7 +131,8 @@ RSpec.describe "Node public keys on the read API" do
     }
   end
 
-  # A Reticulum announce record under +reticulum_key+, with one destination.
+  # A Reticulum announce record under +reticulum_key+, with one destination
+  # (its hash a stand-in, not derived from the identity).
   #
   # @return [Hash] node record.
   def reticulum_record
@@ -135,7 +142,7 @@ RSpec.describe "Node public keys on the read API" do
       "identityHash" => reticulum_identity,
       "interface" => "RNodeInterface[RNode Berlin]",
       "destination" => { "id" => "a1b2c3d4e5f60718293a4b5c6d7e8f90", "aspect" => "lxmf.delivery", "role" => "PEER" },
-      "user" => { "shortName" => "2771", "longName" => "Argos Station", "role" => "PEER", "publicKey" => reticulum_key },
+      "user" => { "shortName" => reticulum_identity[0, 4], "longName" => "Argos Station", "role" => "PEER", "publicKey" => reticulum_key },
     }
   end
 
@@ -264,7 +271,7 @@ RSpec.describe "Node public keys on the read API" do
       both_reads("!0c0de006").each { |entry| expect(entry["public_key"]).to eq(k1) }
     end
 
-    it "carries no key on any other read route" do
+    it "carries no key on any read route but the node reads and the node page" do
       store_node(meshtastic_id, meshtastic_record(num: meshtastic_num, key: k1))
       store_node(meshcore_id, meshcore_record)
       store_node(reticulum_id, reticulum_record)

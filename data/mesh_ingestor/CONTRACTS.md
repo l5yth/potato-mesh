@@ -619,14 +619,14 @@ only, from the operator's own RNS config.
 
 ### GET /api/nodes public key (SPEC PK1-PK4)
 
-`GET /api/nodes` and `GET /api/nodes/:id` emit `public_key`, the key the node row is bound to (see "Canonical node identity"), as stored: base64 for Meshtastic, 64 hex digits for MeshCore, 128 hex digits for Reticulum. The field is absent when the row holds none: no key observed, a name-derived placeholder, or a key over its 512-byte cap. The key leaves only with its row: the opt-out marker, `PRIVATE=1` with `CLIENT_HIDDEN`, the window floors and retention hide it with the row, and no other read route carries it. `identity_hash` is served by `GET /api/destinations` alone.
+`GET /api/nodes` and `GET /api/nodes/:id` emit `public_key`, the node row's stored key, as stored: base64 for Meshtastic, 64 hex digits for MeshCore, 128 hex digits for Reticulum. A Meshtastic or MeshCore row is bound to that key; a Reticulum row is bound to its identity hash, and its key follows that identity's records (see "Canonical node identity"). The field is absent when the row holds none: no key observed, a name-derived placeholder, or a key over its 512-byte cap. The key leaves only with its row: the opt-out marker, `PRIVATE=1` with `CLIENT_HIDDEN`, the window floors and retention hide it with the row. No other API route carries it; the node page `/nodes/:id` embeds the row `GET /api/nodes/:id` serves. `identity_hash` is served by `GET /api/destinations` alone; a Reticulum identity hash is also the first 16 bytes of the SHA-256 of the key's 64 bytes (decoded from the hex).
 
 A shared key is continuity evidence. The server links, merges and flags nothing on it. A consumer reads it as follows:
 
 - One key under an id no longer heard and under a new id: a replacement candidate for an operator to confirm. Only a Meshtastic id can change while its key stays; a MeshCore or Reticulum id derives from its key.
 - One key under several ids heard in overlapping windows: a cloned keypair, such as one firmware image flashed onto several devices, not one device.
 - A served key is what was broadcast for the node, not proof that the node holds the private key: a Meshtastic NodeInfo is unsigned.
-- A new key under an existing id is served once it takes the row over. That needs the row to be positively stale (its keyed evidence older than four weeks, SPEC MR2) and a newer record under the new key; until then the bound key is served.
+- A new key under an existing Meshtastic or MeshCore id is served once it takes the row over. That needs the row to be positively stale (its keyed evidence older than four weeks, SPEC MR2) and a newer record under the new key; until then the bound key is served. A Reticulum row is bound to its identity hash instead. RNS derives the hash from the key, so a new key is a new identity and waits the same way; a record under the bound identity hash with another key, a mismatched pair, replaces the key once it is at least as new as the row's `last_heard`.
 
 ### GET /api/messages sender flag (SPEC SV1/SV2)
 
