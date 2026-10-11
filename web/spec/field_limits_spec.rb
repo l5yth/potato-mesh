@@ -22,6 +22,7 @@ require "sqlite3"
 require "uri"
 require_relative "support/data_processing_harness"
 require_relative "support/federation_identity"
+require_relative "support/ingest_spec_helpers"
 
 # Byte caps on ingested strings (SPEC SL1-SL9; ACCEPTANCE SL-A1-SL-A3).
 # Every ingest write bounds its record before storing it: free text is cut on
@@ -30,6 +31,8 @@ require_relative "support/federation_identity"
 # only when known, and a signed instance field over its cap rejects the
 # record instead of being cut.
 RSpec.describe "Ingest field limits" do
+  include IngestSpecHelpers
+
   let(:app) { Sinatra::Application }
   let(:api_token) { "field-limits-token" }
   let(:auth_headers) do
@@ -38,38 +41,6 @@ RSpec.describe "Ingest field limits" do
   let(:now) { Time.now.to_i }
   # One family emoji: seven code points, 25 bytes, one grapheme cluster.
   let(:family) { "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}" }
-
-  # Yield a handle on the spec database, rows as hashes, and close it.
-  #
-  # @yieldparam db [SQLite3::Database] open database handle.
-  # @return [Object] the block's result.
-  def with_db
-    db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-    db.results_as_hash = true
-    db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
-    yield db
-  ensure
-    db&.close
-  end
-
-  # The first column of the first row +sql+ selects.
-  #
-  # @param sql [String] query.
-  # @param params [Array] bind values.
-  # @return [Object, nil] the value, or nil without a row.
-  def db_value(sql, params = [])
-    with_db { |db| db.get_first_value(sql, params) }
-  end
-
-  # POST +body+ as JSON to +path+ and expect the route to accept it.
-  #
-  # @param path [String] ingest route.
-  # @param body [Object] request body.
-  # @return [void]
-  def post_ok(path, body)
-    post path, body.to_json, auth_headers
-    expect(last_response.status).to eq(201), "#{path} answered #{last_response.status}: #{last_response.body}"
-  end
 
   # A +POST /api/nodes+ body holding one Meshtastic entry.
   #

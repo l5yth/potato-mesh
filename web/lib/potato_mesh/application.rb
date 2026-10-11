@@ -59,6 +59,7 @@ require_relative "application/meshtastic/payload_decoder"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
+require_relative "application/aggregate_windows"
 require_relative "application/asset_cache_control"
 require_relative "application/security_headers"
 require_relative "application/public_scheme"
@@ -263,6 +264,9 @@ module PotatoMesh
       log_instance_domain_resolution
       log_instance_public_key
       refresh_well_known_document_if_stale
+      # The instance housekeeping runs here and on each federation
+      # announcement cycle, so GET /api/instances only reads (SPEC RC4).
+      clean_duplicate_instances!
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
 

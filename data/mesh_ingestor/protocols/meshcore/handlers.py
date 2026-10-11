@@ -365,11 +365,12 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # RX_LOG_DATA seam (GRP_TXT), so advance the clock only (Model A).
         _handlers._mark_packet_activity()
         _handlers.store_packet_dict(packet)
+        # The sender id, not the name parsed from the text: the line also
+        # runs for a message the channel filters dropped (SPEC DC7).
         config._debug_log(
             "MeshCore channel message",
             context="meshcore.channel_msg",
             channel=channel_idx,
-            sender=sender_name,
             from_id=from_id,
         )
 

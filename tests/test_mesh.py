@@ -3401,7 +3401,9 @@ def test_store_packet_dict_records_ignored_packets(mesh_module, monkeypatch, tmp
     assert lines
     payload = json.loads(lines[-1])
     assert payload["reason"] == "unsupported-port"
-    assert payload["packet"]["decoded"]["portnum"] == "UNKNOWN"
+    # Metadata only (SPEC DC1): the port, never the packet itself.
+    assert payload["portnum"] == "UNKNOWN"
+    assert "packet" not in payload
 
 
 def test_coerce_int_and_float_cover_edge_cases(mesh_module):

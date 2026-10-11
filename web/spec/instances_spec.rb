@@ -97,6 +97,21 @@ RSpec.describe PotatoMesh::App::Instances do
       expect(payload.all? { |row| row["last_update"] >= lower_bound }).to be(true)
     end
 
+    it "skips a row whose stored update time is not a number" do
+      # SQLite ranks TEXT above every INTEGER, so the SQL window lets the row
+      # through; the Ruby check after normalisation drops it.
+      with_db do |db|
+        db.execute(
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private) VALUES (?, ?, ?, ?, ?)",
+          ["text-time-instance", "text-time.mesh.test", PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM, "soon", 0],
+        )
+      end
+
+      domains = application_class.load_instances_for_api.map { |row| row["domain"] }
+
+      expect(domains).not_to include("text-time.mesh.test")
+    end
+
     it "exposes contactLink when present and omits blank values" do
       fixed_time = Time.utc(2025, 2, 1, 12, 0, 0)
       allow(Time).to receive(:now).and_return(fixed_time)

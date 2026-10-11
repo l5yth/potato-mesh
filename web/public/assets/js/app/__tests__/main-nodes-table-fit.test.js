@@ -117,17 +117,33 @@ async function withSortableTable(nodes, fn) {
   await runLiveApp({ env: dom.env, responses }, ({ testUtils }) => fn({ t: testUtils, buttons, classList, dom }));
 }
 
+/**
+ * Repaint every surface with the same data: a keystroke in the filter box,
+ * applied at once with Enter (SPEC DE2), so the repaint runs before the
+ * caller's next assertion.
+ *
+ * @param {Object} dom Live table DOM from `createLiveTableDom`.
+ * @param {Object} t The app's `_testUtils`.
+ * @returns {void}
+ */
+function sameDataRepaint(dom, t) {
+  const paints = t.getRenderCount();
+  dom.filterInput.dispatchEvent({ type: 'input' });
+  dom.filterInput.dispatchEvent({ type: 'keydown', key: 'Enter' });
+  assert.equal(t.getRenderCount(), paints + 1, 'the filter box repainted at once');
+}
+
 test('a sort that moves rows is measured with its own arrow, and a same-data repaint keeps the class (PO1)', async () => {
   const nodes = [
     { ...NODES[0], node_id: '!a0000001', hw_model: 'HELTEC_V3', last_heard: NOW - 10 },
     { ...NODES[0], node_id: '!a0000002', hw_model: 'HELTEC_MESH_NODE_T114', last_heard: NOW - 20 },
   ];
-  await withSortableTable(nodes, async ({ buttons, classList, dom }) => {
+  await withSortableTable(nodes, async ({ t, buttons, classList, dom }) => {
     assert.equal(classList.contains(SQUEEZED_CLASS), false, 'sorted by Last Seen the unbroken table fits');
     buttons.hw_model.click();
     assert.equal(dom.tbody.children[0].getAttribute('data-node-row'), '!a0000002', 'setup: the sort moved the rows');
     assert.equal(classList.contains(SQUEEZED_CLASS), true, 'the HW Model arrow widened the table: squeezed');
-    dom.filterInput.dispatchEvent({ type: 'input' });
+    sameDataRepaint(dom, t);
     assert.equal(classList.contains(SQUEEZED_CLASS), true, 'a same-data repaint keeps the right class');
     buttons.last_heard.click();
     assert.equal(classList.contains(SQUEEZED_CLASS), false, 'back on Last Seen the table fits unbroken');
@@ -135,11 +151,11 @@ test('a sort that moves rows is measured with its own arrow, and a same-data rep
 });
 
 test('a sort that moves no row is measured too, since its arrow changed the header (PO1)', async () => {
-  await withSortableTable([NODES[0]], async ({ buttons, classList, dom }) => {
+  await withSortableTable([NODES[0]], async ({ t, buttons, classList, dom }) => {
     assert.equal(classList.contains(SQUEEZED_CLASS), false);
     buttons.hw_model.click();
     assert.equal(classList.contains(SQUEEZED_CLASS), true, 'one row, nothing moved, but the header did');
-    dom.filterInput.dispatchEvent({ type: 'input' });
+    sameDataRepaint(dom, t);
     assert.equal(classList.contains(SQUEEZED_CLASS), true, 'a same-data repaint keeps it');
   });
 });
