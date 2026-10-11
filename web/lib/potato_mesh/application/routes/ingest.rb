@@ -61,7 +61,7 @@ module PotatoMesh
               per_node = normalize_protocol_value(node["protocol"])
               upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end
-            PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
+            PotatoMesh::App::Prometheus::NODES_GAUGE.set(prometheus_node_count(db))
             PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
             PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
