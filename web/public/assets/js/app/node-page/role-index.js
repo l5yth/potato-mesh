@@ -21,6 +21,7 @@
  */
 
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
+import { applyNodeNameFallback } from '../main/long-link-router.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 
@@ -287,6 +288,80 @@ export function seedNeighborRoleIndex(index, neighbors) {
 }
 
 /**
+ * Read the role candidate a node record contributes to the index: the same
+ * fields from a ``/api/nodes/:id`` response as from a registry entry.
+ *
+ * @param {?Object} record Node record.
+ * @param {*} raw Identifier the record was requested by, used when the record
+ *   names no id.
+ * @returns {{identifier: *, numericId: *, role: *, shortName: *, longName: *}}
+ *   Candidate for {@link registerRoleCandidate}.
+ */
+function nodeRecordCandidate(record, raw) {
+  return {
+    identifier: record?.node_id ?? record?.nodeId ?? record?.id ?? raw,
+    numericId: record?.node_num ?? record?.nodeNum ?? record?.num ?? null,
+    role: record?.role ?? record?.node_role ?? record?.nodeRole ?? null,
+    shortName: record?.short_name ?? record?.shortName ?? null,
+    longName: record?.long_name ?? record?.longName ?? null,
+  };
+}
+
+/**
+ * Whether a registry record carries the names the dashboard fills in for a
+ * nameless node ({@link applyNodeNameFallback}) instead of names of its own.
+ * The API returns no names for such a node, so its per-id lookup registered
+ * none (SPEC OV2).
+ *
+ * @param {Object} record Registry record.
+ * @param {*} identifier The record's node id.
+ * @returns {boolean} ``true`` when both names are the fallback pair for the id.
+ */
+function hasFallbackNames(record, identifier) {
+  const nameless = { node_id: identifier, protocol: record.protocol };
+  applyNodeNameFallback(nameless);
+  return stringOrNull(record.short_name ?? record.shortName) === nameless.short_name
+    && stringOrNull(record.long_name ?? record.longName) === nameless.long_name;
+}
+
+/**
+ * Register the registry's records for identifiers missing from the index and
+ * return the identifiers the registry lacks, which the caller looks up per id
+ * (SPEC OV2). A record contributes what its ``/api/nodes/:id`` lookup did, so
+ * the rendered badges are the same. The registry is the dashboard's node map
+ * (as of its last refresh) or the ``/api/nodes`` page the node page fetched;
+ * the per-id route also reaches nodes heard 7 to 28 days ago, which no
+ * registry page holds.
+ *
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}} index Role index maps.
+ * @param {Map<string, *>} fetchIdMap Normalized identifiers to raw fetch identifiers.
+ * @param {?Map<string, Object>} nodesById Node registry keyed by node id.
+ * @returns {Map<string, *>} The entries of ``fetchIdMap`` the registry lacks;
+ *   ``fetchIdMap`` itself when there is nothing to fill.
+ */
+export function fillIndexFromRegistry(index, fetchIdMap, nodesById) {
+  if (!(fetchIdMap instanceof Map) || fetchIdMap.size === 0 || !(nodesById instanceof Map) || nodesById.size === 0) {
+    return fetchIdMap;
+  }
+  const remaining = new Map();
+  for (const [key, raw] of fetchIdMap) {
+    // Registries key by the canonical (lower-case) id, which the normalized key is.
+    const record = nodesById.get(raw) ?? nodesById.get(key);
+    if (!record || typeof record !== 'object') {
+      remaining.set(key, raw);
+      continue;
+    }
+    const candidate = nodeRecordCandidate(record, raw);
+    if (hasFallbackNames(record, candidate.identifier)) {
+      candidate.shortName = null;
+      candidate.longName = null;
+    }
+    registerRoleCandidate(index, candidate);
+  }
+  return remaining;
+}
+
+/**
  * Fetch node metadata for the supplied identifiers and merge it into the role index.
  *
  * Concurrency is bounded by {@link NEIGHBOR_ROLE_FETCH_CONCURRENCY}: a fixed
@@ -321,17 +396,7 @@ export async function fetchNodeDetailsIntoIndex(index, fetchIdMap, fetchImpl, co
         throw new Error(`Failed to load node information for ${raw} (HTTP ${response.status})`);
       }
       const payload = await response.json();
-      registerRoleCandidate(index, {
-        identifier:
-          payload?.node_id
-          ?? payload?.nodeId
-          ?? payload?.id
-          ?? raw,
-        numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
-        role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
-        shortName: payload?.short_name ?? payload?.shortName ?? null,
-        longName: payload?.long_name ?? payload?.longName ?? null,
-      });
+      registerRoleCandidate(index, nodeRecordCandidate(payload, raw));
     } catch (error) {
       console.warn(`Failed to resolve ${contextLabel}`, error);
     }
@@ -362,11 +427,13 @@ export async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
 }
 
 /**
- * Build an index of neighbor roles using cached data and API lookups.
+ * Build an index of neighbor roles using cached data, the node registry and
+ * API lookups for the neighbours the registry lacks (SPEC OV2).
  *
  * @param {Object} node Normalised node payload.
  * @param {Array<Object>} neighbors Neighbor entries for the node.
- * @param {{ fetchImpl?: Function }} [options] Fetch overrides.
+ * @param {{ fetchImpl?: Function, nodesById?: ?Map<string, Object> }} [options]
+ *   Fetch override and the node registry to fill from.
  * @returns {Promise<{
  *   byId: Map<string, string>,
  *   byNum: Map<number, string>,
@@ -374,7 +441,7 @@ export async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
  *   detailsByNum: Map<number, Object>,
  * }>} Role index maps enriched with neighbour metadata.
  */
-export async function buildNeighborRoleIndex(node, neighbors, { fetchImpl } = {}) {
+export async function buildNeighborRoleIndex(node, neighbors, { fetchImpl, nodesById = null } = {}) {
   const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
   registerRoleCandidate(index, {
     identifier: node?.nodeId ?? node?.node_id ?? node?.id ?? null,
@@ -421,6 +488,6 @@ export async function buildNeighborRoleIndex(node, neighbors, { fetchImpl } = {}
     });
   }
 
-  await fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl);
+  await fetchMissingNeighborRoles(index, fillIndexFromRegistry(index, fetchIdMap, nodesById), fetchImpl);
   return index;
 }
