@@ -377,7 +377,11 @@ module PotatoMesh
         from_id = string_or_nil(payload["from_id"]) || node_id
         to_id = string_or_nil(payload["to_id"] || payload["to"])
 
-        telemetry_time = coerce_integer(payload["telemetry_time"] || payload["time"] || payload.dig("telemetry", "time"))
+        # The section may be a JSON-encoded object (SPEC SL3).  Its time is
+        # read from the parsed section, so one that is no object is ignored
+        # and its record stored without it (SPEC IB1).
+        telemetry_section = normalize_json_object(payload["telemetry"])
+        telemetry_time = coerce_integer(payload["telemetry_time"] || payload["time"] || telemetry_section&.[]("time"))
         telemetry_time = nil if telemetry_time && telemetry_time > now
 
         channel = coerce_integer(payload["channel"])
@@ -392,7 +396,6 @@ module PotatoMesh
         ingestor = string_or_nil(payload["ingestor"])
         protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
-        telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
         device_metrics ||= normalize_json_object(telemetry_section["deviceMetrics"]) if telemetry_section&.key?("deviceMetrics")
         environment_metrics = normalize_json_object(payload["environment_metrics"] || payload["environmentMetrics"])
