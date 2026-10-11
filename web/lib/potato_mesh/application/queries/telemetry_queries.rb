@@ -38,7 +38,10 @@ module PotatoMesh
         # to twenty-eight days so historical chart data remains reachable.
         since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: since_floor)
-        where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
+        # +rx_time+ is NOT NULL (data/telemetry.sql), so the window bounds the
+        # column itself and the query searches idx_telemetry_rx_time; with
+        # +before+ that search has both ends (SPEC RC2).
+        where_clauses << "rx_time >= ?"
         params << since_threshold
 
         if node_ref
@@ -163,12 +166,14 @@ module PotatoMesh
         node_filters = [opt_out_node_id_filter("node_id")]
         node_filters << hidden_client_node_id_filter("node_id") if private_mode?
 
+        # +rx_time+ is NOT NULL, so the window bounds the column itself and
+        # the aggregate searches idx_telemetry_rx_time instead of scanning
+        # the table (SPEC RC2).
         sql = <<~SQL
           SELECT
             #{select_clauses.join(",\n            ")}
           FROM telemetry
-          WHERE COALESCE(rx_time, telemetry_time) IS NOT NULL
-            AND COALESCE(rx_time, telemetry_time, 0) >= ?
+          WHERE rx_time >= ?
             AND #{node_filters.join(" AND ")}
           GROUP BY bucket_start
           ORDER BY bucket_start ASC

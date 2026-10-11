@@ -171,15 +171,20 @@ module PotatoMesh
       # Fetch all instance rows ready to be served by the API while handling
       # malformed rows gracefully. The dataset is restricted to records updated
       # within the rolling window defined by PotatoMesh::Config.week_seconds.
+      # Reads only: {#clean_duplicate_instances!} runs at boot and on each
+      # announcement cycle instead (SPEC RC4).
       #
       # @return [Array<Hash>] list of cleaned instance payloads.
       def load_instances_for_api
-        clean_duplicate_instances!
-
-        db = open_database(readonly: true)
-        db.results_as_hash = true
         now = Time.now.to_i
         min_last_update_time = now - PotatoMesh::Config.week_seconds
+        self_id = app_constant(:SELF_INSTANCE_ID)
+        # Our own row is stored at boot and on each announcement cycle only, so
+        # its time can trail a node heard since: it is listed by its newest
+        # node, read now, as when every GET refreshed it first (SPEC RC4).
+        self_listed = (latest_node_update_timestamp || now) >= min_last_update_time
+        db = open_database(readonly: true)
+        db.results_as_hash = true
         sql = <<~SQL
           SELECT id, domain, pubkey, name, version, channel, frequency,
                  latitude, longitude, last_update_time, is_private, nodes_count,
@@ -188,20 +193,24 @@ module PotatoMesh
           FROM instances
           WHERE domain IS NOT NULL AND TRIM(domain) != ''
             AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
-            AND last_update_time IS NOT NULL AND last_update_time >= ?
+            AND (id = ? OR (last_update_time IS NOT NULL AND last_update_time >= ?))
           ORDER BY LOWER(domain)
         SQL
 
         rows = with_busy_retry do
-          db.execute(sql, min_last_update_time)
+          db.execute(sql, [self_id, min_last_update_time])
         end
 
         rows.each_with_object([]) do |row, memo|
           normalized = normalize_instance_row(row)
           next unless normalized
 
-          last_update_time = normalized["last_update"]
-          next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
+          if normalized["id"] == self_id
+            next unless self_listed
+          else
+            last_update_time = normalized["last_update"]
+            next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
+          end
 
           memo << normalized
         end

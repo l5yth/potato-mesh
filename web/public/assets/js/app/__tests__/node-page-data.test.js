@@ -23,6 +23,11 @@ import {
   fetchNodesById,
   fetchTracesForNode,
 } from '../node-page-data.js';
+import * as nodePageData from '../node-page-data.js';
+
+// Read through the namespace so the suite loads, and fails per test, on a
+// tree without it (SPEC OV3).
+const { requestNodesById } = nodePageData;
 
 // ---------------------------------------------------------------------------
 // fetchMessages
@@ -274,6 +279,52 @@ test('fetchNodesById issues a request with the configured limit', async () => {
   assert.ok(calls[0].startsWith('/api/nodes?limit='), 'should call /api/nodes with a limit query');
 });
 
+
+test('requestNodesById issues the request at once; fetchNodesById reads it without another (SPEC OV3)', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    return { ok: true, status: 200, async json() { return [{ node_id: '!44444444', short_name: 'D4' }]; } };
+  };
+  const pending = requestNodesById({ fetchImpl });
+  assert.deepEqual(calls, ['/api/nodes?limit=1000'], 'issued before anything awaits it');
+  const result = await fetchNodesById({ fetchImpl, responsePromise: pending });
+  assert.equal(calls.length, 1);
+  assert.equal(result.get('!44444444').short_name, 'D4');
+});
+
+test('requestNodesById returns null without a fetch implementation (SPEC OV3)', () => {
+  const savedFetch = globalThis.fetch;
+  try {
+    delete globalThis.fetch;
+    assert.equal(requestNodesById(), null);
+  } finally {
+    if (savedFetch !== undefined) globalThis.fetch = savedFetch;
+  }
+});
+
+test('a dropped request that fails is handled; read, it warns and yields an empty Map (SPEC OV3)', async () => {
+  const unhandled = [];
+  const onUnhandled = reason => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    // A fetch that throws at once, and one that rejects, both dropped unread.
+    requestNodesById({ fetchImpl: () => { throw new Error('offline'); } });
+    requestNodesById({ fetchImpl: async () => { throw new Error('offline'); } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(unhandled, []);
+    assert.deepEqual(warnings, []);
+    const read = await fetchNodesById({ responsePromise: requestNodesById({ fetchImpl: () => { throw new Error('offline'); } }) });
+    assert.equal(read.size, 0);
+    assert.equal(warnings.length, 1, 'a request that is read and fails warns as before');
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+    console.warn = originalWarn;
+  }
+});
 
 test('fetchDestinationsForNode requests one identity\'s destinations (SPEC RA5)', async () => {
   const calls = [];

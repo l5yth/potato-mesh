@@ -434,21 +434,46 @@ Every read endpoint enforces a server-side rolling-window floor on the data it r
 | --- | --- | --- |
 | `GET /api/nodes` | 7 days | filtered by `nodes.last_heard` |
 | `GET /api/messages` | 7 days | filtered by `messages.rx_time` |
-| `GET /api/positions` | 7 days | filtered by `COALESCE(rx_time, position_time)` |
-| `GET /api/telemetry` | 7 days | filtered by `COALESCE(rx_time, telemetry_time)` |
-| `GET /api/instances` | 7 days | filtered by `instances.last_update_time` |
+| `GET /api/positions` | 7 days | filtered by `positions.rx_time` |
+| `GET /api/telemetry` | 7 days | filtered by `telemetry.rx_time` |
+| `GET /api/instances` | 7 days | filtered by `instances.last_update_time`; this instance's own row by its newest node's `last_heard` |
 | `GET /api/waypoints` | 7 days | filtered by `waypoints.rx_time`; rows past their `expire` timestamp are additionally excluded from the moment of expiry (SPEC W5). 404 under `PRIVATE=1` (message-grade privacy, SPEC W3). The per-author `GET /api/waypoints/:id` (SPEC W11 - feeds the node page's Waypoints section) uses the standard per-id 28-day window and the same expiry/privacy gates. |
 | `GET /api/destinations` | 7 days | filtered by the owning node's `nodes.last_heard`, the `/api/nodes` window; `?node_id=` takes the per-id 28-day window. The destination's own `last_heard` is capped at 28 days on both, and the `since` clamp applies to that cap (SPEC RA8). |
 | `GET /api/neighbors` | 28 days | sparse data; widened to keep slow scrapes visible |
 | `GET /api/traces` | 28 days | sparse data; same rationale |
 | `GET /api/ingestors` | 28 days | sparse heartbeats; same rationale |
 | `GET /api/.../:id` (per-id lookup) | 28 days | every per-id route uses the extended window so callers can backfill historical context for a specific node/conversation that has dropped out of the bulk view. The `since` clamp still applies. |
-| `GET /api/telemetry/aggregated` | caller-controlled | `?windowSeconds=<N>` is mandatory; defaults to 86 400 (1 day). Bounded by `MAX_QUERY_LIMIT` on bucket count, not by a hard floor. |
+| `GET /api/telemetry/aggregated` | 1 or 7 days | one of two canonical window/bucket pairs, see Bucketed series windows below. |
 | `GET /api/stats` | n/a | reports activity counts at fixed `hour`/`day`/`week`/`month` buckets; response shape documented below. |
 
 Federation peers should not assume an unbounded historical window: a peer that requests `/api/messages?since=0` from a partner expecting "everything" will only ever receive the last seven days. To pull older state, request the per-id endpoint (28 days) for the relevant nodes.
 
 The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_weeks_seconds`).
+
+### Bucketed series windows (SPEC RC1)
+
+`GET /api/telemetry/aggregated` (`windowSeconds`, `bucketSeconds`) and `GET /api/stats/activity` (`window_seconds`, `bucket_seconds`) serve only these window/bucket pairs, in seconds:
+
+| Route | Pairs |
+| --- | --- |
+| `GET /api/telemetry/aggregated` | 86 400 / 300 (default), 604 800 / 3 600 (`/charts`) |
+| `GET /api/stats/activity` | 86 400 / 3 600 (default, map card), 604 800 / 7 200 (`/charts`) |
+
+- Nearest pair. The requested window, clamped to 28 days, picks the pair whose window is closest to it; among pairs equally close, the bucket closest to the requested bucket decides; a remaining tie goes to the shorter window. 3 600 / 60 is served 86 400 / 300, 2 419 200 / 86 400 is served 604 800 / 3 600, 345 600 / 300 is served 86 400 / 300.
+- A missing parameter takes the default pair's value. A window or bucket that is not a positive integer is a `400`; every other pair is served.
+- The bucket served is each telemetry bucket's `bucket_seconds`, and each activity bucket's `bucket_end` minus `bucket_start`.
+- `since` is rounded down to the start of its bucket. The answer is the cached series' buckets that start at or after it; a `since` at or before the window floor returns the whole series.
+- Each pair is cached for 60 s, the telemetry pairs per private flag.
+- A `since` answer comes from the cached series and can be up to 60 s old.
+
+### GET response cache (SPEC RC3)
+
+- Cached: the newest page (no `since`, no `before`) of `/api/nodes`, `/api/positions`, `/api/telemetry`, `/api/neighbors`, `/api/traces`, `/api/ingestors`, `/api/waypoints` and `/api/messages` at `limit` 10, 200 or 1000; `/api/stats`; `/api/instances`; the bucketed series pairs.
+- A request to those collections at any other `limit`, or with `since` or `before`, is answered from a fresh query, as are the per-id routes and `/api/destinations`.
+- `GET /api/*` takes `since`, `before`, `limit`, `windowSeconds`, `bucketSeconds`, `window_seconds` and `bucket_seconds` from the query string only; a request body does not set them (SPEC RC6).
+- Pages filtered by `protocol` share 64 entries, oldest out first. They never evict an unfiltered page, `/api/stats`, `/api/instances` or a bucketed series.
+- A `GET /api/instances` miss only reads. Duplicate domains are merged and the self record is refreshed at boot and on each federation announcement cycle.
+- This instance's own row is listed unless its newest node was heard more than 7 days ago, with the fields of its last refresh.
 
 ### GET endpoint backward pagination (`?before=`)
 
@@ -698,9 +723,9 @@ One row per announced destination, newest `last_heard` first.
 
 A bucketed packets/hour series over `ingestor_activity`, feeding the mesh-activity
 map-card sparkline and the `/charts` activity figure. snake_case params (the
-API norm): `window_seconds` (default 86 400, clamped to the 28-day floor) and
-`bucket_seconds` (default 3 600); a bucket count over `MAX_QUERY_LIMIT` is a `400`.
-An optional `since` bypasses the response cache.
+API norm): `window_seconds` (default 86 400) and `bucket_seconds` (default 3 600),
+served as the nearest canonical pair (Bucketed series windows above). An optional
+`since` is rounded down to its bucket and answered from the cached series.
 
 ```jsonc
 [

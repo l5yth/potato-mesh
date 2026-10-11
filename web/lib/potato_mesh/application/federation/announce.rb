@@ -149,6 +149,9 @@ module PotatoMesh
         return unless federation_enabled?
         return if federation_shutdown_requested?
 
+        # The instance housekeeping GET /api/instances no longer does: merge
+        # duplicate domains, then refresh the self record (SPEC RC4).
+        clean_duplicate_instances!
         attributes, signature = ensure_self_instance_record!
         payload_json = JSON.generate(instance_announcement_payload(attributes, signature))
         domains = federation_target_domains(attributes[:domain])

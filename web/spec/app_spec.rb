@@ -3129,7 +3129,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload).not_to be_empty
     end
 
-    it "deduplicates records by domain keeping the newest entry" do
+    it "deduplicates records by domain on the announcement cycle, keeping the newest entry (SPEC RC4)" do
       newer_time = Time.now.to_i
       older_time = newer_time - 60
 
@@ -3176,6 +3176,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
           ],
         )
       end
+
+      # A GET only reads: both rows are served until the cycle merges them.
+      get "/api/instances"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body).count { |entry| entry["domain"] == "duplicate.example" }).to eq(2)
+
+      allow(application_class).to receive(:federation_target_domains).and_return([])
+      application_class.announce_instance_to_all_domains
+      PotatoMesh::App::ApiCache.invalidate_prefix("api:instances:")
 
       get "/api/instances"
 
@@ -6860,8 +6869,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
       end
 
-      # Prime the newest-page cache with just node A.
-      get "/api/nodes?limit=3"
+      # Prime the newest-page cache with just node A, at a limit the app
+      # requests: only those pages are cached (SPEC RC3).
+      get "/api/nodes?limit=10"
       expect(last_response).to be_ok
       expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
 
@@ -6874,18 +6884,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       # A plain request is still served the cached page (proves the cache is live).
-      get "/api/nodes?limit=3"
+      get "/api/nodes?limit=10"
       expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
 
       # A `before` request bypasses the cache and sees the fresh node B.
-      get "/api/nodes?limit=3&before=#{now}"
+      get "/api/nodes?limit=10&before=#{now}"
       expect(last_response).to be_ok
       before_ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
       expect(before_ids).to include("!cacheaaaa", "!cachebbbb")
 
       # Issuing the `before` request did not overwrite the hot newest-page cache
       # entry — a subsequent plain request still returns the cached page.
-      get "/api/nodes?limit=3"
+      get "/api/nodes?limit=10"
       expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
     end
 
@@ -7179,7 +7189,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(bucket["total"]).to eq(5400) # SUM across protocols
     end
 
-    it "bypasses the cache when since is provided" do
+    it "answers since from the canonical cached series (SPEC RC1)" do
       clear_database
       get "/api/stats/activity?window_seconds=86400&bucket_seconds=3600&since=#{Time.now.to_i - 3600}"
       expect(last_response).to be_ok
@@ -7205,10 +7215,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(JSON.parse(last_response.body)).to eq("error" => "bucket_seconds must be positive")
     end
 
-    it "rejects a bucket too small for the requested window" do
+    it "serves a bucket too small for the requested window as the canonical pair (SPEC RC1)" do
+      clear_database
       get "/api/stats/activity?window_seconds=86400&bucket_seconds=1"
-      expect(last_response.status).to eq(400)
-      expect(JSON.parse(last_response.body)).to eq("error" => "bucket_seconds too small for requested window")
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body)).to be_an(Array)
     end
   end
 
@@ -8763,10 +8774,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=0"
       expect(last_response.status).to eq(400)
       expect(JSON.parse(last_response.body)).to eq("error" => "bucketSeconds must be positive")
+    end
+
+    it "serves a bucket too small for the requested window as the canonical pair (SPEC RC1)" do
+      post "/api/telemetry", telemetry_fixture.to_json, auth_headers
+      expect(last_response.status).to eq(201)
 
       get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=1"
-      expect(last_response.status).to eq(400)
-      expect(JSON.parse(last_response.body)).to eq("error" => "bucketSeconds too small for requested window")
+      expect(last_response.status).to eq(200)
+      expect(JSON.parse(last_response.body).map { |bucket| bucket["bucket_seconds"] }.uniq).to eq([300])
     end
 
     it "clamps windowSeconds to the 28-day visibility cap" do

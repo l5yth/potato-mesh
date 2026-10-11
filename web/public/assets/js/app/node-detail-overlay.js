@@ -69,8 +69,10 @@ function hasValidReference(reference) {
  *   refreshImpl?: Function,
  *   renderShortHtml?: Function,
  *   privateMode?: boolean,
+ *   getNodesById?: function(): ?Map<string, Object>,
  *   logger?: Console
- * }} [options] Behaviour overrides.
+ * }} [options] Behaviour overrides. ``getNodesById`` returns the dashboard's
+ *   node registry; each open reads it then (SPEC OV1).
  * @returns {{
  *   open: (reference: Object, config?: { trigger?: Element, label?: string }) => Promise<void>,
  *   close: () => void,
@@ -101,6 +103,7 @@ export function createNodeDetailOverlayManager(options = {}) {
   const fetchImpl = options.fetchImpl;
   const refreshImpl = options.refreshImpl;
   const renderShortHtml = options.renderShortHtml;
+  const getNodesById = typeof options.getNodesById === 'function' ? options.getNodesById : null;
 
   let requestToken = 0;
   let lastTrigger = null;
@@ -203,6 +206,9 @@ export function createNodeDetailOverlayManager(options = {}) {
         refreshImpl,
         renderShortHtml,
         privateMode,
+        // The dashboard's node registry as of its last refresh: the overlay
+        // reads roles and names from it instead of fetching them (SPEC OV1).
+        nodesById: getNodesById ? getNodesById() : null,
       });
       if (currentToken !== requestToken) {
         return;
