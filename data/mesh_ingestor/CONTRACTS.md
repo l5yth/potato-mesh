@@ -617,6 +617,17 @@ only, from the operator's own RNS config.
 
 `GET /api/nodes` and `GET /api/nodes/:id` emit `synthetic: true` on a name-derived MeshCore placeholder row - a channel sender not yet matched to a keyed contact - and omit the key on every other row (no `synthetic: false`). Placeholders come only from ingested chat senders (see the `POST /api/nodes` placeholder note), never from mentions, and the reconciliation merge folds them into the real node once its contact is stored and the name is unambiguous (SPEC MR2).
 
+### GET /api/nodes public key (SPEC PK1-PK4)
+
+`GET /api/nodes` and `GET /api/nodes/:id` emit `public_key`, the node row's stored key, as stored: base64 for Meshtastic, 64 hex digits for MeshCore, 128 hex digits for Reticulum. A Meshtastic or MeshCore row is bound to that key; a Reticulum row is bound to its identity hash, and its key follows that identity's records (see "Canonical node identity"). The field is absent when the row holds none: no key observed, a name-derived placeholder, or a key over its 512-byte cap. The key leaves only with its row: the opt-out marker, `PRIVATE=1` with `CLIENT_HIDDEN`, the window floors and retention hide it with the row. No other API route carries it; the node page `/nodes/:id` embeds the row `GET /api/nodes/:id` serves. `identity_hash` is served by `GET /api/destinations` alone; a Reticulum identity hash is also the first 16 bytes of the SHA-256 of the key's 64 bytes (decoded from the hex).
+
+A shared key is continuity evidence. The server links, merges and flags nothing on it. A consumer reads it as follows:
+
+- One key under an id no longer heard and under a new id: a replacement candidate for an operator to confirm. Only a Meshtastic id can change while its key stays; a MeshCore or Reticulum id derives from its key.
+- One key under several ids heard in overlapping windows: a cloned keypair, such as one firmware image flashed onto several devices, not one device.
+- A served key is what was broadcast for the node, not proof that the node holds the private key: a Meshtastic NodeInfo is unsigned.
+- A new key under an existing Meshtastic or MeshCore id is served once it takes the row over. That needs the row to be positively stale (its keyed evidence older than four weeks, SPEC MR2) and a newer record under the new key; until then the bound key is served. A Reticulum row is bound to its identity hash instead. RNS derives the hash from the key, so a new key is a new identity and waits the same way; a record under the bound identity hash with another key, a mismatched pair, replaces the key once it is at least as new as the row's `last_heard`.
+
 ### GET /api/messages sender flag (SPEC SV1/SV2)
 
 `GET /api/messages` and `GET /api/messages/:id` emit `sender_verified: false` on a MeshCore channel message (`protocol` `"meshcore"`, `to_id` `"^all"`) that has a `from_id`, and omit the key on every other row (no `sender_verified: true`). Such a message carries no sender key, only its `SenderName:` text prefix: its `from_id` is the ingestor's roster match of that name or the name-derived id, and the web app may re-map it by name (SPEC GN3, the placeholder merges above). `node_id` and `from_id` still name the matched node. The flag is computed when the row is read and is not stored. Meshtastic and Reticulum messages and MeshCore direct messages never carry it; the ingestor drops MeshCore direct messages before posting (`skipped-direct-message`). The Matrix bridge posts a flagged message as its appservice user, not as the node's puppet (SPEC SV4).

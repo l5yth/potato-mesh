@@ -13,6 +13,7 @@
 * Data/Web: MeshCore channel messages carry their path, RSSI and flood scope, and chat shows a route chip with hops and scope; path and RSSI were never captured before (#765, SPEC SC1-SC10)
 * Data: MeshCore channel messages scoped to a country code, `eu`, or a German or Austrian state or Swiss canton code (`de-by`, `at-9`, `ch-zh`) show that region also when the radio's default flood scope is another region or unset (SPEC SC3)
 * Data: MeshCore channel messages scoped to `de-bebb`, `de-nord`, `de-ost`, `de-sued` or `de-west` show that region also when the radio's default flood scope is another region or unset (SPEC SN1)
+* Web: `GET /api/nodes` and `GET /api/nodes/:id` serve each node's `public_key`, so a monitor can match a node that changed its id but kept its key (#1019, SPEC PK1-PK4)
 
 ### Fixes
 * Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)
