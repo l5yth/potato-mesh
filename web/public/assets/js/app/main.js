@@ -233,6 +233,7 @@ import {
   hasStringValue,
 } from './main/sort-comparators.js';
 import { makeRoleFilterKey, normalizeFilterProtocol } from './main/filter-helpers.js';
+import { createFilterDebounce } from './main/filter-debounce.js';
 import { tileToLat, tileToLon } from './main/tile-coords.js';
 import {
   buildMeshcoreIconImg,
@@ -362,6 +363,8 @@ export function initializeApp(config) {
   const protocolToggleReticulumCount = document.getElementById('protocolToggleReticulumCount');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
+  // A keystroke in the filter box repaints once typing pauses (SPEC DE1).
+  const filterRepaint = createFilterDebounce(() => applyFilter());
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
   const overlayStack = createShortInfoOverlayStack({ document, window, template: shortInfoTemplate });
   const titleEl = document.querySelector('title');
@@ -5568,14 +5571,18 @@ export function initializeApp(config) {
   /**
    * Apply text and role filters to the node list and re-render outputs.
    *
-   * The entry point for user actions — the filter input, sorting, the role
-   * and protocol toggles, the identity caret — and for the cache seed and a
+   * The entry point for user actions — the filter input once typing pauses
+   * or on Enter, its clear button, sorting, the role and protocol toggles,
+   * Clear filters, the identity caret — and for the cache seed and a
    * protocol un-strand: each changes what every surface shows, so all of them
    * repaint (SPEC DR4).
    *
    * @returns {void}
    */
   function applyFilter() {
+    // This paint reads the box's text as it stands, so a keystroke's pending
+    // repaint would only repeat it (SPEC DE2).
+    filterRepaint.cancel();
     repaintPlanner.markAllSurfaces();
     applyDataChanges();
   }
@@ -5632,12 +5639,18 @@ export function initializeApp(config) {
     });
   }
 
-  // Re-filter on every keystroke so the table and map stay in sync with the
-  // input field without requiring an explicit submit action.
+  // Each keystroke shows or hides the clear button at once and restarts the
+  // repaint window: the table, the map and the chat refilter once typing
+  // pauses (SPEC DE1). Enter applies a pending edit at once, except the Enter
+  // that commits an IME composition: `isComposing`, or `keyCode` 229, which
+  // Safari sends with `isComposing` false (DE2).
   if (filterInput) {
     filterInput.addEventListener('input', () => {
       updateFilterClearVisibility();
-      applyFilter();
+      filterRepaint.schedule();
+    });
+    filterInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !(event.isComposing || event.keyCode === 229)) filterRepaint.flush();
     });
     updateFilterClearVisibility();
   }
@@ -6299,6 +6312,9 @@ export function initializeApp(config) {
         }
         stopLiveUpdates();
         relativeTimeTicker.stop();
+        // A filter repaint still waiting for its window never runs after the
+        // teardown (SPEC DE4).
+        filterRepaint.cancel();
       },
       /** Inject mock count span elements for legend protocol count tests. */
       _setProtocolCountElements(mc, mt, rt = null) {
