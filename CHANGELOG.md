@@ -164,6 +164,10 @@
 * Web: a new node's long name in the chat is underlined only on hover or keyboard focus (SPEC LA6)
 * Web: long names and hardware models no longer widen the page past the nodes table's column: while the table would overflow, those cells break inside a word (SPEC PO1)
 * Web: static pages fit phone screens with long inline code and wide tables: inline code breaks anywhere, and a table wider than the page scrolls inside its own box (SPEC PO2/PO3)
+* Web: a position or telemetry record whose `position`, `position.raw`, `position.payload` or `telemetry` section is not a mapping is stored without that section, and the rest of its batch is stored; a JSON-encoded `telemetry` section is read without a top-level time (SPEC IB1)
+* Web: a latitude outside -90 to 90 or a longitude outside -180 to 180 stores no coordinates for a position, node or waypoint; the rest of the record is stored (SPEC IB2)
+* Web/Data: a neighbor snapshot keeps its first 16 neighbors and a trace its first 16 hops; the ingestor cuts both lists before posting (SPEC IB3)
+* Web: a heartbeat `packets` count above 1,000,000,000 records no activity row, and `/api/stats` and `/api/stats/activity` count each stored row at most 1,000,000,000 (SPEC IB4)
 * Web: a later message from another sender under a stored message's id no longer replaces that message's sender, recipient and text; it is dropped with a warning (SPEC KC1, KC3)
 * Web: a later copy of a stored message fills a missing recipient, text, reply, emoji or portnum and no longer replaces them (SPEC KC2)
 * Web: a position, telemetry reading or trace under an id another node already holds no longer replaces that node's row; it is dropped with a warning (SPEC KC4)
@@ -181,6 +185,9 @@
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
 * Web: the node overlay takes neighbor and trace-hop roles and names from the dashboard's nodes instead of fetching the node list and each neighbor: 8 requests instead of 136 for a node with 127 neighbors (SPEC OV1/OV2)
 * Web: a node page fetches the node list beside the node's own reads and looks up only the neighbors and trace hops the list lacks: 9 requests instead of 136 for the same node (SPEC OV3)
+* Web: the map builds a neighbor or trace line's tooltip when it opens instead of on every repaint, and short-name badges render faster; a live repaint with 800 nodes and 4,000 neighbor lines takes about half as long (SPEC MT1-MT3)
+* Web: Meshtastic payload decoding is bounded: a decode is killed with its process group after 4 s, one `POST /api/messages` decodes at most 4 messages, and each web process runs at most 2 decodes at once; a message past a bound is stored still encrypted, as when decoding fails (SPEC DB1-DB4)
+* Web: the filter box refilters the nodes table, the map and the chat once typing pauses for 200 ms, not on every keystroke; Enter applies the text at once, as do the box's ×, the role and protocol toggles and Clear filters (SPEC DE1/DE2)
 
 ### Features
 * Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)

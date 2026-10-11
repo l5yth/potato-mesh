@@ -32,6 +32,9 @@ module PotatoMesh
       # @param hop_limit [Integer, nil] hop limit value.
       # @param snr [Numeric, nil] signal-to-noise ratio.
       # @param rssi [Integer, nil] RSSI value.
+      # @param decode_budget [PotatoMesh::App::Meshtastic::PayloadDecoder::Budget, nil]
+      #   the ingest request's payload decodes (SPEC DB2); nil sets no
+      #   per-request cap.
       # @return [void]
       def store_decrypted_payload(
         db,
@@ -46,7 +49,8 @@ module PotatoMesh
         portnum:,
         hop_limit:,
         snr:,
-        rssi:
+        rssi:,
+        decode_budget: nil
       )
         payload_bytes = decrypted[:payload]
         return false unless payload_bytes
@@ -58,9 +62,13 @@ module PotatoMesh
         supported_ports = [3, 4, 67, 70, 71]
         return false unless supported_ports.include?(portnum_value)
 
+        # A decode the bounds skip returns nil, as a failed one does: the
+        # message stays stored encrypted (SPEC DB1-DB3).
         decoded = PotatoMesh::App::Meshtastic::PayloadDecoder.decode(
           portnum: portnum_value,
           payload_b64: payload_b64,
+          budget: decode_budget,
+          message_id: packet_id,
         )
         return false unless decoded.is_a?(Hash)
         return false unless decoded["payload"].is_a?(Hash)
