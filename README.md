@@ -290,7 +290,7 @@ Configure with the environment variables below.
 | `INSTANCE_DOMAIN` | _required_ | Public hostname (optionally with port) used for feeding the API with data. To feed several instances, list them comma-separated and set `API_TOKEN` to one token for all of them or to a comma-separated token per instance, in the same order. |
 | `PROTOCOL` | `meshtastic` | Which protocol are we ingesting? One of `meshtastic`, `meshcore`, or `reticulum`. |
 | `CONNECTION` | `/dev/ttyACM0` | Where do we talk to the node? Accepts serial ports, TCP host:port (e.g. `192.168.1.20:4403`), and Bluetooth addresses: MAC format (e.g. `ED:4D:9E:95:CF:60`) or, on macOS, UUID format (e.g. `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`). Ignored under `PROTOCOL=reticulum`, which has no single endpoint - see [Reticulum](#reticulum). |
-| `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. |
+| `DEBUG` | `0` | Set to `1` for verbose logging in the ingestor services. The ingestor then writes dropped-packet metadata to `ignored-meshtastic.txt` and unhandled MeshCore frames to `ignored-meshcore.txt` in the repository root (`/app` in the container), each rotated at 10 MB with one previous file kept. |
 | `CHANNEL_INDEX` | `0` | Channel index the activity announcement is sent on (see `TX_ANNOUNCE`). It does not filter what is ingested. |
 | `ENERGY_SAVING` | `0` | Set to `1` to duty-cycle the radio connection instead of holding it open. |
 | `FREQUENCY` | _unset_ | Deprecated alias for `MESHTASTIC_FREQ`; overrides the auto-detected LoRa frequency. |
@@ -315,6 +315,8 @@ Configure with the environment variables below.
 | `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between Meshcore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
 | `TX_ENABLED` | `0` | Master switch for all ingestor transmissions. `0` = listen only. `1` = allow transmit - enables Meshcore on-air telemetry polling; does not by itself enable announcements. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
 | `TX_ANNOUNCE` | `0` | Requires `TX_ENABLED=1`. Broadcasts a one-line activity summary at most once per 24 h, never in the first 24 h after start. See [Transmitting on the mesh](#transmitting-on-the-mesh). |
+
+Before upgrading, delete `ignored-*.txt*` files: they may hold message text. `ignored-meshcore.txt` can hold hidden-channel content; treat it as private.
 
 ### Transmitting on the mesh
 

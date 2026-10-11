@@ -61,7 +61,7 @@ module PotatoMesh
               per_node = normalize_protocol_value(node["protocol"])
               upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end
-            PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
+            PotatoMesh::App::Prometheus::NODES_GAUGE.set(prometheus_node_count(db))
             PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
             PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
@@ -85,8 +85,10 @@ module PotatoMesh
             halt 400, { error: "too many messages" }.to_json if messages.size > 1000
             db = open_database
             protocol_cache = {}
+            # One payload-decode cap for the whole request (SPEC DB2).
+            decode_budget = PotatoMesh::App::Meshtastic::PayloadDecoder::Budget.new
             messages.each do |msg|
-              insert_message(db, msg, protocol_cache: protocol_cache)
+              insert_message(db, msg, protocol_cache: protocol_cache, decode_budget: decode_budget)
             end
             # A message ingest also touches the author node's last_heard (#822),
             # so invalidate the nodes cache and publish a nodes change in addition

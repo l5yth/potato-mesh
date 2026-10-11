@@ -91,6 +91,11 @@ module PotatoMesh
       # swallowed rather than propagated — the supplementary activity write must
       # never sink a heartbeat whose liveness upsert has already committed.
       #
+      # A count above {FieldLimits::MAX_HEARTBEAT_PACKETS}, which no ingestor
+      # reaches, records no row either (SPEC IB4): two counts near the signed
+      # 64-bit limit made the sums behind +/api/stats+ and
+      # +/api/stats/activity+ overflow.
+      #
       # A heartbeat whose +ingestor_id+, +at+ and +packets+ all match a stored
       # row adds none (SPEC UR7): the ingestor re-sends a heartbeat whose reply
       # it never got, and a second row would count its packets twice. The
@@ -104,7 +109,7 @@ module PotatoMesh
       # @return [void]
       def record_ingestor_activity(db, ingestor_id, at, raw_packets, protocol)
         packets = coerce_integer(raw_packets)
-        return if packets.nil? || packets.negative?
+        return if packets.nil? || packets.negative? || packets > FieldLimits::MAX_HEARTBEAT_PACKETS
 
         with_busy_retry do
           db.execute(<<~SQL, [ingestor_id, at, packets, protocol, ingestor_id, at, packets])

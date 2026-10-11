@@ -57,8 +57,13 @@ module PotatoMesh
         neighbor_entries = []
         neighbors_payload = payload["neighbors"]
         neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
+        lookups = 0
 
         neighbors_list.each do |neighbor|
+          # The snapshot stores its first NEIGHBOR_ENTRIES neighbours, each of
+          # which may mint a placeholder node.  The count is of the entries
+          # this loop stores, so an entry it skips takes no place (SPEC IB3).
+          break if neighbor_entries.length >= FieldLimits::NEIGHBOR_ENTRIES
           next unless neighbor.is_a?(Hash)
 
           neighbor_ref = neighbor["neighbor_id"] || neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"]
@@ -70,9 +75,16 @@ module PotatoMesh
           if canonical_neighbor
             neighbor_id, neighbor_num, = canonical_neighbor
           else
-            neighbor_id = string_or_nil(neighbor_ref)
-            canonical_neighbor_id = normalize_node_id(db, neighbor_id || neighbor_num)
-            neighbor_id = canonical_neighbor_id if canonical_neighbor_id
+            # Only a blank reference, or none, arrives here (SPEC SL11), so the
+            # entry can name its neighbour by its number alone.  A number below
+            # 0 names no node.  One beside a blank reference resolves through a
+            # lookup, at most NEIGHBOR_ENTRIES of them per snapshot (SPEC IB3).
+            next if neighbor_num.nil? || neighbor_num.negative?
+
+            lookups += 1
+            next if lookups > FieldLimits::NEIGHBOR_ENTRIES
+
+            neighbor_id = normalize_node_id(db, neighbor_num)
           end
 
           next unless neighbor_id

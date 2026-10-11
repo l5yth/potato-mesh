@@ -38,7 +38,9 @@ module PotatoMesh
         # to twenty-eight days for backfill of historical track data.
         since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: since_floor)
-        where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
+        # +rx_time+ is NOT NULL (data/positions.sql): the window searches
+        # idx_positions_rx_time, with both ends under +before+ (SPEC RC2).
+        where_clauses << "rx_time >= ?"
         params << since_threshold
 
         if node_ref
@@ -110,7 +112,9 @@ module PotatoMesh
         # for both bulk and per-id queries.
         min_rx_time = now - PotatoMesh::Config.four_weeks_seconds
         since_threshold = normalize_since_threshold(since, floor: min_rx_time)
-        where_clauses << "COALESCE(rx_time, 0) >= ?"
+        # +rx_time+ is NOT NULL (data/neighbors.sql): the window searches
+        # idx_neighbors_rx_time, with both ends under +before+ (SPEC RC2).
+        where_clauses << "rx_time >= ?"
         params << since_threshold
 
         if node_ref
@@ -179,7 +183,9 @@ module PotatoMesh
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.four_weeks_seconds
         since_threshold = normalize_since_threshold(since, floor: min_rx_time)
-        where_clauses << "COALESCE(rx_time, 0) >= ?"
+        # +rx_time+ is NOT NULL (data/traces.sql): the window searches
+        # idx_traces_rx_time, with both ends under +before+ (SPEC RC2).
+        where_clauses << "rx_time >= ?"
         params << since_threshold
 
         # The hops of an opted-out node, and in private mode of a

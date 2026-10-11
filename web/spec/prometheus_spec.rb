@@ -16,8 +16,11 @@
 
 require "spec_helper"
 require "prometheus/client"
+require_relative "support/metrics_spec_helpers"
 
 RSpec.describe PotatoMesh::App::Prometheus do
+  include MetricsSpecHelpers
+
   # Build a host class mixing in the module so we can call instance methods.
   let(:harness_class) do
     Class.new do
@@ -53,8 +56,6 @@ RSpec.describe PotatoMesh::App::Prometheus do
       def with_busy_retry
         yield
       end
-
-      def update_prometheus_metrics(*); end
 
       def resolve_protocol(_db, _ingestor, cache: nil)
         "meshtastic"
@@ -109,18 +110,6 @@ RSpec.describe PotatoMesh::App::Prometheus do
     )
   end
 
-  # Sample lines labelled with one node id, comments excluded.
-  #
-  # @param text [String] Prometheus text exposition.
-  # @param node_id [String] canonical node id.
-  # @return [Array<String>] exposition lines for that node.
-  def node_samples(text, node_id)
-    text.each_line
-      .reject { |line| line.start_with?("#") }
-      .select { |line| line.include?(%(node="#{node_id}")) }
-      .map(&:chomp)
-  end
-
   # ---------------------------------------------------------------------------
   # Module-level metric constants
   # ---------------------------------------------------------------------------
@@ -147,197 +136,229 @@ RSpec.describe PotatoMesh::App::Prometheus do
       expect(PotatoMesh::App::Prometheus::METRICS).to be_an(Array)
       expect(PotatoMesh::App::Prometheus::METRICS).not_to be_empty
     end
+
+    it "reads the column of every column gauge" do
+      columns = PotatoMesh::App::Prometheus::NODE_COLUMN_GAUGES.values
+      expect(PotatoMesh::App::Prometheus::NODE_SERIES_COLUMNS).to include(*columns)
+    end
+
+    it "builds every per-node family of METRICS" do
+      built = PotatoMesh::App::Prometheus::NODE_COLUMN_GAUGES.keys + [
+        PotatoMesh::App::Prometheus::NODE_GAUGE,
+        PotatoMesh::App::Prometheus::NODE_LATITUDE,
+        PotatoMesh::App::Prometheus::NODE_LONGITUDE,
+        PotatoMesh::App::Prometheus::NODE_ALTITUDE,
+      ]
+      expect(built).to match_array(PotatoMesh::App::Prometheus::METRICS.select { |metric| metric.labels.include?(:node) })
+    end
   end
 
   # ---------------------------------------------------------------------------
-  # update_prometheus_metrics
+  # RouteCollector: the request metrics labelled by route (SPEC PG1)
   # ---------------------------------------------------------------------------
-  describe "#update_prometheus_metrics" do
-    # Re-include the real implementation so we can test it.
-    let(:real_class) do
-      Class.new do
-        include PotatoMesh::App::Prometheus
+  describe PotatoMesh::App::Prometheus::RouteCollector do
+    # A private registry keeps these series out of the global one.
+    let(:registry) { ::Prometheus::Client::Registry.new }
 
-        def prom_report_ids
-          ["*"]
+    # Send GETs through one collector around +inner+.
+    #
+    # @param inner [#call] Rack application the collector wraps.
+    # @param paths [Array<String>] request paths, in order.
+    # @return [void]
+    def collect(inner, *paths)
+      collector = described_class.new(inner, registry: registry)
+      paths.each { |path| collector.call(Rack::MockRequest.env_for(path)) }
+    end
+
+    it "labels a request with the route Sinatra matched" do
+      routed = lambda do |env|
+        env["sinatra.route"] = "GET /api/nodes/:id"
+        [200, {}, []]
+      end
+
+      collect(routed, "/api/nodes/!0a2f0401")
+
+      expect(registry.get(:http_server_requests_total).values.keys).to eq([{ code: "200", method: "get", path: "GET /api/nodes/:id" }])
+      expect(registry.get(:http_server_request_duration_seconds).values.keys).to eq([{ method: "get", path: "GET /api/nodes/:id" }])
+    end
+
+    it "labels a static file static, the Exporter's path metrics and any other unrouted request unmatched" do
+      inner = lambda do |env|
+        case env["PATH_INFO"]
+        when "/potatomesh-logo.svg"
+          # Sinatra's static handler names the file it sends.
+          env["sinatra.static_file"] = "/srv/public/potatomesh-logo.svg"
+          [200, {}, []]
+        when "/metrics" then [200, {}, []]
+        else [404, {}, []]
         end
+      end
+      collect(inner, "/potatomesh-logo.svg", "/metrics", "/pg-nowhere/0a2f0402")
+
+      expect(registry.get(:http_server_requests_total).values.keys).to eq(
+        [
+          { code: "200", method: "get", path: "static" },
+          { code: "200", method: "get", path: "metrics" },
+          { code: "404", method: "get", path: "unmatched" },
+        ],
+      )
+    end
+
+    it "makes a regular-expression route readable and leaves a string route as written" do
+      expect(described_class.route_label("GET \\/map\\/?")).to eq("GET /map")
+      expect(described_class.route_label("GET /api/nodes/:id")).to eq("GET /api/nodes/:id")
+      expect(described_class.route_label("GET /")).to eq("GET /")
+    end
+
+    it "gives every route of the app its own readable label" do
+      raw = PotatoMesh::Application.routes.flat_map do |verb, table|
+        table.map { |pattern, _conditions, _block| "#{verb} #{pattern}" }
+      end
+      labels = raw.map { |route| described_class.route_label(route) }
+
+      expect(labels.uniq.length).to eq(raw.length)
+      expect(labels.grep(/\\/)).to eq([])
+      expect(labels).to include("GET /map", "HEAD /map", "GET /nodes", "GET /nodes/:id", "GET /federation")
+      expect(labels & %w[static metrics unmatched]).to eq([])
+    end
+
+    it "keeps the gem's metric names and labels" do
+      collect(->(_env) { [200, {}, []] }, "/")
+
+      expect(registry.metrics.map { |metric| [metric.name, metric.labels] }).to eq(
+        [
+          [:http_server_requests_total, %i[code method path]],
+          [:http_server_request_duration_seconds, %i[method path]],
+          [:http_server_exceptions_total, [:exception]],
+        ],
+      )
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # prometheus_coordinates (SPEC PG3)
+  # ---------------------------------------------------------------------------
+  describe "#prometheus_coordinates" do
+    it "keeps a pair on the globe, its edges included" do
+      expect(prometheus.prometheus_coordinates(52.5, 13.4)).to eq([52.5, 13.4])
+      expect(prometheus.prometheus_coordinates(90, -180)).to eq([90.0, -180.0])
+      expect(prometheus.prometheus_coordinates(-90.0, 180.0)).to eq([-90.0, 180.0])
+    end
+
+    it "drops the pair when either axis is off the globe, also with the other axis absent" do
+      [[90.0001, 13.4], [52.5, -180.5], [398.761944, 332.909167], [214.7483647, -214.7483647], [95.0, nil], [nil, 190.0]].each do |lat, lon|
+        expect(prometheus.prometheus_coordinates(lat, lon)).to eq([nil, nil]), "kept (#{lat.inspect}, #{lon.inspect})"
       end
     end
 
-    subject(:prom_obj) { real_class.new }
-
-    it "is a no-op when ids list is empty" do
-      allow(prom_obj).to receive(:prom_report_ids).and_return([])
-      expect { prom_obj.update_prometheus_metrics("!aabb1234") }.not_to raise_error
+    # Issue #782: a paired ``(0, 0)`` is the Meshtastic "no GPS lock"
+    # sentinel, while a single-axis zero is a fix on the equator or the prime
+    # meridian.
+    it "drops the (0, 0) sentinel and keeps a single-axis zero" do
+      expect(prometheus.prometheus_coordinates(0.0, 0.0)).to eq([nil, nil])
+      expect(prometheus.prometheus_coordinates(0.0, 13.4)).to eq([0.0, 13.4])
+      expect(prometheus.prometheus_coordinates(52.5, 0.0)).to eq([52.5, 0.0])
     end
 
-    it "is a no-op when node_id is nil" do
-      expect { prom_obj.update_prometheus_metrics(nil) }.not_to raise_error
-    end
-
-    it "skips when node is not in the allowed id list" do
-      allow(prom_obj).to receive(:prom_report_ids).and_return(["!other"])
-      expect(PotatoMesh::App::Prometheus::NODE_GAUGE).not_to receive(:set)
-      prom_obj.update_prometheus_metrics("!aabb1234")
-    end
-
-    it "sets NODE_GAUGE when user data and role are present" do
-      allow(PotatoMesh::App::Prometheus::NODE_GAUGE).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        { "shortName" => "T", "longName" => "Test", "hwModel" => "TBEAM" },
-        "CLIENT",
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_GAUGE).to have_received(:set).once
-    end
-
-    it "sets battery level gauge when provided" do
-      allow(PotatoMesh::App::Prometheus::NODE_BATTERY_LEVEL).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        nil,
-        "",
-        { "batteryLevel" => 75 },
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_BATTERY_LEVEL).to have_received(:set).with(75, labels: { node: "!aabb1234" })
-    end
-
-    it "sets latitude/longitude when position is present" do
-      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
-      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        nil,
-        "",
-        nil,
-        { "latitude" => 52.0, "longitude" => 13.0 },
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(52.0, labels: { node: "!aabb1234" })
-      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(13.0, labels: { node: "!aabb1234" })
-    end
-
-    # Issue #782: a Meshtastic node without a GPS lock emits ``(0, 0)`` on
-    # every nodeinfo.  The previous truthy-zero guard clobbered NODE_LATITUDE
-    # and NODE_LONGITUDE to 0 on each update; after the fix the gauges retain
-    # their last real value and the sentinel is silently ignored.
-    it "skips the lat/lon gauges for the (0, 0) Null Island sentinel" do
-      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
-      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        nil,
-        "",
-        nil,
-        { "latitude" => 0.0, "longitude" => 0.0 },
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).not_to have_received(:set)
-      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).not_to have_received(:set)
-    end
-
-    it "preserves an equator fix (lat=0, lon!=0)" do
-      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
-      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        nil,
-        "",
-        nil,
-        { "latitude" => 0.0, "longitude" => 13.4 },
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(0.0, labels: { node: "!aabb1234" })
-      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(13.4, labels: { node: "!aabb1234" })
-    end
-
-    it "preserves a prime-meridian fix (lat!=0, lon=0)" do
-      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
-      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
-      prom_obj.update_prometheus_metrics(
-        "!aabb1234",
-        nil,
-        "",
-        nil,
-        { "latitude" => 52.5, "longitude" => 0.0 },
-      )
-      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(52.5, labels: { node: "!aabb1234" })
-      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(0.0, labels: { node: "!aabb1234" })
+    it "keeps a single axis on the globe and drops an axis that is no number" do
+      expect(prometheus.prometheus_coordinates(52.5, nil)).to eq([52.5, nil])
+      expect(prometheus.prometheus_coordinates("52.5", "east")).to eq([52.5, nil])
+      expect(prometheus.prometheus_coordinates(Float::INFINITY, 13.4)).to eq([nil, 13.4])
     end
   end
 
   # ---------------------------------------------------------------------------
-  # update_all_prometheus_metrics_from_nodes
+  # prometheus_node_count and the boot seed (SPEC PG4)
   # ---------------------------------------------------------------------------
-  describe "#update_all_prometheus_metrics_from_nodes" do
-    it "sets NODES_GAUGE to the count of returned nodes" do
-      nodes = [
-        { "node_id" => "!aabb1234", "short_name" => "A", "long_name" => "Alpha", "hw_model" => "TBEAM", "role" => "CLIENT" },
-      ]
-      allow(prometheus).to receive(:query_nodes).and_return(nodes)
-      allow(prometheus).to receive(:update_prometheus_metrics)
-      allow(PotatoMesh::App::Prometheus::NODES_GAUGE).to receive(:set)
-
-      prometheus.update_all_prometheus_metrics_from_nodes
-
-      expect(PotatoMesh::App::Prometheus::NODES_GAUGE).to have_received(:set).with(1)
-    end
-
-    it "iterates over all nodes when prom_report_ids includes wildcard" do
-      nodes = [
-        { "node_id" => "!aabb1234", "short_name" => "A", "long_name" => "Alpha", "hw_model" => "TBEAM", "role" => "CLIENT" },
-      ]
-      allow(prometheus).to receive(:query_nodes).and_return(nodes)
-      allow(prometheus).to receive(:update_prometheus_metrics)
-      allow(PotatoMesh::App::Prometheus::NODES_GAUGE).to receive(:set)
-
-      prometheus.update_all_prometheus_metrics_from_nodes
-
-      expect(prometheus).to have_received(:update_prometheus_metrics).once
-    end
-
-    it "skips metric updates when prom_report_ids is empty" do
-      # Override prom_report_ids to return empty list for this test.
-      klass = Class.new do
-        include PotatoMesh::App::Prometheus
-        include PotatoMesh::App::Queries
-        include PotatoMesh::App::Helpers
-        include PotatoMesh::App::DataProcessing
-
-        def prom_report_ids
-          []
-        end
-
-        def private_mode?; false; end
-        def debug_log(m, **); end
-        def warn_log(m, **); end
-        def open_database(**); SQLite3::Database.new(PotatoMesh::Config.db_path); end
-        def normalize_node_id(*); nil; end
-        def with_busy_retry; yield; end
-        def update_prometheus_metrics(*); end
-        def resolve_protocol(*); "meshtastic"; end
-      end
-
-      obj = klass.new
-      allow(obj).to receive(:query_nodes).and_return([{ "node_id" => "!aabb1234" }])
-      allow(obj).to receive(:update_prometheus_metrics)
-      allow(PotatoMesh::App::Prometheus::NODES_GAUGE).to receive(:set)
-
-      obj.update_all_prometheus_metrics_from_nodes
-
-      expect(obj).not_to have_received(:update_prometheus_metrics)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # prometheus_visible_node_ids (SPEC PM1/PM2)
-  # ---------------------------------------------------------------------------
-  describe "#prometheus_visible_node_ids" do
+  describe "#prometheus_node_count" do
     let(:marker) { PotatoMesh::Config.node_opt_out_marker }
     let(:now) { Time.now.to_i }
 
-    it "returns every node without the marker, also one older than every API window" do
-      insert_node_row("!0a2f0101", last_heard: now)
-      insert_node_row("!0a2f0102", last_heard: now - 60 * 86_400)
+    it "counts what GET /api/nodes lists: heard within the week, not opted out, not hidden under PRIVATE=1" do
+      insert_node_row("!0a2f0501", last_heard: now - 60)
+      insert_node_row("!0a2f0502", last_heard: now - 8 * 86_400)
+      insert_node_row("!0a2f0503", long_name: "Quiet #{marker} Station")
+      insert_node_row("!0a2f0504", short_name: "Q#{marker}")
+      insert_node_row("!0a2f0505", role: "CLIENT_HIDDEN")
 
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f0101", "!0a2f0102"])
+      expect(prometheus.prometheus_node_count).to eq(2)
+      expect(prometheus.query_nodes(1000).length).to eq(2)
+
+      allow(prometheus).to receive(:private_mode?).and_return(true)
+      expect(prometheus.prometheus_node_count).to eq(1)
+      expect(prometheus.query_nodes(1000).length).to eq(1)
+    end
+
+    it "takes the week's floor inclusively" do
+      insert_node_row("!0a2f0506", last_heard: now - 604_800)
+      insert_node_row("!0a2f0507", last_heard: now - 604_801)
+
+      expect(prometheus.prometheus_node_count(now: now)).to eq(1)
+    end
+
+    it "counts on a handle it is given and leaves it open, else opens and closes its own" do
+      insert_node_row("!0a2f0508")
+      handle = prometheus.open_database
+      opened = []
+      allow(prometheus).to receive(:open_database).and_wrap_original do |original, **options|
+        original.call(**options).tap { |db| opened << db }
+      end
+
+      expect(prometheus.prometheus_node_count(handle)).to eq(1)
+      expect(handle).not_to be_closed
+      expect(opened).to be_empty
+
+      expect(prometheus.prometheus_node_count).to eq(1)
+      expect(opened.length).to eq(1)
+      expect(opened.first).to be_closed
+    ensure
+      handle&.close
+    end
+
+    it "raises when it cannot open the database" do
+      missing = File.join(File.dirname(PotatoMesh::Config.db_path), "missing", "mesh.db")
+      allow(PotatoMesh::Config).to receive(:db_path).and_return(missing)
+
+      expect { prometheus.prometheus_node_count }.to raise_error(SQLite3::CantOpenException)
+    end
+  end
+
+  describe "#update_all_prometheus_metrics_from_nodes" do
+    it "seeds the node-count gauge from the database and sets no per-node gauge" do
+      insert_node_row("!0a2f0601")
+      insert_node_row("!0a2f0602")
+      per_node = PotatoMesh::App::Prometheus::METRICS.select { |metric| metric.labels.include?(:node) }
+      per_node.each { |metric| allow(metric).to receive(:set) }
+      allow(PotatoMesh::App::Prometheus::NODES_GAUGE).to receive(:set)
+
+      prometheus.update_all_prometheus_metrics_from_nodes
+
+      expect(PotatoMesh::App::Prometheus::NODES_GAUGE).to have_received(:set).with(2)
+      per_node.each { |metric| expect(metric).not_to have_received(:set) }
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # prometheus_node_rows: PM1's visible set, narrowed by PROM_REPORT_IDS
+  # (SPEC PM1, PM2, PG2)
+  # ---------------------------------------------------------------------------
+  describe "#prometheus_node_rows" do
+    let(:marker) { PotatoMesh::Config.node_opt_out_marker }
+    let(:now) { Time.now.to_i }
+
+    # Node ids of the rows a scrape reads.
+    #
+    # @param ids [Array<String>] report ids.
+    # @return [Array<String>] node ids in row order.
+    def row_ids(ids = ["*"])
+      prometheus.prometheus_node_rows(ids).map { |row| row["node_id"] }
+    end
+
+    it "returns every node without the marker by node id, also one older than every API window" do
+      insert_node_row("!0a2f0102", last_heard: now - 60 * 86_400)
+      insert_node_row("!0a2f0101", last_heard: now)
+
+      expect(row_ids).to eq(%w[!0a2f0101 !0a2f0102])
     end
 
     it "leaves out a node whose long or short name carries the opt-out marker" do
@@ -345,7 +366,7 @@ RSpec.describe PotatoMesh::App::Prometheus do
       insert_node_row("!0a2f0104", long_name: "Quiet #{marker} Station")
       insert_node_row("!0a2f0105", short_name: "Q#{marker}")
 
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f0103"])
+      expect(row_ids).to eq(["!0a2f0103"])
     end
 
     it "leaves out a node whose row the retention purge deleted" do
@@ -354,37 +375,133 @@ RSpec.describe PotatoMesh::App::Prometheus do
       allow(PotatoMesh::Application).to receive(:info_log)
       PotatoMesh::Application.purge_old_data!(now: now)
 
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f0106"])
+      expect(row_ids).to eq(["!0a2f0106"])
     end
 
     it "returns a node again once it removes the marker" do
       insert_node_row("!0a2f0108", long_name: "Quiet #{marker} Station")
-      expect(prometheus.prometheus_visible_node_ids).to be_empty
+      expect(row_ids).to be_empty
 
       execute_sql("UPDATE nodes SET long_name = ? WHERE node_id = ?", ["Quiet Station", "!0a2f0108"])
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f0108"])
+      expect(row_ids).to eq(["!0a2f0108"])
     end
 
     it "leaves out CLIENT_HIDDEN nodes under PRIVATE=1 only, keeping a NULL role" do
       insert_node_row("!0a2f0109", role: "CLIENT_HIDDEN")
       insert_node_row("!0a2f010a", role: nil)
       insert_node_row("!0a2f010b", role: "ROUTER")
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f0109", "!0a2f010a", "!0a2f010b"])
+      expect(row_ids).to eq(%w[!0a2f0109 !0a2f010a !0a2f010b])
 
       allow(prometheus).to receive(:private_mode?).and_return(true)
-      expect(prometheus.prometheus_visible_node_ids).to eq(Set["!0a2f010a", "!0a2f010b"])
+      expect(row_ids).to eq(%w[!0a2f010a !0a2f010b])
+    end
+
+    it "keeps the visible nodes a list names, every node for a leading *, and runs no query without ids" do
+      insert_node_row("!0a2f0110")
+      insert_node_row("!0a2f0111")
+      insert_node_row("!0a2f0112", long_name: "Quiet #{marker} Station")
+
+      expect(row_ids(%w[!0a2f0111 !0a2f0112 !0a2f01ff])).to eq(["!0a2f0111"])
+      # Only a leading * is the wildcard; anywhere else it names no node.
+      expect(row_ids(%w[!0a2f0110 *])).to eq(["!0a2f0110"])
+      expect(row_ids(["*"])).to eq(%w[!0a2f0110 !0a2f0111])
+
+      expect(prometheus).not_to receive(:open_database)
+      expect(prometheus.prometheus_node_rows([])).to eq([])
+    end
+
+    it "reads the configured report ids and every column the series need" do
+      insert_node_row("!0a2f0113")
+
+      rows = prometheus.prometheus_node_rows
+
+      expect(rows.map { |row| row["node_id"] }).to eq(["!0a2f0113"])
+      expect(rows.first.keys).to match_array(PotatoMesh::App::Prometheus::NODE_SERIES_COLUMNS)
     end
   end
 
   # ---------------------------------------------------------------------------
-  # ExportRegistry: the view /metrics prints (SPEC PM1/PM2)
+  # prometheus_node_series: the per-node series of one scrape (SPEC PG2, PG3)
+  # ---------------------------------------------------------------------------
+  describe "#prometheus_node_series" do
+    let(:now) { Time.now.to_i }
+
+    # Store measurements on a node row.
+    #
+    # @param node_id [String] canonical node id.
+    # @param columns [Hash{Symbol => Object}] column values.
+    # @return [void]
+    def store_columns(node_id, **columns)
+      assignments = columns.keys.map { |column| "#{column} = ?" }.join(", ")
+      execute_sql("UPDATE nodes SET #{assignments} WHERE node_id = ?", columns.values + [node_id])
+    end
+
+    it "builds every per-node family from a full row" do
+      insert_node_row("!0a2f0701", long_name: "Full Station", short_name: "FS")
+      store_columns("!0a2f0701", hw_model: "TBEAM", battery_level: 80, voltage: 4.1, uptime_seconds: 3600,
+                                 channel_utilization: 12.5, air_util_tx: 1.25, latitude: 52.5, longitude: 13.4, altitude: 40)
+      node = { node: "!0a2f0701" }
+
+      expect(prometheus.prometheus_node_series).to eq(
+        meshtastic_node: { node.merge(short_name: "FS", long_name: "Full Station", hw_model: "TBEAM", role: "CLIENT") => 1.0 },
+        meshtastic_node_battery_level: { node => 80.0 },
+        meshtastic_node_voltage: { node => 4.1 },
+        meshtastic_node_uptime_seconds: { node => 3600.0 },
+        meshtastic_node_channel_utilization: { node => 12.5 },
+        meshtastic_node_transmit_air_utilization: { node => 1.25 },
+        meshtastic_node_latitude: { node => 52.5 },
+        meshtastic_node_longitude: { node => 13.4 },
+        meshtastic_node_altitude: { node => 40.0 },
+      )
+    end
+
+    it "labels presence with empty names and model and the CLIENT role when they are NULL, and skips columns that hold no number" do
+      execute_sql("INSERT INTO nodes(node_id, last_heard, voltage, altitude) VALUES (?, ?, ?, ?)", ["!0a2f0702", now, "four volts", 10])
+
+      expect(prometheus.prometheus_node_series).to eq(
+        meshtastic_node: { { node: "!0a2f0702", short_name: "", long_name: "", hw_model: "", role: "CLIENT" } => 1.0 },
+      )
+      # GET /api/nodes shows the same role for the row.
+      expect(prometheus.query_nodes(10).map { |row| row["role"] }).to eq(["CLIENT"])
+    end
+
+    it "exports no coordinate gauge for a position off the globe or at (0, 0), and the altitude only beside a kept axis" do
+      { "!0a2f0703" => [95.0, 13.4], "!0a2f0704" => [0.0, 0.0], "!0a2f0705" => [52.5, nil], "!0a2f0706" => [nil, nil] }.each do |node_id, (lat, lon)|
+        insert_node_row(node_id)
+        store_columns(node_id, latitude: lat, longitude: lon, altitude: 10)
+      end
+
+      series = prometheus.prometheus_node_series
+
+      expect(series[:meshtastic_node_latitude]).to eq({ { node: "!0a2f0705" } => 52.5 })
+      expect(series).not_to have_key(:meshtastic_node_longitude)
+      expect(series[:meshtastic_node_altitude]).to eq({ { node: "!0a2f0705" } => 10.0 })
+      expect(series[:meshtastic_node].length).to eq(4)
+    end
+
+    it "builds nothing without report ids" do
+      insert_node_row("!0a2f0707")
+      allow(prometheus).to receive(:prom_report_ids).and_return([])
+
+      expect(prometheus.prometheus_node_series).to eq({})
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # ExportRegistry: the view /metrics prints (SPEC PM1, PM2, PG2)
   # ---------------------------------------------------------------------------
   describe PotatoMesh::App::Prometheus::ExportRegistry do
     let(:marker) { PotatoMesh::Config.node_opt_out_marker }
-    # A private registry keeps these series out of the global one.
-    let(:registry) { ::Prometheus::Client::Registry.new }
-    let!(:battery) { registry.gauge(:spec_node_battery_level, docstring: "Battery", labels: [:node]) }
-    let!(:presence) { registry.gauge(:spec_node, docstring: "Presence", labels: %i[node long_name]) }
+    # A private registry with two of the real per-node families, a
+    # node-labelled family the build does not fill, and two families without
+    # a node label.
+    let(:registry) do
+      ::Prometheus::Client::Registry.new.tap do |private_registry|
+        private_registry.register(PotatoMesh::App::Prometheus::NODE_BATTERY_LEVEL)
+        private_registry.register(PotatoMesh::App::Prometheus::NODE_GAUGE)
+      end
+    end
+    let!(:unbuilt) { registry.gauge(:spec_node_unbuilt, docstring: "Unbuilt", labels: [:node]) }
     let!(:requests) { registry.counter(:spec_requests_total, docstring: "Requests", labels: [:path]) }
     let!(:messages) { registry.counter(:spec_messages_total, docstring: "Messages") }
 
@@ -397,69 +514,91 @@ RSpec.describe PotatoMesh::App::Prometheus do
       ::Prometheus::Client::Formats::Text.marshal(export)
     end
 
-    it "keeps visible nodes' series with their values and drops opted-out and deleted nodes" do
+    # Store a battery level on a node row.
+    #
+    # @param node_id [String] canonical node id.
+    # @param level [Numeric] battery level.
+    # @return [void]
+    def store_battery(node_id, level)
+      execute_sql("UPDATE nodes SET battery_level = ? WHERE node_id = ?", [level, node_id])
+    end
+
+    # The presence line +insert_node_row+'s defaults print.
+    #
+    # @param node_id [String] canonical node id.
+    # @param long_name [String] stored long name.
+    # @return [String] +meshtastic_node+ sample.
+    def presence(node_id, long_name = "Spec Node")
+      %(meshtastic_node{node="#{node_id}",short_name="SN",long_name="#{long_name}",hw_model="",role="CLIENT"} 1.0)
+    end
+
+    it "prints the stored series of visible nodes, none of opted-out or deleted nodes" do
       insert_node_row("!0a2f0201")
       insert_node_row("!0a2f0202", long_name: "Quiet #{marker} Station")
-      # !0a2f0203 has series but no row, as after a retention purge.
-      %w[!0a2f0201 !0a2f0202 !0a2f0203].each_with_index do |node_id, index|
-        battery.set(50 + index, labels: { node: node_id })
-        presence.set(1, labels: { node: node_id, long_name: "Station #{index}" })
-      end
+      store_battery("!0a2f0201", 50)
+      store_battery("!0a2f0202", 51)
+      # !0a2f0203 has a registry series but no row, as after a retention purge.
+      unbuilt.set(52, labels: { node: "!0a2f0203" })
 
       text = scrape
 
-      expect(node_samples(text, "!0a2f0201")).to eq(
-        [
-          'spec_node_battery_level{node="!0a2f0201"} 50.0',
-          'spec_node{node="!0a2f0201",long_name="Station 0"} 1.0',
-        ],
-      )
+      expect(node_samples(text, "!0a2f0201")).to eq(['meshtastic_node_battery_level{node="!0a2f0201"} 50.0', presence("!0a2f0201")])
       expect(node_samples(text, "!0a2f0202")).to eq([])
       expect(node_samples(text, "!0a2f0203")).to eq([])
-      # The registry itself keeps every series; only the view filters.
-      expect(battery.values.keys.map { |label_set| label_set[:node] }).to eq(%w[!0a2f0201 !0a2f0202 !0a2f0203])
+    end
+
+    it "prints no series of a node-labelled family the build does not fill, whatever the registry holds" do
+      insert_node_row("!0a2f0209")
+      unbuilt.set(9, labels: { node: "!0a2f0209" })
+
+      text = scrape
+
+      expect(text).to include("# TYPE spec_node_unbuilt gauge")
+      expect(node_samples(text, "!0a2f0209")).to eq([presence("!0a2f0209")])
     end
 
     it "passes families without a node label through unchanged" do
-      requests.increment(labels: { path: "/api/nodes/!0a2f0202" })
+      requests.increment(labels: { path: "GET /api/nodes/:id" })
       messages.increment
 
       families = export.metrics
 
-      expect(families.map(&:name)).to eq(%i[spec_node_battery_level spec_node spec_requests_total spec_messages_total])
-      expect(families[2]).to be(requests)
-      expect(families[3]).to be(messages)
-      expect(scrape).to include(%(spec_requests_total{path="/api/nodes/!0a2f0202"} 1.0), "spec_messages_total 1.0")
+      expect(families.map(&:name)).to eq(%i[meshtastic_node_battery_level meshtastic_node spec_node_unbuilt spec_requests_total spec_messages_total])
+      expect(families[3]).to be(requests)
+      expect(families[4]).to be(messages)
+      expect(scrape).to include(%(spec_requests_total{path="GET /api/nodes/:id"} 1.0), "spec_messages_total 1.0")
     end
 
     it "wraps a per-node family without changing its name, type, help or labels" do
       family = export.metrics.first
 
       expect(family).to be_a(described_class::NodeFamily)
-      expect([family.name, family.type, family.docstring, family.labels]).to eq([:spec_node_battery_level, :gauge, "Battery", [:node]])
+      expect([family.name, family.type, family.docstring, family.labels]).to eq(
+        [:meshtastic_node_battery_level, :gauge, "Battery level of a Meshtastic node", [:node]],
+      )
     end
 
-    it "runs one visibility lookup per scrape" do
-      allow(prometheus).to receive(:prometheus_visible_node_ids).and_call_original
+    it "runs one node lookup per scrape" do
+      allow(prometheus).to receive(:prometheus_node_series).and_call_original
 
       scrape
 
-      expect(prometheus).to have_received(:prometheus_visible_node_ids).once
+      expect(prometheus).to have_received(:prometheus_node_series).once
     end
 
     it "withholds every per-node family and logs a warning when the lookup raises" do
       insert_node_row("!0a2f0204")
-      battery.set(70, labels: { node: "!0a2f0204" })
+      store_battery("!0a2f0204", 70)
       messages.increment
-      # The visibility query cannot open the database.
+      # The node query cannot open the database.
       missing = File.join(File.dirname(PotatoMesh::Config.db_path), "missing", "mesh.db")
       allow(PotatoMesh::Config).to receive(:db_path).and_return(missing)
       allow(prometheus).to receive(:warn_log)
 
       text = scrape
 
-      # No sample and no TYPE/HELP line of either per-node family.
-      expect(text).not_to include("spec_node")
+      # No sample and no TYPE/HELP line of any per-node family.
+      expect(text).not_to include("meshtastic_node", "spec_node")
       expect(text).to include("# TYPE spec_requests_total counter", "spec_messages_total 1.0")
       expect(prometheus).to have_received(:warn_log).with(
         "Withheld per-node metrics: visible node lookup failed",
@@ -470,40 +609,34 @@ RSpec.describe PotatoMesh::App::Prometheus do
     end
 
     it "exports a node in an explicit PROM_REPORT_IDS list only while /api/nodes lists it" do
-      reporter = Class.new do
-        include PotatoMesh::App::Prometheus
-
-        def prom_report_ids
-          ["!0a2f0205", "!0a2f0206"]
-        end
-      end.new
+      allow(prometheus).to receive(:prom_report_ids).and_return(["!0a2f0205", "!0a2f0206"])
       insert_node_row("!0a2f0205")
       insert_node_row("!0a2f0206", long_name: "Quiet #{marker} Station")
       insert_node_row("!0a2f0207")
-      %w[!0a2f0205 !0a2f0206 !0a2f0207].each do |node_id|
-        reporter.update_prometheus_metrics(node_id, nil, "", { "batteryLevel" => 40 })
-      end
+      %w[!0a2f0205 !0a2f0206 !0a2f0207].each { |node_id| store_battery(node_id, 40) }
 
-      text = ::Prometheus::Client::Formats::Text.marshal(described_class.new(::Prometheus::Client.registry, prometheus))
+      text = scrape
 
-      expect(node_samples(text, "!0a2f0205")).to eq(['meshtastic_node_battery_level{node="!0a2f0205"} 40.0'])
+      expect(node_samples(text, "!0a2f0205")).to eq(['meshtastic_node_battery_level{node="!0a2f0205"} 40.0', presence("!0a2f0205")])
       expect(node_samples(text, "!0a2f0206")).to eq([])
       expect(node_samples(text, "!0a2f0207")).to eq([])
     end
 
-    it "gives a node its series back, with their last values, once it removes the marker" do
+    it "gives a node its series back, with its stored values, once it removes the marker" do
       insert_node_row("!0a2f0208", long_name: "Quiet #{marker} Station")
-      battery.set(33, labels: { node: "!0a2f0208" })
+      store_battery("!0a2f0208", 33)
       expect(node_samples(scrape, "!0a2f0208")).to eq([])
 
       execute_sql("UPDATE nodes SET long_name = ? WHERE node_id = ?", ["Quiet Station", "!0a2f0208"])
 
-      expect(node_samples(scrape, "!0a2f0208")).to eq(['spec_node_battery_level{node="!0a2f0208"} 33.0'])
+      expect(node_samples(scrape, "!0a2f0208")).to eq(
+        ['meshtastic_node_battery_level{node="!0a2f0208"} 33.0', presence("!0a2f0208", "Quiet Station")],
+      )
     end
   end
 
   # ---------------------------------------------------------------------------
-  # /metrics wiring: the Exporter and the route print one view (SPEC PM1)
+  # /metrics wiring: the collector, the Exporter and the route (SPEC PM1, PG1)
   # ---------------------------------------------------------------------------
   describe "/metrics wiring" do
     let(:export) { PotatoMesh::Application.settings.prometheus_export_registry }
@@ -515,20 +648,33 @@ RSpec.describe PotatoMesh::App::Prometheus do
       expect(exporter[1].first[:registry]).to be(export)
     end
 
+    it "records requests through the route-labelled collector, outside the Exporter" do
+      classes = PotatoMesh::Application.middleware.map(&:first)
+
+      expect(classes).not_to include(::Prometheus::Middleware::Collector)
+      expect(classes.index(PotatoMesh::App::Prometheus::RouteCollector)).to be < classes.index(::Prometheus::Middleware::Exporter)
+    end
+
+    it "mounts the Exporter at the path the collector labels metrics" do
+      exporter = PotatoMesh::Application.middleware.find { |klass, _args, _block| klass == ::Prometheus::Middleware::Exporter }
+
+      expect(exporter[1].first).not_to have_key(:path)
+      expect(::Prometheus::Middleware::Exporter.new(->(_env) { [200, {}, []] }).path).to eq(PotatoMesh::App::Prometheus::METRICS_PATH)
+    end
+
     it "prints the same view from the /metrics route" do
       marker = PotatoMesh::Config.node_opt_out_marker
+      allow(PotatoMesh::Config).to receive(:prom_report_id_list).and_return(["*"])
       insert_node_row("!0a2f0301")
       insert_node_row("!0a2f0302", long_name: "Quiet #{marker} Station")
-      %w[!0a2f0301 !0a2f0302].each do |node_id|
-        PotatoMesh::App::Prometheus::NODE_BATTERY_LEVEL.set(61, labels: { node: node_id })
-      end
+      execute_sql("UPDATE nodes SET battery_level = ?", [61])
 
       # The bare instance has no middleware, so the Sinatra route answers.
       response = Rack::MockRequest.new(PotatoMesh::Application.new!).get("/metrics")
 
       expect(response.status).to eq(200)
       expect(response.content_type).to start_with(::Prometheus::Client::Formats::Text::CONTENT_TYPE)
-      expect(node_samples(response.body, "!0a2f0301")).to eq(['meshtastic_node_battery_level{node="!0a2f0301"} 61.0'])
+      expect(node_samples(response.body, "!0a2f0301")).to include('meshtastic_node_battery_level{node="!0a2f0301"} 61.0')
       expect(node_samples(response.body, "!0a2f0302")).to eq([])
     end
   end
@@ -581,16 +727,6 @@ RSpec.describe PotatoMesh::App::Prometheus do
       }
     end
 
-    # Scrape +/metrics+ and keep the samples labelled with one node id.
-    #
-    # @param node_id [String] canonical node id.
-    # @return [Array<String>] exposition lines for that node, comments excluded.
-    def scraped_series(node_id)
-      get "/metrics"
-      expect(last_response.status).to eq(200)
-      node_samples(last_response.body, node_id)
-    end
-
     # Node ids +GET /api/nodes+ serves.
     #
     # @return [Array<String>] listed node ids.
@@ -605,15 +741,15 @@ RSpec.describe PotatoMesh::App::Prometheus do
       post "/api/nodes", { visible => node_record("Loud Station", now - 60), opted => node_record("Quiet Station", now - 60) }.to_json, auth_headers
       expect(last_response.status).to eq(201)
       # Before the opt-out the node is exported like any other.
-      expect(scraped_series(opted).length).to eq(per_node_families)
+      expect(scraped_node_samples(opted).length).to eq(per_node_families)
 
       post "/api/nodes", { opted => node_record("Quiet #{marker} Station", now - 30) }.to_json, auth_headers
       post "/api/telemetry", [{ id: 920_001, node_id: opted, rx_time: now - 20, battery_level: 55, voltage: 3.7 }].to_json, auth_headers
       post "/api/positions", [{ id: 920_002, node_id: opted, rx_time: now - 10, latitude: 48.1, longitude: 11.5, altitude: 520 }].to_json, auth_headers
       expect(listed_node_ids).to eq([visible])
 
-      expect(scraped_series(opted)).to eq([])
-      expect(scraped_series(visible).length).to eq(per_node_families)
+      expect(scraped_node_samples(opted)).to eq([])
+      expect(scraped_node_samples(visible).length).to eq(per_node_families)
     end
 
     it "serves no series of an opted-out node named in an explicit PROM_REPORT_IDS list" do
@@ -623,8 +759,8 @@ RSpec.describe PotatoMesh::App::Prometheus do
       post "/api/nodes", { visible => node_record("Loud Station", now - 30), opted => node_record("Quiet #{marker} Station", now - 30) }.to_json, auth_headers
       expect(listed_node_ids).to eq([visible])
 
-      expect(scraped_series(opted)).to eq([])
-      expect(scraped_series(visible).length).to eq(per_node_families)
+      expect(scraped_node_samples(opted)).to eq([])
+      expect(scraped_node_samples(visible).length).to eq(per_node_families)
     end
 
     it "serves no series of an opted-out Reticulum node announced under an unmarked aspect" do
@@ -646,7 +782,7 @@ RSpec.describe PotatoMesh::App::Prometheus do
       end
       post "/api/nodes", announce.call("Argos Station", "lxmf.delivery", "PEER", "22", now - 40).to_json, auth_headers
       # Before the opt-out the Reticulum node is exported like any other.
-      expect(scraped_series(node_id)).not_to be_empty
+      expect(scraped_node_samples(node_id)).not_to be_empty
 
       post "/api/nodes", announce.call("Quiet #{marker} Node", "nomadnetwork.node", "NODE", "11", now - 30).to_json, auth_headers
       # The PEER aspect announces again, without the marker. RE10 keeps the
@@ -654,7 +790,7 @@ RSpec.describe PotatoMesh::App::Prometheus do
       post "/api/nodes", announce.call("Argos Station", "lxmf.delivery", "PEER", "22", now - 10).to_json, auth_headers
       expect(listed_node_ids).to eq([])
 
-      expect(scraped_series(node_id)).to eq([])
+      expect(scraped_node_samples(node_id)).to eq([])
     end
 
     it "serves no series of a CLIENT_HIDDEN node under PRIVATE=1 while a visible node keeps every family" do
@@ -665,8 +801,8 @@ RSpec.describe PotatoMesh::App::Prometheus do
       expect(last_response.status).to eq(201)
       expect(listed_node_ids).to eq([visible])
 
-      expect(scraped_series(hidden)).to eq([])
-      expect(scraped_series(visible).length).to eq(per_node_families)
+      expect(scraped_node_samples(hidden)).to eq([])
+      expect(scraped_node_samples(visible).length).to eq(per_node_families)
     end
   end
 end

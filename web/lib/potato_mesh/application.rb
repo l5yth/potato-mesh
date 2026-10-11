@@ -59,6 +59,7 @@ require_relative "application/meshtastic/payload_decoder"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
+require_relative "application/aggregate_windows"
 require_relative "application/asset_cache_control"
 require_relative "application/security_headers"
 require_relative "application/public_scheme"
@@ -245,9 +246,9 @@ module PotatoMesh
       # pin stale JS between commits (SPEC AV6).
       use PotatoMesh::App::AssetCacheControl,
           immutable: APP_VERSION_PINNED
-      use ::Prometheus::Middleware::Collector
-      # The Exporter and the /metrics route print this one view, which drops
-      # per-node series of nodes /api/nodes would not list (SPEC PM1/PM2).
+      use App::Prometheus::RouteCollector # path label: the matched route (SPEC PG1)
+      # The Exporter and the /metrics route print this one view, which builds
+      # the per-node series from the rows /api/nodes would list (SPEC PM1, PG2).
       set :prometheus_export_registry,
           App::Prometheus::ExportRegistry.new(::Prometheus::Client.registry, self)
       use ::Prometheus::Middleware::Exporter, registry: prometheus_export_registry
@@ -263,6 +264,9 @@ module PotatoMesh
       log_instance_domain_resolution
       log_instance_public_key
       refresh_well_known_document_if_stale
+      # The instance housekeeping runs here and on each federation
+      # announcement cycle, so GET /api/instances only reads (SPEC RC4).
+      clean_duplicate_instances!
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
 

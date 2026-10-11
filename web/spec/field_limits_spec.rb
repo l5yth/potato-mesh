@@ -20,8 +20,10 @@ require "json"
 require "openssl"
 require "sqlite3"
 require "uri"
+require_relative "support/metrics_spec_helpers"
 require_relative "support/data_processing_harness"
 require_relative "support/federation_identity"
+require_relative "support/ingest_spec_helpers"
 
 # Byte caps on ingested strings (SPEC SL1-SL9; ACCEPTANCE SL-A1-SL-A3).
 # Every ingest write bounds its record before storing it: free text is cut on
@@ -30,6 +32,8 @@ require_relative "support/federation_identity"
 # only when known, and a signed instance field over its cap rejects the
 # record instead of being cut.
 RSpec.describe "Ingest field limits" do
+  include IngestSpecHelpers
+
   let(:app) { Sinatra::Application }
   let(:api_token) { "field-limits-token" }
   let(:auth_headers) do
@@ -38,38 +42,6 @@ RSpec.describe "Ingest field limits" do
   let(:now) { Time.now.to_i }
   # One family emoji: seven code points, 25 bytes, one grapheme cluster.
   let(:family) { "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}" }
-
-  # Yield a handle on the spec database, rows as hashes, and close it.
-  #
-  # @yieldparam db [SQLite3::Database] open database handle.
-  # @return [Object] the block's result.
-  def with_db
-    db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-    db.results_as_hash = true
-    db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
-    yield db
-  ensure
-    db&.close
-  end
-
-  # The first column of the first row +sql+ selects.
-  #
-  # @param sql [String] query.
-  # @param params [Array] bind values.
-  # @return [Object, nil] the value, or nil without a row.
-  def db_value(sql, params = [])
-    with_db { |db| db.get_first_value(sql, params) }
-  end
-
-  # POST +body+ as JSON to +path+ and expect the route to accept it.
-  #
-  # @param path [String] ingest route.
-  # @param body [Object] request body.
-  # @return [void]
-  def post_ok(path, body)
-    post path, body.to_json, auth_headers
-    expect(last_response.status).to eq(201), "#{path} answered #{last_response.status}: #{last_response.body}"
-  end
 
   # A +POST /api/nodes+ body holding one Meshtastic entry.
   #
@@ -716,6 +688,8 @@ RSpec.describe "Ingest field limits" do
   end
 
   describe "keyed evidence and metric labels" do
+    include MetricsSpecHelpers
+
     it "stores a public key over its cap as NULL, so it is no keyed evidence (MR1)" do
       [["!5c000015", "k" * 512], ["!5c000016", "k" * 513]].each do |node_id, key|
         post_ok("/api/nodes", node_body(node_id, "user" => { "longName" => "Keyed", "publicKey" => key, "role" => "COMPANION" }).merge("protocol" => "meshcore"))
@@ -728,17 +702,20 @@ RSpec.describe "Ingest field limits" do
     end
 
     it "labels the node gauge with the bounded names" do
-      allow_any_instance_of(Sinatra::Application).to receive(:prom_report_ids).and_return(["*"])
-      label_sets = []
-      allow(PotatoMesh::App::Prometheus::NODE_GAUGE).to receive(:set) { |_value, labels: {}| label_sets << labels }
+      allow(PotatoMesh::Config).to receive(:prom_report_id_list).and_return(["*"])
 
       post_ok("/api/nodes", node_body("!5c000017", "user" => { "longName" => "L" * 1_000, "shortName" => "S" * 100, "hwModel" => "H" * 100, "role" => "CLIENT" }))
 
-      expect(label_sets).to eq([{ node: "!5c000017", short_name: "S" * 16, long_name: "L" * 512, hw_model: nil, role: "CLIENT" }])
+      # The series reads the stored row (SPEC PG2), which holds the bounded names.
+      expect(scraped_samples("meshtastic_node", "!5c000017")).to eq(
+        [%(meshtastic_node{node="!5c000017",short_name="#{"S" * 16}",long_name="#{"L" * 512}",hw_model="",role="CLIENT"} 1.0)],
+      )
     end
   end
 
   describe "numeric fields (SL-A7)" do
+    include MetricsSpecHelpers
+
     # 100 kB of text that is no number.
     let(:junk) { "x" * 100_000 }
 
@@ -804,17 +781,16 @@ RSpec.describe "Ingest field limits" do
     end
 
     it "hands the node gauges numbers only" do
-      allow_any_instance_of(Sinatra::Application).to receive(:prom_report_ids).and_return(["*"])
-      gauges = %i[NODE_GAUGE NODE_BATTERY_LEVEL NODE_VOLTAGE NODE_UPTIME NODE_CHANNEL_UTIL NODE_AIR_UTIL_TX NODE_LATITUDE NODE_LONGITUDE NODE_ALTITUDE]
-      gauges.each { |name| allow(PotatoMesh::App::Prometheus.const_get(name)).to receive(:set) }
+      allow(PotatoMesh::Config).to receive(:prom_report_id_list).and_return(["*"])
 
       post_ok("/api/nodes", node_body("!5c000027", "deviceMetrics" => { "batteryLevel" => junk, "voltage" => "4.1" },
                                                    "position" => { "latitude" => 52.5, "longitude" => "13.4", "altitude" => junk }))
 
-      expect(PotatoMesh::App::Prometheus::NODE_BATTERY_LEVEL).not_to have_received(:set)
-      expect(PotatoMesh::App::Prometheus::NODE_ALTITUDE).not_to have_received(:set)
-      expect(PotatoMesh::App::Prometheus::NODE_VOLTAGE).to have_received(:set).with(4.1, labels: { node: "!5c000027" })
-      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(13.4, labels: { node: "!5c000027" })
+      # The gauges read the stored row (SPEC PG2): NULL for text, a number for a numeric string.
+      expect(scraped_samples("meshtastic_node_battery_level", "!5c000027")).to eq([])
+      expect(scraped_samples("meshtastic_node_altitude", "!5c000027")).to eq([])
+      expect(scraped_samples("meshtastic_node_voltage", "!5c000027")).to eq(['meshtastic_node_voltage{node="!5c000027"} 4.1'])
+      expect(scraped_samples("meshtastic_node_longitude", "!5c000027")).to eq(['meshtastic_node_longitude{node="!5c000027"} 13.4'])
     end
 
     it "stores a message's numbers as NULL when they are no number, and converts numeric strings" do
