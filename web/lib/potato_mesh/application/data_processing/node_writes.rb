@@ -278,11 +278,13 @@ module PotatoMesh
       #   names the node; with no announced name the node keeps a stored name
       #   that is not a placeholder, else reads its own placeholder
       #   ({#reticulum_placeholder_name?}, {#reticulum_headline_name}).
-      # @param interface [String, nil] interface the announce was heard on.
+      # @param interface [String, nil] interface the announce was heard on,
+      #   stored without its peer address ({InterfaceNames.public_name}).
       # @param heard [Integer] unix seconds of receipt.
       # @return [void]
       def upsert_destination(db, node_id, destination, identity_hash:, name:, interface:, heard:)
         destination, identity_hash, name, interface = bound_destination_fields(destination, identity_hash, name, interface) # SPEC SL3
+        interface = InterfaceNames.public_name(interface) # SPEC RI2: whoever posted it
         return unless destination.is_a?(Hash)
 
         id = string_or_nil(destination["id"])&.downcase

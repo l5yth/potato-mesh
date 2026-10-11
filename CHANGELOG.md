@@ -194,6 +194,8 @@
 * Web: the boot recreates every index from `data/*.sql` that the database lacks, and stops, naming what is missing, when a table or column is still missing after the upgrade (SPEC SU3)
 * Web: a database created by v0.2.0 gains `messages.encrypted`; a database created before v0.6.0 gets the MeshCore text index and the duplicate purge on its first boot, not its second; the upgrade matches column names in any case (SPEC SU4)
 * Web: a process that starts while another one upgrades the same database no longer fails on a duplicate column or a locked database (SPEC SU5)
+* Data: the Reticulum ingestor posts interface names without peer addresses: a TCP, Backbone, UDP or AutoInterface peer name keeps its class and the operator-given name and drops the address and port, an outbound I2P peer drops its I2P destination, a Weave peer posts its class, and RNode names are unchanged (SPEC RI1)
+* Web: interface names are stored without peer addresses whatever the ingestor posts, and stored names that carry one lose it at the next boot, so `GET /api/destinations` serves none, with or without `PRIVATE=1` (SPEC RI2/RI3)
 * Web: `/metrics` request metrics label `path` with the route that answered, such as `GET /api/nodes/:id`, or `static`, `metrics` or `unmatched`, instead of the request path; 8000 requests to distinct missing paths no longer add 8000 series (SPEC PG1)
 * Web: `/metrics` builds the per-node gauges from the stored node rows at each scrape: a renamed node keeps one `meshtastic_node` series, and after a restart every reported node is exported, not only the 1000 heard most recently in the last 7 days (SPEC PG2)
 * Web: `/metrics` exports no latitude, longitude or altitude for a position off the globe or at `(0, 0)` (SPEC PG3)
