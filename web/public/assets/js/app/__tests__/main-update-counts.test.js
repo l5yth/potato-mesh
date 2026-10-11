@@ -723,7 +723,7 @@ test('restartAutoRefresh does not start a timer when refreshMs is 0', () => {
   }
 });
 
-test('restartAutoRefresh starts a timer when refreshMs > 0', () => {
+test('restartAutoRefresh starts a timer when refreshMs > 0, once the initial load settles (OR1)', async () => {
   const timers = [];
   const origSetInterval = globalThis.setInterval;
   const origClearInterval = globalThis.clearInterval;
@@ -735,10 +735,13 @@ test('restartAutoRefresh starts a timer when refreshMs > 0', () => {
   globalThis.clearInterval = () => {};
 
   try {
-    const { cleanup } = setupAppWithOptions({ configOverrides: { refreshMs: 30_000 } });
-    // Boot arms exactly one refresh timer plus the relative-time ticker (RT2).
+    const { testUtils, cleanup } = setupAppWithOptions({ configOverrides: { refreshMs: 30_000 } });
+    // SPEC OR1: no refresh timer while the initial load runs.
+    assert.equal(timers.filter(t => t.ms === 30_000).length, 0, 'no refresh timer before the initial load settles');
+    await testUtils.initialLoad;
+    // The page open arms exactly one refresh timer plus the relative-time ticker (RT2).
     const refreshTimers = timers.filter(t => t.ms === 30_000);
-    assert.equal(refreshTimers.length, 1, 'one refresh timer should be started during init');
+    assert.equal(refreshTimers.length, 1, 'one refresh timer once the initial load settles');
     assert.equal(
       timers.filter(t => t.ms === TICK_INTERVAL_MS).length,
       1,
@@ -751,7 +754,7 @@ test('restartAutoRefresh starts a timer when refreshMs > 0', () => {
   }
 });
 
-test('restartAutoRefresh clears the existing timer before starting a new one', () => {
+test('restartAutoRefresh clears the existing timer before starting a new one', async () => {
   const cleared = [];
   const timers = [];
   const origSetInterval = globalThis.setInterval;
@@ -765,7 +768,8 @@ test('restartAutoRefresh clears the existing timer before starting a new one', (
 
   try {
     const { testUtils, cleanup } = setupAppWithOptions({ configOverrides: { refreshMs: 30_000 } });
-    // One refresh timer started during init (the 1 s interval is the ticker).
+    // One refresh timer once the initial load settles (OR1; the 1 s interval is the ticker).
+    await testUtils.initialLoad;
     const refreshTimers = () => timers.filter(t => t.ms === 30_000);
     assert.equal(refreshTimers().length, 1);
     const firstRefreshId = refreshTimers()[0].id;

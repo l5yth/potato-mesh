@@ -189,6 +189,7 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: opening the dashboard loads its data once; on slow devices the cached copy no longer replaces newer rows; the dashboard loads when another tab blocks its browser cache, and live updates start within 20 seconds when a request hangs (SPEC OR1-OR5)
 * Web: looking up a node by its number no longer scans the nodes table (SPEC SU1)
 * Web: a database upgrade step that fails stops the boot with an error naming the step and leaves the database as it was, instead of logging a warning and serving a half-upgraded database (SPEC SU2)
 * Web: the boot recreates every index from `data/*.sql` that the database lacks, and stops, naming what is missing, when a table or column is still missing after the upgrade (SPEC SU3)

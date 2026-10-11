@@ -26,13 +26,25 @@
 /**
  * Create a fake `IDBFactory`-like object plus test controls.
  *
- * @returns {{ factory: { open: Function }, setFailMode: (mode: ?string) => void }}
- *   `factory` is assignable to `globalThis.indexedDB`; `setFailMode('request')`
- *   makes the next write throw (for error-path coverage).
+ * @returns {{
+ *   factory: { open: Function },
+ *   setFailMode: (mode: ?string) => void,
+ *   setOpenMode: (mode: ?string) => void,
+ *   unblock: () => void,
+ *   closedCount: () => number,
+ * }} `factory` is assignable to `globalThis.indexedDB`; `setFailMode('request')`
+ *   makes the next write throw (for error-path coverage). `setOpenMode` sets
+ *   how later opens answer: `'blocked'` fires `onblocked` and waits until
+ *   `unblock()` (another tab holding an older version closes), `'never'` never
+ *   answers, `'error'` fires `onerror`, `null` (the default) opens at once.
+ *   `closedCount()` counts `close()` calls on the fake databases.
  */
 export function createFakeIndexedDb() {
   const databases = new Map();
   let failMode = null;
+  let openMode = null;
+  const blockedOpens = [];
+  let closed = 0;
 
   /**
    * Build a fake database backed by a map of object stores.
@@ -43,6 +55,9 @@ export function createFakeIndexedDb() {
     const stores = new Map();
     return {
       objectStoreNames: { contains: name => stores.has(name) },
+      close() {
+        closed += 1;
+      },
       createObjectStore(name) {
         stores.set(name, new Map());
       },
@@ -98,19 +113,42 @@ export function createFakeIndexedDb() {
   return {
     factory: {
       open(name) {
-        const request = { onsuccess: null, onerror: null, onupgradeneeded: null, result: null };
-        setTimeout(() => {
+        const request = { onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null, result: null, error: null };
+        const finish = () => {
           const fresh = !databases.has(name);
           if (fresh) databases.set(name, makeDb());
           request.result = databases.get(name);
           if (fresh && request.onupgradeneeded) request.onupgradeneeded();
           if (request.onsuccess) request.onsuccess();
-        }, 0);
+        };
+        if (openMode === 'never') return request;
+        if (openMode === 'error') {
+          setTimeout(() => {
+            request.error = new Error('UnknownError: open failed');
+            if (request.onerror) request.onerror();
+          }, 0);
+          return request;
+        }
+        if (openMode === 'blocked') {
+          setTimeout(() => {
+            if (request.onblocked) request.onblocked();
+          }, 0);
+          blockedOpens.push(finish);
+          return request;
+        }
+        setTimeout(finish, 0);
         return request;
       },
     },
     setFailMode: mode => {
       failMode = mode;
     },
+    setOpenMode: mode => {
+      openMode = mode;
+    },
+    unblock: () => {
+      for (const finish of blockedOpens.splice(0)) setTimeout(finish, 0);
+    },
+    closedCount: () => closed,
   };
 }

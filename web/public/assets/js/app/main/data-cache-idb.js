@@ -23,7 +23,8 @@
  * database is opened lazily and the handle is memoised. When IndexedDB is
  * unavailable (e.g. the Node test runner, or a privacy-hardened browser) the
  * factory returns `null` so {@link module:main/data-cache} runs disabled and the
- * app falls back to network-only behavior (FC7).
+ * app falls back to network-only behavior (FC7). An open that fails or is
+ * blocked by another tab rejects, with the same result (SPEC OR5).
  *
  * @module main/data-cache-idb
  */
@@ -80,11 +81,22 @@ export function createIndexedDbBackend({
   /**
    * Open (and memoise) the database, creating object stores on first use.
    *
+   * A blocked open rejects at once (SPEC OR5): another tab holds the database
+   * at an older version and has not closed it, and waiting for that tab
+   * would hold the page's cache seed. The cache then runs disabled and the app
+   * network-only (FC7). If the open succeeds after it was given up, the handle
+   * is closed so it never blocks that tab's next upgrade.
+   *
    * @returns {Promise<IDBDatabase>} The open database handle.
    */
   function open() {
     if (!dbPromise) {
       dbPromise = new Promise((resolve, reject) => {
+        let givenUp = false;
+        const giveUp = error => {
+          givenUp = true;
+          reject(error);
+        };
         const request = indexedDB.open(databaseName, DB_VERSION);
         request.onupgradeneeded = () => {
           const db = request.result;
@@ -94,8 +106,15 @@ export function createIndexedDbBackend({
             }
           }
         };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error || new Error('IndexedDB open failed'));
+        request.onsuccess = () => {
+          if (givenUp) {
+            request.result.close();
+            return;
+          }
+          resolve(request.result);
+        };
+        request.onerror = () => giveUp(request.error || new Error('IndexedDB open failed'));
+        request.onblocked = () => giveUp(new Error('IndexedDB open blocked by another tab'));
       });
     }
     return dbPromise;
