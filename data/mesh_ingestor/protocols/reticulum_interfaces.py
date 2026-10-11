@@ -23,10 +23,18 @@ included, each with its printed name (``str(interface)``, the same string
 ``get_next_hop_if_name`` returns) and its class name.  A shared-instance client
 RPCs it to ``rnsd``, the route SPEC RE3 uses for names, so the map describes
 the stack that received the announce rather than this process.
+
+**Printed names are posted without peer addresses (SPEC RI1).**  Several
+classes print the address of the peer or of the socket into the name, such as
+``TCPInterface[Client on Public Hub/203.0.113.77:51234]`` for a TCP server's
+peer, and the web serves a posted name to anyone (``GET /api/destinations``).
+:func:`public_interface_name` keeps the class and the operator-given name and
+drops the address; the web scrubs stored names the same way.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -38,6 +46,155 @@ RNODE_INTERFACE_CLASSES: frozenset[str] = frozenset(
 
 REFRESH_SECONDS = 30.0
 """Minimum seconds between two reads that a lookup miss triggers."""
+
+ADDRESS_INTERFACE_PREFIXES: dict[str, str] = {
+    "TCPInterface": "/",
+    "TCPServerInterface": "/",
+    "BackboneInterface": "/",
+    "UDPInterface": "/",
+    "AutoInterfacePeer": "/",
+    "I2PInterfacePeer": " to ",
+}
+"""Printed class prefixes of names that end with an address (RNS 1.5.7),
+each mapped to the text that comes before the address.
+
+``TCPInterface`` is how ``TCPClientInterface`` prints, a TCP server's peers
+included (``Client on <server>``); ``BackboneInterface`` covers the server and
+``BackboneClientInterface``.  These end ``/<host>:<port>]`` (an IPv6 host in
+brackets, except on UDP), and an ``AutoInterfacePeer`` ends with the peer's
+link-local IPv6 address after the OS interface name.  An ``I2PInterfacePeer``
+that connects out is named ``<I2PInterface name> to <peer>``, the peer being a
+``.b32.i2p`` address, an ``.i2p`` name or a base64 destination; one that
+connected in is named ``Connected peer on <I2PInterface name>``, no address.
+"""
+
+BARE_ADDRESS_INTERFACE_PREFIXES: frozenset[str] = frozenset({"WeaveInterfacePeer"})
+"""Printed class prefixes whose brackets hold the peer's address alone."""
+
+NAME_INTERFACE_PREFIXES: frozenset[str] = frozenset(
+    {
+        "AutoInterface",
+        "AX25KISSInterface",
+        "I2PInterface",
+        "KISSInterface",
+        "LocalInterface",
+        "PipeInterface",
+        "RNodeInterface",
+        "RNodeMultiInterface",
+        "SerialInterface",
+        "Shared Instance",
+        "WeaveInterface",
+    }
+)
+"""Printed class prefixes of names that hold no address (RNS 1.5.7).
+
+``Shared Instance`` is how ``LocalServerInterface`` prints; ``LocalInterface``
+(``LocalClientInterface``) prints the shared instance's socket, as in
+``LocalInterface[rns/default]``, whose ``/`` is no address.  An
+``RNodeSubInterface`` prints ``<parent>[<sub>]`` with no class text; see
+:data:`_CLASS_NAME`.
+"""
+
+_ADDRESSES: dict[str, re.Pattern[str]] = {
+    "/": re.compile(r"\S*:\S*", re.ASCII),
+    " to ": re.compile(r"\S+\.[iI]2[pP]|[A-Za-z0-9~-]{500,}={0,2}", re.ASCII),
+}
+"""What an address after each separator looks like.
+
+After ``/``: no whitespace, and a colon, as every address those classes print
+has (``host:port``, an IPv6 address).  After `` to ``: an I2P peer, a name
+ending ``.i2p`` (``.b32.i2p`` included, any ASCII case of ``i`` and ``p``) or a
+base64 destination, which is at least 516 characters.  A name segment that
+looks like neither is never taken for an address, which keeps the rule
+idempotent.  ASCII whitespace and explicit ASCII classes only, with no
+case-insensitive flag, as in the web's copy: Ruby's ``/i`` would fold U+212A
+(Kelvin) and U+017F (long s) into ``[A-Za-z]``.
+"""
+
+_CLASS_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*", re.ASCII)
+"""An unknown prefix that names an interface class, as an external module's does.
+
+An ``RNodeSubInterface`` prints ``<parent>[<sub>]``, where ``<parent>`` is its
+``RNodeMultiInterface``'s operator-given name.  A prefix that is no identifier,
+or that holds "rnode" in any case, is taken for that name, and RNode names
+are never cut.
+"""
+
+
+def _external_class(head: str) -> bool:
+    """Report whether a printed prefix belongs to an unknown interface class.
+
+    Parameters:
+        head: Text before the first ``[`` of a printed name.
+
+    Returns:
+        ``True`` for an identifier without "rnode" that no known class
+        prints; ``False`` for a known class and for an RNode multi-interface's
+        name (:data:`_CLASS_NAME`).
+    """
+    return (
+        head not in NAME_INTERFACE_PREFIXES
+        and _CLASS_NAME.fullmatch(head) is not None
+        and "rnode" not in head.lower()
+    )
+
+
+def public_interface_name(name: object) -> object:
+    """Return a printed interface name without its peer address (SPEC RI1).
+
+    The name keeps its class prefix and the operator-given name; the address
+    goes, along with the brackets when nothing is left in them:
+
+    - an address-printing class (:data:`ADDRESS_INTERFACE_PREFIXES`) drops each
+      trailing ``/<address>`` or, for an I2P peer, `` to <peer>``
+      (:data:`_ADDRESSES`), so an operator-given name holding either survives:
+      ``TCPInterface[Hub A/B/203.0.113.77:4242]`` posts
+      ``TCPInterface[Hub A/B]``;
+    - a Weave peer (:data:`BARE_ADDRESS_INTERFACE_PREFIXES`) posts its class;
+    - a name-only class (:data:`NAME_INTERFACE_PREFIXES`) and an RNode
+      sub-interface (:data:`_CLASS_NAME`) are unchanged;
+    - an unknown class (:func:`_external_class`) whose bracket text holds
+      ``/`` keeps the text before its first ``/``.  That is where dropping the
+      text after the last ``/`` ends when the web scrub and the boot cleanup
+      repeat it, so one pass is final.
+
+    A name cut before its closing ``]``, as the web's 256-byte SL3 cap
+    (``INTERFACE_BYTES``) leaves one before the web's copy of this rule runs,
+    has an address that can no longer be recognised, so an address-printing
+    class drops the text after its last separator there.  A value that is not a
+    string, or not of the form ``<class>[...``, is returned unchanged.
+    Applying the function to its own result changes nothing.
+
+    Parameters:
+        name: Interface name as RNS printed it, or any other value.
+
+    Returns:
+        The name without its address, or *name* itself.
+    """
+    if not isinstance(name, str):
+        return name
+    head, bracket, rest = name.partition("[")
+    if not bracket:
+        return name
+    if head in BARE_ADDRESS_INTERFACE_PREFIXES:
+        return head
+    separator = ADDRESS_INTERFACE_PREFIXES.get(head)
+    if separator is None and not _external_class(head):
+        return name
+    closed = rest.endswith("]")
+    text = rest[:-1] if closed else rest
+    if separator is None:
+        kept = text.partition("/")[0]
+    else:
+        kept = text
+        if not closed and separator in kept:
+            kept = kept.rpartition(separator)[0]
+        address = _ADDRESSES[separator]
+        while separator in kept and address.fullmatch(kept.rpartition(separator)[2]):
+            kept = kept.rpartition(separator)[0]
+    if kept == text:
+        return name
+    return f"{head}[{kept}]" if kept else head
 
 
 def interface_classes(stats: object) -> dict[str, str] | None:
@@ -177,8 +334,12 @@ class InterfaceClassCache:
 
 
 __all__ = [
+    "ADDRESS_INTERFACE_PREFIXES",
+    "BARE_ADDRESS_INTERFACE_PREFIXES",
+    "NAME_INTERFACE_PREFIXES",
     "REFRESH_SECONDS",
     "RNODE_INTERFACE_CLASSES",
     "InterfaceClassCache",
     "interface_classes",
+    "public_interface_name",
 ]

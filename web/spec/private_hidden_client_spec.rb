@@ -256,7 +256,8 @@ RSpec.describe "Private mode and CLIENT_HIDDEN nodes" do
     end
   end
 
-  # Samples the telemetry rollup counted in the last hour.
+  # Samples the telemetry rollup counted in the last day: a one-hour request
+  # is served the canonical 1-day pair (SPEC RC1).
   #
   # @return [Integer] summed +sample_count+.
   def aggregated_samples

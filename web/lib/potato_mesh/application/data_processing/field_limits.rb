@@ -111,6 +111,16 @@ module PotatoMesh
         # carries 8 probes.
         ONE_WIRE_TEMPERATURE_ENTRIES = 8
 
+        # Neighbours one snapshot stores, and lookups by node number it makes
+        # (SPEC IB3).  Each may mint a placeholder node.  Meshtastic's
+        # NeighborInfo carries at most 10.
+        NEIGHBOR_ENTRIES = 16
+
+        # Hops kept of a trace's +hops+ or +path+ list (SPEC IB3).  Each hop
+        # may mint a placeholder node.  Meshtastic's RouteDiscovery carries at
+        # most 8.
+        TRACE_HOP_ENTRIES = 16
+
         # +waypoints.name+ (T).  Meshtastic allows 29 bytes.
         WAYPOINT_NAME_BYTES = 128
 
@@ -292,6 +302,16 @@ module PotatoMesh
           %w[destination],
         ].freeze
 
+        # Nested mappings of a +POST /api/positions+ record that
+        # +insert_position+ reads fields from (SPEC IB1).  As in
+        # {NODE_MAPS}, a value at one of these paths that is not a mapping
+        # is dropped, so the record is stored without it.
+        POSITION_MAPS = [
+          %w[position],
+          %w[position raw],
+          %w[position payload],
+        ].freeze
+
         # Numeric fields of a +POST /api/messages+ record that
         # +insert_message+ stores as read (SPEC SL10), as +[path, kind]+.
         MESSAGE_NUMBER_FIELDS = [
@@ -300,6 +320,15 @@ module PotatoMesh
           [%w[rssi], :integer],
           [%w[hop_limit], :integer],
         ].freeze
+
+        # Largest +packets+ count of a +POST /api/ingestors+ heartbeat that
+        # records an activity row (SPEC IB4, beside SL10).  The count is the
+        # frames one ingestor handled since its previous heartbeat, an hour
+        # by default: the cap is about 278,000 frames a second for an hour,
+        # far beyond a LoRa channel.  The stats queries read each stored row
+        # at most at the cap, an older row included, so their sums overflow
+        # only past 9.2e9 rows of one ingestor inside one window.
+        MAX_HEARTBEAT_PACKETS = 1_000_000_000
 
         module_function
 
@@ -560,7 +589,11 @@ module PotatoMesh
         bound_numbers(FieldLimits.bound_fields(message, FieldLimits::MESSAGE_FIELDS), FieldLimits::MESSAGE_NUMBER_FIELDS)
       end
 
-      # Bound a +POST /api/positions+ record (SPEC SL3, SL5).
+      # Bound a +POST /api/positions+ record (SPEC SL3, SL5, IB1).
+      #
+      # A nested section that is not a mapping ({FieldLimits::POSITION_MAPS})
+      # is dropped first, so the record is stored without it instead of
+      # failing its batch.
       #
       # @param payload [Object] inbound position.
       # @return [Object, nil] the position, bounded; a non-Hash unchanged; nil
@@ -569,6 +602,7 @@ module PotatoMesh
         return payload unless payload.is_a?(Hash)
         return nil unless FieldLimits.ids_valid?(payload, node: %w[node_id from_id from], destination: %w[to_id to], stored: %w[ingestor])
 
+        payload = FieldLimits.drop_non_maps(payload, FieldLimits::POSITION_MAPS)
         FieldLimits.bound_fields(payload, FieldLimits::POSITION_FIELDS)
       end
 

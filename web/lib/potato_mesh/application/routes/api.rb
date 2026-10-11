@@ -22,6 +22,11 @@ module PotatoMesh
         # prevent attacker-controlled strings from polluting the cache keyspace.
         KNOWN_PROTOCOLS = Set.new(%w[meshcore meshtastic reticulum]).freeze
 
+        # Read parameters that change a request's cost: a GET takes them from
+        # the query string only, never from a form body, so a proxy limiting
+        # on the query string sees every one (SPEC RC6).
+        QUERY_ONLY_PARAMS = %w[since before limit windowSeconds bucketSeconds window_seconds bucket_seconds].freeze
+
         # Register read-only API endpoints that expose cached mesh data and
         # instance metadata. Invoked by Sinatra during extension registration.
         #
@@ -29,6 +34,7 @@ module PotatoMesh
         # @return [void]
         def self.registered(app)
           known_protocols = KNOWN_PROTOCOLS
+          query_only_params = QUERY_ONLY_PARAMS
 
           app.helpers do
             # Sanitise the protocol query parameter to a known value.
@@ -43,6 +49,56 @@ module PotatoMesh
             define_method(:api_cache_control) do |max_age: 10|
               visibility = private_mode? ? :private : :public
               cache_control visibility, :must_revalidate, max_age: max_age
+            end
+
+            # Whether a collection page at +limit+ is served uncached: only the
+            # limits the app requests are cached, so a client cannot mint cache
+            # keys with free +limit+ values (SPEC RC3).
+            define_method(:uncached_limit?) do |limit|
+              !PotatoMesh::App::ApiCache.cacheable_limit?(limit)
+            end
+
+            # Serve one canonical bucketed series through the response cache
+            # (SPEC RC1).  The key names a canonical pair, a fixed entry.  A
+            # +since+ is rounded down to the start of its bucket and answered
+            # from that entry with the buckets that start at or after it; a
+            # +since+ at or before the window floor gets the whole series, as a
+            # request without one does.
+            #
+            # @param cache_key [String] the canonical pair's cache key.
+            # @param window_seconds [Integer] the canonical window.
+            # @param bucket_seconds [Integer] the canonical bucket width.
+            # @yield computes the series JSON on a cache miss.
+            # @return [String] the response body.
+            define_method(:serve_bucketed_series) do |cache_key, window_seconds:, bucket_seconds:, &compute|
+              cached = PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60, fixed: true, &compute)
+              since = coerce_integer(params["since"]) || 0
+              first_bucket = PotatoMesh::App::AggregateWindows.bucket_floor(since, bucket_seconds)
+              if since.positive? && first_bucket > Time.now.to_i - window_seconds
+                json_body = PotatoMesh::App::AggregateWindows.series_since(cached[:value], first_bucket)
+                etag Digest::MD5.hexdigest(json_body), kind: :weak
+              else
+                json_body = cached[:value]
+                etag cached[:etag], kind: :weak
+              end
+              api_cache_control(max_age: 30)
+              json_body
+            end
+          end
+
+          # Rack merges a form body into +params+, the body winning on a
+          # clash; a read takes its cost parameters from the query string
+          # alone, which the nginx read limit sees (SPEC RC6).
+          app.before "/api/*" do
+            next unless request.get? || request.head?
+
+            query = request.GET
+            query_only_params.each do |name|
+              if query.key?(name)
+                params[name] = query[name]
+              else
+                params.delete(name)
+              end
             end
           end
 
@@ -105,13 +161,14 @@ module PotatoMesh
             before = coerce_positive_or_nil(params["before"])
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_nodes(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:nodes:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:nodes:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15, fixed: protocol.nil?) do
                 query_nodes(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -124,7 +181,7 @@ module PotatoMesh
             content_type :json
             priv = private_mode? ? 1 : 0
             cached = PotatoMesh::App::ApiCache.fetch(
-              "api:stats:#{priv}", ttl_seconds: PotatoMesh::Config.stats_cache_ttl_seconds,
+              "api:stats:#{priv}", ttl_seconds: PotatoMesh::Config.stats_cache_ttl_seconds, fixed: true,
             ) do
               # Scope → metric → window tree (SPEC S1). The MA4 packets/hour
               # moving average is folded in as an additive +packets+ metric under
@@ -176,27 +233,16 @@ module PotatoMesh
             # reach past the retention cap (C4); the query repeats the clamp.
             window_seconds = clamp_window_seconds(window_seconds)
 
-            bucket_count = (window_seconds.to_f / bucket_seconds).ceil
-            if bucket_count > PotatoMesh::App::Queries::MAX_QUERY_LIMIT
-              halt 400, { error: "bucket_seconds too small for requested window" }.to_json
-            end
-
-            since = params["since"]
-            since_val = coerce_integer(since) || 0
-
-            if since_val > 0
-              json_body = query_activity_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
-              etag Digest::MD5.hexdigest(json_body), kind: :weak
-              api_cache_control(max_age: 30)
-              json_body
-            else
-              cache_key = "api:stats_activity:#{window_seconds}:#{bucket_seconds}"
-              cached = PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60) do
-                query_activity_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
-              end
-              etag cached[:etag], kind: :weak
-              api_cache_control(max_age: 30)
-              cached[:value]
+            # Serve the nearest canonical pair (SPEC RC1): one cache entry per
+            # pair whatever the caller sends, at most 85 buckets.
+            window_seconds, bucket_seconds = PotatoMesh::App::AggregateWindows.nearest_pair(
+              PotatoMesh::App::AggregateWindows::ACTIVITY_PAIRS, window_seconds, bucket_seconds,
+            )
+            serve_bucketed_series(
+              "api:stats_activity:#{window_seconds}:#{bucket_seconds}",
+              window_seconds: window_seconds, bucket_seconds: bucket_seconds,
+            ) do
+              query_activity_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds).to_json
             end
           end
 
@@ -231,13 +277,14 @@ module PotatoMesh
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_ingestors(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30, fixed: protocol.nil?) do
                 query_ingestors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -278,13 +325,14 @@ module PotatoMesh
             protocol = sanitize_protocol(params["protocol"])
             enc_key = include_encrypted ? "1" : "0"
 
-            if since > 0 || before
+            if since > 0 || before || uncached_limit?(limit)
               json_body = query_messages(limit, include_encrypted: include_encrypted, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:messages:#{limit}:#{enc_key}:#{protocol}", ttl_seconds: 10) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:messages:#{limit}:#{enc_key}:#{protocol}", ttl_seconds: 10, fixed: protocol.nil?) do
                 query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -324,13 +372,14 @@ module PotatoMesh
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_positions(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15, fixed: protocol.nil?) do
                 query_positions(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -359,13 +408,14 @@ module PotatoMesh
             # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
             before = coerce_positive_or_nil(params["before"])
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_waypoints(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:waypoints:#{limit}:#{protocol}", ttl_seconds: 15) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:waypoints:#{limit}:#{protocol}", ttl_seconds: 15, fixed: protocol.nil?) do
                 query_waypoints(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -404,13 +454,14 @@ module PotatoMesh
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_neighbors(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30, fixed: protocol.nil?) do
                 query_neighbors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -441,13 +492,14 @@ module PotatoMesh
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_telemetry(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15, fixed: protocol.nil?) do
                 query_telemetry(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -485,29 +537,19 @@ module PotatoMesh
             # clamp for defence in depth.
             window_seconds = clamp_window_seconds(window_seconds)
 
-            bucket_count = (window_seconds.to_f / bucket_seconds).ceil
-            if bucket_count > PotatoMesh::App::Queries::MAX_QUERY_LIMIT
-              halt 400, { error: "bucketSeconds too small for requested window" }.to_json
-            end
-
-            since = params["since"]
-            since_val = coerce_integer(since) || 0
+            # Serve the nearest canonical pair (SPEC RC1): one cache entry per
+            # pair and private flag whatever the caller sends, at most 289
+            # buckets, each stating the +bucket_seconds+ served.
+            window_seconds, bucket_seconds = PotatoMesh::App::AggregateWindows.nearest_pair(
+              PotatoMesh::App::AggregateWindows::TELEMETRY_PAIRS, window_seconds, bucket_seconds,
+            )
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
-
-            if since_val > 0
-              json_body = query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
-              etag Digest::MD5.hexdigest(json_body), kind: :weak
-              api_cache_control(max_age: 30)
-              json_body
-            else
-              cache_key = "api:telemetry_agg:#{window_seconds}:#{bucket_seconds}:#{priv}"
-              cached = PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60) do
-                query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
-              end
-              etag cached[:etag], kind: :weak
-              api_cache_control(max_age: 30)
-              cached[:value]
+            serve_bucketed_series(
+              "api:telemetry_agg:#{window_seconds}:#{bucket_seconds}:#{priv}",
+              window_seconds: window_seconds, bucket_seconds: bucket_seconds,
+            ) do
+              query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds).to_json
             end
           end
 
@@ -533,13 +575,14 @@ module PotatoMesh
             # Private mode drops CLIENT_HIDDEN rows (SPEC HC1), so the flag keys the cache.
             priv = private_mode? ? 1 : 0
 
-            if since_val > 0 || before
+            if since_val > 0 || before || uncached_limit?(limit)
               json_body = query_traces(limit, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body
             else
-              cached = PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30) do
+              # A page without a protocol filter is a fixed entry (SPEC RC3).
+              cached = PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}:#{priv}", ttl_seconds: 30, fixed: protocol.nil?) do
                 query_traces(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
@@ -566,14 +609,13 @@ module PotatoMesh
             content_type :json
             # The federation banner is rendered on every page navigation, which
             # caused this endpoint to fire ~7 times in a few seconds while the
-            # user clicked through the site.  Cache the response (including the
-            # self-record refresh) for a short window so navigation feels free
-            # without delaying signature/peer updates by more than a few
-            # seconds.  The dedicated announcer thread keeps the underlying
-            # record fresh on its own cadence regardless of cache hits.
+            # user clicked through the site.  Cache the response for a short
+            # window so navigation feels free without delaying peer updates by
+            # more than a few seconds.  A miss only reads: the boot and each
+            # announcement cycle deduplicate the rows and refresh the self
+            # record (SPEC RC4).
             priv = private_mode? ? 1 : 0
-            cached = PotatoMesh::App::ApiCache.fetch("api:instances:#{priv}", ttl_seconds: 30) do
-              ensure_self_instance_record!
+            cached = PotatoMesh::App::ApiCache.fetch("api:instances:#{priv}", ttl_seconds: 30, fixed: true) do
               JSON.generate(load_instances_for_api)
             end
             etag cached[:etag], kind: :weak

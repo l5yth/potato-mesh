@@ -1320,7 +1320,10 @@ test('initializeNodeDetailPage reports an error when refresh fails', async () =>
   };
   const renderShortHtml = short => `<span>${short}</span>`;
   const originalError = console.error;
+  const originalWarn = console.warn;
+  const warnings = [];
   console.error = () => {};
+  console.warn = (...args) => warnings.push(args);
   try {
     const result = await initializeNodeDetailPage({
       document: documentStub,
@@ -1329,8 +1332,13 @@ test('initializeNodeDetailPage reports an error when refresh fails', async () =>
     });
     assert.equal(result, false);
     assert.equal(element.innerHTML.includes('Failed to load'), true);
+    // The node list requested beside the failed node read is dropped unread
+    // and quietly (SPEC OV3).
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.deepEqual(warnings, []);
   } finally {
     console.error = originalError;
+    console.warn = originalWarn;
   }
 });
 

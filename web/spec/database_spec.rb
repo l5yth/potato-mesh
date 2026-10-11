@@ -93,8 +93,11 @@ RSpec.describe PotatoMesh::App::Database do
 
   it "adds missing telemetry columns when upgrading an existing schema" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
-      db.execute("CREATE TABLE nodes(node_id TEXT)")
-      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      # The second boot's #747 and #755 backfills read long_name, role and
+      # from_id, and delete through the neighbors foreign key, which needs a
+      # keyed node_id. A failing step stops the boot (SPEC SU2).
+      db.execute("CREATE TABLE nodes(node_id TEXT PRIMARY KEY, long_name TEXT, role TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY, from_id TEXT)")
       db.execute <<~SQL
                    CREATE TABLE telemetry (
                      id INTEGER PRIMARY KEY,
@@ -155,8 +158,9 @@ RSpec.describe PotatoMesh::App::Database do
     # #893 shipped dest_hash as a JSON column; the destinations table replaced
     # it, and a column and a table modelling one relationship would drift.
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
-      db.execute("CREATE TABLE nodes(node_id TEXT, dest_hash TEXT)")
-      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      # Keyed node_id, long_name, role and from_id: the second boot's backfills.
+      db.execute("CREATE TABLE nodes(node_id TEXT PRIMARY KEY, long_name TEXT, role TEXT, dest_hash TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY, from_id TEXT)")
     end
 
     harness_class.ensure_schema_upgrades
@@ -188,8 +192,9 @@ RSpec.describe PotatoMesh::App::Database do
 
   it "backfills every extended telemetry metric column on an existing schema (TI-A2)" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
-      db.execute("CREATE TABLE nodes(node_id TEXT)")
-      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      # Keyed node_id, long_name, role and from_id: the second boot's backfills.
+      db.execute("CREATE TABLE nodes(node_id TEXT PRIMARY KEY, long_name TEXT, role TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY, from_id TEXT)")
       db.execute("CREATE TABLE telemetry(id INTEGER PRIMARY KEY, rx_time INTEGER NOT NULL, rx_iso TEXT NOT NULL)")
     end
 
@@ -332,7 +337,8 @@ RSpec.describe PotatoMesh::App::Database do
           protocol TEXT NOT NULL DEFAULT 'meshtastic', synthetic BOOLEAN NOT NULL DEFAULT 0
         )
       SQL
-      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      # from_id: read by the #755 backfill that follows #747 on this boot.
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY, from_id TEXT)")
 
       # Misclassified meshcore placeholder (bug #747)
       db.execute(

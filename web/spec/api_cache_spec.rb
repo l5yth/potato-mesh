@@ -134,6 +134,47 @@ RSpec.describe PotatoMesh::App::ApiCache do
     end
   end
 
+  describe "fixed entries (SPEC RC3)" do
+    let(:max) { described_class::MAX_ENTRIES }
+
+    it "never evicts a fixed entry to make room for a variant" do
+      described_class.fetch("api:stats:0", ttl_seconds: 60, fixed: true) { "stats" }
+      (max + 8).times { |i| described_class.fetch("variant:#{i}", ttl_seconds: 60) { "v#{i}" } }
+
+      expect(described_class.fetch("api:stats:0", ttl_seconds: 60, fixed: true) { "recomputed" }[:value]).to eq("stats")
+      expect(described_class.size).to eq(max + 1)
+      # The variants evict each other, oldest first.
+      expect(described_class.fetch("variant:7", ttl_seconds: 60) { "recomputed" }[:value]).to eq("recomputed")
+      expect(described_class.fetch("variant:#{max + 7}", ttl_seconds: 60) { "recomputed" }[:value]).to eq("v#{max + 7}")
+    end
+
+    it "holds at most MAX_ENTRIES fixed entries, the oldest out first" do
+      (max + 1).times { |i| described_class.fetch("fixed:#{i}", ttl_seconds: 60, fixed: true) { "f#{i}" } }
+
+      expect(described_class.size).to eq(max)
+      expect(described_class.fetch("fixed:#{max}", ttl_seconds: 60, fixed: true) { "recomputed" }[:value]).to eq("f#{max}")
+      expect(described_class.fetch("fixed:0", ttl_seconds: 60, fixed: true) { "recomputed" }[:value]).to eq("recomputed")
+    end
+
+    it "evicts nothing else when an expired entry is recomputed" do
+      described_class.fetch("variant:first", ttl_seconds: 60) { "first" }
+      described_class.fetch("variant:expiring", ttl_seconds: 0) { "old" }
+      (max - 2).times { |i| described_class.fetch("variant:#{i}", ttl_seconds: 60) { "v#{i}" } }
+      sleep 0.01
+
+      expect(described_class.fetch("variant:expiring", ttl_seconds: 60) { "new" }[:value]).to eq("new")
+      expect(described_class.size).to eq(max)
+      expect(described_class.fetch("variant:first", ttl_seconds: 60) { "recomputed" }[:value]).to eq("first")
+    end
+  end
+
+  describe ".cacheable_limit?" do
+    it "accepts only the limits the app requests" do
+      expect([10, 200, 1000].map { |limit| described_class.cacheable_limit?(limit) }).to eq([true, true, true])
+      expect([1, 9, 11, 199, 201, 999].map { |limit| described_class.cacheable_limit?(limit) }).to all(be(false))
+    end
+  end
+
   describe ".size" do
     it "reports the number of cached entries" do
       expect(described_class.size).to eq(0)
