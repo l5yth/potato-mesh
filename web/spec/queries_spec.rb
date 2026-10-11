@@ -32,11 +32,6 @@ RSpec.describe PotatoMesh::App::Queries do
         false
       end
 
-      # Stub prom_report_ids so tests do not depend on prometheus env.
-      def prom_report_ids
-        []
-      end
-
       # No-op for debug_log calls inside query helpers.
       def debug_log(message, **); end
 
@@ -60,8 +55,6 @@ RSpec.describe PotatoMesh::App::Queries do
       def with_busy_retry
         yield
       end
-
-      def update_prometheus_metrics(*); end
 
       def resolve_protocol(_db, _ingestor, cache: nil)
         "meshtastic"
