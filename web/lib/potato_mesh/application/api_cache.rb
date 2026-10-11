@@ -23,19 +23,32 @@ module PotatoMesh
     # Each entry is stored with a monotonic expiration time and a pre-computed
     # ETag so the route handler can skip recomputing the digest on cache hits.
     #
-    # The cache is bounded to {MAX_ENTRIES} to prevent unbounded memory growth
-    # from attacker-controlled query parameters.  When the limit is reached the
-    # oldest entry by insertion order is evicted (LRU-ish via Ruby hash ordering).
+    # Entries come in two tiers (SPEC RC3).  A *fixed* entry is one of a
+    # finite set the routes name: +/api/stats+, +/api/instances+, the
+    # canonical bucketed series and each collection's page without a
+    # +protocol+ filter at a limit of {CACHEABLE_LIMITS}.  Every other cached
+    # page, one filtered by +protocol+, is a *variant*.  Each tier holds at
+    # most {MAX_ENTRIES} entries, evicting its own oldest entry by insertion
+    # order, so no number of variants can evict a fixed entry.  A route serves
+    # a request whose limit is outside {CACHEABLE_LIMITS} uncached, so free
+    # query parameters never reach the keys.
     #
     # Invalidation can target a specific prefix (e.g. +"api:nodes:"+) so that an
     # ingest POST to +/api/messages+ does not flush the neighbors cache.
     # A single-flight guard coalesces concurrent misses for the same key so only
     # one thread computes the value while others wait for the result.
     module ApiCache
-      # Hard cap on the number of cached entries to prevent memory exhaustion.
-      # With the whitelisted protocol values and known limit set, the realistic
-      # key space is ~30 entries.  64 provides generous headroom.
+      # Cap on the entries of each tier, to bound memory.  The fixed tier
+      # names at most 55 keys, both private-flag values counted, so it never
+      # evicts in practice; variants evict each other.
       MAX_ENTRIES = 64
+
+      # The collection limits the app itself requests, the only ones whose
+      # pages are cached: 10, the federation node list peers fetch
+      # (+remote_instance_min_node_count+, SPEC FL2) and the Matrix bridge's
+      # fallback; 200, the default when +limit+ is absent and the trace page;
+      # 1000, +MAX_QUERY_LIMIT+, the dashboard's pages.
+      CACHEABLE_LIMITS = [10, 200, 1000].freeze
 
       @store = {}
       @inflight = {}
@@ -54,10 +67,12 @@ module PotatoMesh
         # @param key [String] cache key incorporating all relevant query
         #   parameters (limit, protocol, etc.).
         # @param ttl_seconds [Numeric] time-to-live for the cached entry.
+        # @param fixed [Boolean] whether +key+ belongs to the finite set of
+        #   fixed entries that no variant evicts (SPEC RC3).
         # @yield Computes the value to cache when the entry is missing or
         #   expired.  The block should return the serialised JSON string.
         # @return [Hash{Symbol => String}] +:value+ and +:etag+ of the response.
-        def fetch(key, ttl_seconds:)
+        def fetch(key, ttl_seconds:, fixed: false)
           now = monotonic_now
 
           @mutex.synchronize do
@@ -86,8 +101,11 @@ module PotatoMesh
           etag = Digest::MD5.hexdigest(value)
 
           @mutex.synchronize do
-            evict_oldest_if_full
-            @store[key] = { value: value, etag: etag, expires_at: monotonic_now + ttl_seconds }
+            # A recomputed key replaces its expired entry, which leaves its
+            # tier first, so it evicts no other entry.
+            @store.delete(key)
+            evict_oldest_if_full(fixed)
+            @store[key] = { value: value, etag: etag, expires_at: monotonic_now + ttl_seconds, fixed: fixed }
             cv = @inflight.delete(key)
             cv&.broadcast
           end
@@ -141,6 +159,15 @@ module PotatoMesh
           @mutex.synchronize { @store.size }
         end
 
+        # Whether a collection page at +limit+ may be cached: only the limits
+        # the app requests are, so a client cannot mint keys (SPEC RC3).
+        #
+        # @param limit [Integer] the coerced request limit.
+        # @return [Boolean] true when +limit+ is one of {CACHEABLE_LIMITS}.
+        def cacheable_limit?(limit)
+          CACHEABLE_LIMITS.include?(limit)
+        end
+
         private
 
         # Use the monotonic clock so TTL calculations are immune to wall-clock
@@ -149,13 +176,16 @@ module PotatoMesh
           Process.clock_gettime(Process::CLOCK_MONOTONIC)
         end
 
-        # Evict the oldest entry when the store is at capacity.  Ruby hashes
-        # preserve insertion order, so +first+ is the oldest key.
-        def evict_oldest_if_full
-          while @store.size >= MAX_ENTRIES
-            oldest_key = @store.each_key.first
-            @store.delete(oldest_key)
-          end
+        # Evict the oldest entries of one tier until it has room for one more.
+        # Ruby hashes preserve insertion order, so the first keys are the
+        # oldest; the other tier is never touched (SPEC RC3).
+        #
+        # @param fixed [Boolean] the tier of the entry about to be stored.
+        # @return [void]
+        def evict_oldest_if_full(fixed)
+          tier = @store.each_key.select { |key| @store[key][:fixed] == fixed }
+          excess = tier.size - MAX_ENTRIES + 1
+          tier.first(excess).each { |key| @store.delete(key) } if excess.positive?
         end
       end
     end

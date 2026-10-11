@@ -111,9 +111,9 @@ module PotatoMesh
       # bucket's hour-span to a rate. Every known protocol
       # (+meshcore+/+meshtastic+/+reticulum+) is emitted as a key, mirroring
       # {#query_packets_per_hour}. The window is clamped to the
-      # 28-day visibility floor (C4); the route pre-validates the bucket count
-      # against +MAX_QUERY_LIMIT+ and this query caps the row count too. Each
-      # stored row counts at most
+      # 28-day visibility floor (C4); the route serves canonical pairs only,
+      # at most 85 buckets (SPEC RC1), and this query caps the row count at
+      # +MAX_QUERY_LIMIT+ too. Each stored row counts at most
       # {DataProcessing::FieldLimits::MAX_HEARTBEAT_PACKETS}, as in
       # {#query_packets_per_hour} (SPEC IB4).
       #
