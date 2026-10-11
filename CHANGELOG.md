@@ -183,6 +183,7 @@
 * Web: a federation instance row is replaced in one transaction: a failed write keeps the stored row, and two writes for one domain at once no longer fail on the unique domain index (SPEC FK1)
 * Web: a database error while a crawl stores one peer is logged and the crawl goes on with the next peer (SPEC FK2)
 * Web: a keyfile that cannot be parsed stops the boot with an error naming the file and is left as it is, instead of being replaced by a new key and instance id; a legacy keyfile that cannot be parsed is not copied, and the error names it; restore the named file from a backup or delete it to start with a new key (SPEC FK3)
+* Web: the map builds a neighbor or trace line's tooltip when it opens instead of on every repaint, and short-name badges render faster; a live repaint with 800 nodes and 4,000 neighbor lines takes about half as long (SPEC MT1-MT3)
 * Web: Meshtastic payload decoding is bounded: a decode is killed with its process group after 4 s, one `POST /api/messages` decodes at most 4 messages, and each web process runs at most 2 decodes at once; a message past a bound is stored still encrypted, as when decoding fails (SPEC DB1-DB4)
 * Web: the filter box refilters the nodes table, the map and the chat once typing pauses for 200 ms, not on every keystroke; Enter applies the text at once, as do the box's ×, the role and protocol toggles and Clear filters (SPEC DE1/DE2)
 
