@@ -176,6 +176,30 @@ Three things that bite in practice - all handled in the example file:
   off` and ships its own `ssl_session_cache`; duplicating the directive is a
   fatal config error. Leave it off.
 
+Rate limits (optional). The example carries two commented limits: federation
+peers by User-Agent, and per client address the API requests the response
+cache does not answer (any `since` or `before`, or a collection `limit` other
+than 10, 200 or 1000) plus `/api/telemetry/aggregated`. Both answer with the
+example's one `limit_req_status 429;` line: uncomment it once. The read limit:
+
+```nginx
+# http { }
+map "$uri?$args" $potatomesh_read {
+    default                         "";
+    ~^/api/telemetry/aggregated[?]  $binary_remote_addr;
+    "~*^/api/.*[?&]((s|%73)(i|%69)(n|%6e)(c|%63)(e|%65)|(b|%62)(e|%65)(f|%66)(o|%6f)(r|%72)(e|%65))="  $binary_remote_addr;
+    "~*^/api/(nodes|positions|telemetry|neighbors|traces|ingestors|waypoints|messages)/?[?](.*&)?(l|%6c)(i|%69)(m|%6d)(i|%69)(t|%74)=(?!(10|200|1000)(&|$))"  $binary_remote_addr;
+}
+limit_req_zone $potatomesh_read zone=potatomesh_reads:10m rate=40r/s;
+
+# location / { }
+limit_req zone=potatomesh_reads burst=2400 nodelay;
+```
+
+An open dashboard sends up to 8 of these requests a second on a busy mesh, and
+visitors behind one NAT (camps, venues) share one address: set `rate` to 8r/s
+per such visitor.
+
 Verify after `nginx -t && systemctl reload nginx`:
 
 ```bash
