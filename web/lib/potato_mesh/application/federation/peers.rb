@@ -18,56 +18,47 @@ module PotatoMesh
   module App
     module Federation
       # Build the ordered list of peer domains the local instance should
-      # announce itself to.  Seed domains take precedence and are followed by
-      # peers seen in the local +instances+ table within the freshness window.
+      # announce itself to, and the roots of each crawl.  Seed domains take
+      # precedence and are followed by the rows this instance verified
+      # within the freshness window, by its own clock, longest-standing
+      # first; at most {INSTANCE_ROW_LIMIT} domains in all, each in its
+      # canonical form and none that federation refuses (SPEC FB2, FB4,
+      # FB9, FB10).
       #
       # @param self_domain [String, nil] sanitized local instance domain.
-      # @return [Array<String>] sanitized, deduplicated peer domains.
+      # @return [Array<String>] canonical, deduplicated peer domains.
       def federation_target_domains(self_domain)
-        normalized_self = sanitize_instance_domain(self_domain)&.downcase
+        normalized_self = federation_canonical_domain(self_domain)
         ordered = []
         seen = Set.new
+        take = lambda do |domain|
+          candidate = federation_canonical_domain(domain)
+          next if candidate.nil? || candidate == normalized_self || seen.include?(candidate)
+          next if federation_domain_refusal(candidate)
 
-        PotatoMesh::Config.federation_seed_domains.each do |seed|
-          sanitized = sanitize_instance_domain(seed)&.downcase
-          next unless sanitized
-          next if normalized_self && sanitized == normalized_self
-          next if seen.include?(sanitized)
-
-          ordered << sanitized
-          seen << sanitized
+          ordered << candidate
+          seen << candidate
         end
+
+        PotatoMesh::Config.federation_seed_domains.each(&take)
 
         db = open_database(readonly: true)
         db.results_as_hash = false
-        cutoff = Time.now.to_i - PotatoMesh::Config.week_seconds
+        now = Time.now.to_i
+        # Our own row and the seeds' rows can come first: one row more than
+        # the limit always leaves enough after them.
         rows = with_busy_retry do
           db.execute(
-            "SELECT domain, last_update_time FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''",
+            "SELECT domain FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != '' " \
+            "AND #{FRESH_ROW_SQL} ORDER BY #{ROOT_ORDER_SQL} LIMIT ?",
+            [now - PotatoMesh::Config.week_seconds, INSTANCE_ROW_LIMIT + 1],
           )
         end
-        rows.each do |row|
-          raw_domain = row[0]
-          last_update_time = coerce_integer(row[1])
-          next unless last_update_time && last_update_time >= cutoff
-
-          sanitized = sanitize_instance_domain(raw_domain)&.downcase
-          next unless sanitized
-          next if normalized_self && sanitized == normalized_self
-          next if seen.include?(sanitized)
-
-          ordered << sanitized
-          seen << sanitized
-        end
-        ordered
+        rows.each { |row| take.call(row[0]) }
+        ordered.first(INSTANCE_ROW_LIMIT)
       rescue SQLite3::Exception
-        fallback = PotatoMesh::Config.federation_seed_domains.filter_map do |seed|
-          candidate = sanitize_instance_domain(seed)&.downcase
-          next if normalized_self && candidate == normalized_self
-
-          candidate
-        end
-        fallback.uniq
+        # The seeds, taken before the database was read.
+        ordered
       ensure
         db&.close
       end

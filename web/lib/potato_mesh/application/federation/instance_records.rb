@@ -144,20 +144,37 @@ module PotatoMesh
       # waits for the write lock instead of failing on
       # +idx_instances_domain+ (SPEC FK1).
       #
+      # The row is stored under the domain's canonical form, with its
+      # registrable domain (SPEC FB3); an IP literal or a host without a
+      # registrable domain is refused (SPEC FB10). It records the write's
+      # time on this instance's clock as its verification time, as its
+      # first verification time when the row is new, and for an announcement
+      # as its announcement time; a write without one keeps the announcement
+      # time stored (SPEC FB2, FB9). The same transaction then evicts the
+      # rows past the caps, {#evict_instances_beyond_caps}, and every
+      # eviction is logged after the commit (SPEC FB3, FB4).
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param attributes [Hash] sanitized instance attributes.
       # @param signature [String] base64-encoded signature.
-      # @return [void]
-      # @raise [ArgumentError] when the domain is invalid or restricted.
+      # @param announced [Boolean] whether the record came by
+      #   +POST /api/instances+, verified.
+      # @return [Boolean] true when the written row is kept, false when the
+      #   caps evicted it at once.
+      # @raise [ArgumentError] when the domain is invalid, restricted or not
+      #   one federation takes.
       # @raise [SQLite3::Exception] when the write fails; nothing is written.
-      def upsert_instance_record(db, attributes, signature)
-        sanitized_domain = sanitize_instance_domain(attributes[:domain])
+      def upsert_instance_record(db, attributes, signature, announced: false)
+        sanitized_domain = federation_canonical_domain(attributes[:domain])
         raise ArgumentError, "invalid domain" unless sanitized_domain
 
         ip = ip_from_domain(sanitized_domain)
         if ip && restricted_ip_address?(ip)
           raise ArgumentError, "restricted domain"
         end
+
+        refusal = federation_domain_refusal(sanitized_domain)
+        raise ArgumentError, refusal if refusal
 
         normalized_domain = sanitized_domain
 
@@ -166,8 +183,9 @@ module PotatoMesh
             id, domain, pubkey, name, version, channel, frequency,
             latitude, longitude, last_update_time, is_private, nodes_count,
             meshcore_nodes_count, meshtastic_nodes_count, reticulum_nodes_count,
-            contact_link, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            contact_link, signature, last_verified_time, last_announced_time,
+            first_verified_time, registrable_domain
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             domain=excluded.domain,
             pubkey=excluded.pubkey,
@@ -184,10 +202,15 @@ module PotatoMesh
             meshtastic_nodes_count=COALESCE(excluded.meshtastic_nodes_count, instances.meshtastic_nodes_count),
             reticulum_nodes_count=COALESCE(excluded.reticulum_nodes_count, instances.reticulum_nodes_count),
             contact_link=excluded.contact_link,
-            signature=excluded.signature
+            signature=excluded.signature,
+            last_verified_time=excluded.last_verified_time,
+            last_announced_time=COALESCE(excluded.last_announced_time, instances.last_announced_time),
+            first_verified_time=COALESCE(instances.first_verified_time, excluded.first_verified_time),
+            registrable_domain=excluded.registrable_domain
         SQL
 
         nodes_count = coerce_integer(attributes[:nodes_count])
+        now = Time.now.to_i
         params = [
           attributes[:id],
           normalized_domain,
@@ -206,16 +229,22 @@ module PotatoMesh
           coerce_integer(attributes[:reticulum_nodes_count]),
           attributes[:contact_link],
           signature,
+          now,
+          announced ? now : nil,
+          now,
+          federation_registrable_domain(normalized_domain),
         ]
 
-        replaced_id = instance_record_transaction(db) do
+        replaced_id, capped = instance_record_transaction(db) do
           existing_id = db.get_first_value("SELECT id FROM instances WHERE domain = ?", normalized_domain)
           evict = existing_id && existing_id != attributes[:id]
           db.execute("DELETE FROM instances WHERE id = ?", existing_id) if evict
           db.execute(sql, params)
-          existing_id if evict
+          [(existing_id if evict), evict_instances_beyond_caps(db, domain: normalized_domain, now: now)]
         end
-        return unless replaced_id
+        log_evicted_instances(capped)
+        kept = capped.none? { |row| row[:id] == attributes[:id] }
+        return kept unless replaced_id
 
         # Logged after the write: a rolled-back eviction removed nothing.
         debug_log(
@@ -225,6 +254,7 @@ module PotatoMesh
           replaced_id: replaced_id,
           incoming_id: attributes[:id],
         )
+        kept
       end
     end
   end

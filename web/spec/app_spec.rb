@@ -393,11 +393,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
   # @param limit [Integer] number of fixture entries to submit.
   # @return [void]
   def import_instances_fixture(limit: instances_fixture.size)
+    # Each row reads as verified when its record was signed (SPEC FB2).
     insert_sql = <<~SQL
       INSERT INTO instances (
         id, domain, pubkey, name, version, channel, frequency,
-        latitude, longitude, last_update_time, is_private, signature
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        latitude, longitude, last_update_time, is_private, signature, last_verified_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     SQL
 
     with_db do |db|
@@ -417,6 +418,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
             instance["lastUpdateTime"],
             instance["isPrivate"] ? 1 : 0,
             instance["signature"],
+            instance["lastUpdateTime"],
           ],
         )
       end
@@ -1226,7 +1228,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "prioritises seed domains before database records" do
       with_db do |db|
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature, last_verified_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             "remote-id",
             "Remote.Mesh",
@@ -1240,6 +1242,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
             Time.now.to_i,
             0,
             "signature",
+            Time.now.to_i,
           ],
         )
       end
@@ -1260,12 +1263,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(targets).to eq(PotatoMesh::Config.federation_seed_domains.map(&:downcase))
     end
 
-    it "ignores remote instances that have not updated within a week" do
+    it "ignores remote instances this instance has not verified within a week (SPEC FB2)" do
       with_db do |db|
         db.execute("DELETE FROM instances")
         stale_time = (Time.now.to_i - PotatoMesh::Config.week_seconds - 60)
+        # The record's own last_update is current; the verification is not.
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature, last_verified_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             "stale-id",
             "stale.mesh",
@@ -1276,9 +1280,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
             nil,
             nil,
             nil,
-            stale_time,
+            Time.now.to_i,
             0,
             "signature",
+            stale_time,
           ],
         )
       end
@@ -2373,7 +2378,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "accepts bracketed IPv6 domains" do
+    it "refuses bracketed IPv6 domains, as every IP literal (SPEC FB10)" do
       ipv6_domain = "[2001:db8::1]"
       ipv6_attributes = instance_attributes.merge(domain: ipv6_domain)
       ipv6_signature_payload = canonical_instance_payload(ipv6_attributes)
@@ -2417,15 +2422,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/instances", ipv6_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
-      expect(last_response.status).to eq(201)
-      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "ip literal domain")
 
       with_db(readonly: true) do |db|
         stored_domain = db.get_first_value(
           "SELECT domain FROM instances WHERE id = ?",
           [ipv6_attributes[:id]],
         )
-        expect(stored_domain).to eq(ipv6_domain.downcase)
+        expect(stored_domain).to be_nil
       end
     end
 
@@ -2826,10 +2831,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
           hash_including(domain: stale_domain, reason: "node data is stale"),
         ],
       )
+      # An IP literal is refused before any request (SPEC FB10).
       expect(warning_calls).to include(
         [
-          ["Failed to persist remote instance"],
-          hash_including(domain: restricted_domain, error_class: "ArgumentError"),
+          ["Discarded remote instance entry"],
+          hash_including(domain: restricted_domain, reason: "ip literal domain"),
         ],
       )
     end
@@ -3137,8 +3143,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         insert_sql = <<~SQL
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
-            latitude, longitude, last_update_time, is_private, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, last_update_time, is_private, signature, last_verified_time
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         SQL
         db.execute(
           insert_sql,
@@ -3155,6 +3161,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
             older_time,
             0,
             "sig-old",
+            older_time,
           ],
         )
 
@@ -3173,6 +3180,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
             newer_time,
             0,
             "sig-new",
+            newer_time,
           ],
         )
       end

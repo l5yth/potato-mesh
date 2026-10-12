@@ -40,12 +40,14 @@ module PotatoMesh
         state[:mutex].synchronize { state[:last] = nil }
       end
 
-      # Resolve the canonical domain for the running instance.
+      # Resolve the canonical domain for the running instance: the form
+      # peers read and store, so our signed record matches its row there
+      # (SPEC FB3).
       #
-      # @return [String, nil] sanitized instance domain or nil outside production.
+      # @return [String, nil] canonical instance domain or nil outside production.
       # @raise [RuntimeError] when the domain cannot be determined in production.
       def self_instance_domain
-        sanitized = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))
+        sanitized = federation_canonical_domain(app_constant(:INSTANCE_DOMAIN))
         return sanitized if sanitized
 
         unless production_environment?
@@ -77,6 +79,11 @@ module PotatoMesh
         if ip && restricted_ip_address?(ip)
           return [false, "INSTANCE_DOMAIN resolves to restricted IP"]
         end
+
+        # An instance on an IP address, or on a host without a registrable
+        # domain, does not federate (SPEC FB10).
+        refusal = federation_domain_refusal(sanitized)
+        return [false, "INSTANCE_DOMAIN is not a federated hostname (#{refusal})"] if refusal
 
         [true, nil]
       end

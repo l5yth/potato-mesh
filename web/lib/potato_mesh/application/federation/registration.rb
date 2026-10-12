@@ -163,6 +163,9 @@ module PotatoMesh
       # Store a verified announcement and answer 201, unless the row stored
       # under its key meanwhile holds a +last_update+ at least as new: the
       # newest copy wins (SPEC FL1, FL7). Request context only; always halts.
+      # Either way the row's verification and announcement times become now
+      # (SPEC FB2). The log says +stored: false+ also for a row the caps
+      # evicted as it was written (SPEC FB4).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param attributes [Hash] the verified announcement's attributes.
@@ -171,11 +174,13 @@ module PotatoMesh
       def register_verified_instance!(db, attributes, signature)
         stored = !instance_copy_outdated?(stored_instance_copy(db, attributes), attributes)
         if stored
-          upsert_instance_record(db, attributes, signature)
+          stored = upsert_instance_record(db, attributes, signature, announced: true)
           # Drop the cached /api/instances payload so the new peer becomes
           # visible on the next dashboard refresh instead of after the TTL
           # naturally expires.
           PotatoMesh::App::ApiCache.invalidate_prefix("api:instances:")
+        else
+          touch_instance_verification(db, attributes, announced: true)
         end
         info_log(
           "Registered remote instance",

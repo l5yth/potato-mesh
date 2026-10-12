@@ -416,6 +416,12 @@ RSpec.shared_context "fake federation peers" do
   before do
     # The examples run federation, so they also pass under FEDERATION=0.
     allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+    # Fixture peers share one registrable domain (fed.invalid) and lists
+    # name many new domains: the per-domain cap and the relayer quota are
+    # lifted here, and spec/federation_bounds_spec.rb checks them (SPEC
+    # FB3, FB6).
+    stub_const("PotatoMesh::App::Federation::REGISTRABLE_DOMAIN_ROW_LIMIT", 10_000)
+    stub_const("PotatoMesh::App::Federation::RELAYER_NEW_DOMAIN_QUOTA", 10_000)
     # Anything that tries to resolve or connect fails loudly.
     allow(Addrinfo).to receive(:getaddrinfo).and_raise(SocketError, "spec: DNS disabled")
     allow(TCPSocket).to receive(:open).and_raise(SocketError, "spec: sockets disabled")

@@ -267,8 +267,9 @@ module PotatoMesh
       log_instance_public_key
       refresh_well_known_document_if_stale
       # The instance housekeeping runs here and on each federation
-      # announcement cycle, so GET /api/instances only reads (SPEC RC4).
+      # announcement cycle, so GET /api/instances only reads (SPEC RC4, FB4).
       clean_duplicate_instances!
+      enforce_instance_caps!
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
 
