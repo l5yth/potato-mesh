@@ -126,6 +126,7 @@
 * Docs: every environment variable the ingestor or web app reads is documented (SPEC DOC2)
 * Docs/Config: `configure.sh` and the NixOS module are no longer Meshtastic-only (SPEC DOC3)
 * Docs: the README documents every route (SPEC DOC4)
+* Docs: the README opens with the logo, the name, the badges and the 1.0 screenshot, centered (SPEC RH1)
 * Docs: the dual basemap-CDN egress disclosure was restored (SPEC SB6)
 * Docs: `CONTRACTS.md` corrected to match the served `/api/destinations` shape (SPEC DOC5)
 * Docs: `ACCEPTANCE.md` amended for the shipped Reticulum stats scope; README gains a Reticulum section
