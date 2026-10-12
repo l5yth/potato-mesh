@@ -261,6 +261,7 @@ module PotatoMesh
       scrub_destination_interfaces # SPEC RI3: needs the destinations table, so after the upgrades
       init_db unless db_schema_present?
       ensure_schema_parity!
+      start_database_keeper! # SPEC SK1: on the checked schema, so after the parity check
 
       log_instance_domain_resolution
       log_instance_public_key
