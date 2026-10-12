@@ -1,21 +1,37 @@
 <!-- Copyright © 2025-26 l5yth & contributors -->
 <!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
 
-# 🥔 PotatoMesh
+<p align="center">
+  <a href="https://potatomesh.net"><img src="./web/public/potatomesh-logo.svg" alt="" width="112" height="112"></a>
+</p>
 
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main)](https://github.com/l5yth/potato-mesh/actions)
-[![GitHub release](https://img.shields.io/github/v/release/l5yth/potato-mesh)](https://github.com/l5yth/potato-mesh/releases)
-[![codecov](https://codecov.io/gh/l5yth/potato-mesh/branch/main/graph/badge.svg?token=FS7252JVZT)](https://codecov.io/gh/l5yth/potato-mesh)
-[![Open-Source License](https://img.shields.io/github/license/l5yth/potato-mesh)](LICENSE)
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
-[![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
+<h1 align="center">PotatoMesh</h1>
 
-[![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
-[![Meshcore](https://img.shields.io/badge/Meshcore-supported-1f2937)](https://meshcore.io)
-[![Reticulum](https://img.shields.io/badge/Reticulum-experimental-7b61ff)](https://reticulum.network)
+<p align="center">
+  A federated Meshtastic, Meshcore, and Reticulum node dashboard for your local community.<br>
+  <em>No MQTT clutter, just local LoRa aether.</em>
+</p>
 
-A federated Meshtastic, Meshcore, and Reticulum node dashboard for your local community.
-_No MQTT clutter, just local LoRa aether._
+<p align="center">
+  <a href="https://github.com/l5yth/potato-mesh/actions"><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main"></a>
+  <a href="https://github.com/l5yth/potato-mesh/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/l5yth/potato-mesh"></a>
+  <a href="https://codecov.io/gh/l5yth/potato-mesh"><img alt="codecov" src="https://codecov.io/gh/l5yth/potato-mesh/branch/main/graph/badge.svg?token=FS7252JVZT"></a>
+  <a href="LICENSE"><img alt="Open-Source License" src="https://img.shields.io/github/license/l5yth/potato-mesh"></a>
+  <a href="https://github.com/l5yth/potato-mesh/issues"><img alt="Contributions Welcome" src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat"></a>
+  <a href="https://matrix.to/#/#potatomesh:dod.ngo"><img alt="Matrix Chat" src="https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue"></a>
+</p>
+
+<p align="center">
+  <a href="https://meshtastic.org"><img alt="Meshtastic" src="https://img.shields.io/badge/Meshtastic-supported-67ea94"></a>
+  <a href="https://meshcore.io"><img alt="Meshcore" src="https://img.shields.io/badge/Meshcore-supported-1f2937"></a>
+  <a href="https://reticulum.network"><img alt="Reticulum" src="https://img.shields.io/badge/Reticulum-experimental-7b61ff"></a>
+</p>
+
+<p align="center">
+  <a href="https://potatomesh.net"><img src="./scrot-1.0.png" alt="PotatoMesh 1.0 dashboard: chat log, live node map and nodes table"></a>
+</p>
+
+<p align="center">Live demo for Berlin: <a href="https://potatomesh.net">potatomesh.net</a></p>
 
 * Web dashboard: map + chat, nodes, positions, neighbors, trace routes, telemetry, messages.
   * API to `POST` (authenticated) and `GET` nodes, messages, and telemetry.
@@ -27,10 +43,6 @@ _No MQTT clutter, just local LoRa aether._
   * Supports multiple ingestors per instance.
   * Supports Meshtastic, Meshcore, and Reticulum (experimental, announce-only).
 * Matrix bridge posts Meshtastic messages to a Matrix channel (no radio required).
-
-Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
-
-![screenshot of the sixth version](./scrot-0.7.png)
 
 Jump to Contents:
 - [Web App](#web-app) - configuration, running, deploying, monitoring, etc.
