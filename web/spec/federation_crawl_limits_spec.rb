@@ -382,8 +382,10 @@ RSpec.describe "Federation crawl limits" do
 
       with_env("FEDERATION_MAX_REQUESTS_PER_CRAWL" => "7") { crawl(root) }
 
+      # Breadth first: the root's list, then three peers' well-known and
+      # node list; no peer's own list is reached (SPEC FB6).
       expect(fed.total).to eq(7)
-      expect(stored_rows.map(&:first)).to eq(domains.first(2))
+      expect(stored_rows.map(&:first)).to eq(domains.first(3))
     end
 
     it "stops a crawl at its deadline, FEDERATION_TASK_TIMEOUT" do

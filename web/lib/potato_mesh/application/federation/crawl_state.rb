@@ -19,17 +19,23 @@ require "set"
 module PotatoMesh
   module App
     module Federation
-      # The state of one federation crawl, passed through its recursion in
-      # place of the earlier +visited+ Set (SPEC FL1, FL6).
+      # The state of one federation crawl, passed through its walk in place
+      # of the earlier +visited+ Set (SPEC FL1, FL6).
       #
-      # It holds the crawl's limits, a domain budget, a request budget and a
-      # deadline, and what the crawl learned on the way: the hosts it claimed
-      # in the process-wide peer fetch cooldown, the hosts whose instance list
-      # it walked, the outcome of each host's visit, the well-known document
-      # of each domain it fetched (failures included), the port variant of
-      # each host whose well-known it fetched, and the domains and requests it
-      # spent. One crawl runs on one thread, so the object is not
-      # synchronized.
+      # It holds the crawl's limits, a domain budget, a request budget, a
+      # deadline and a quota of new domains per relayer, and what the crawl
+      # learned on the way: the hosts it claimed in the process-wide peer
+      # fetch cooldown, the hosts whose instance list it walked, the outcome
+      # of each host's visit, the well-known document of each domain it
+      # fetched (failures included), the port variant of each host whose
+      # well-known it fetched, the new domains each relayer brought in the
+      # current round, and the domains and requests it spent. It also holds
+      # the queue of domains whose lists are still to walk, in the order the
+      # crawl reached them, taken one level at a time so the crawl walks
+      # breadth first, and the records waiting for the next round of their
+      # level once their relayer's quota was spent, with the roots whose
+      # lists they came from (SPEC FB6, FB9). One crawl runs on one thread,
+      # so the object is not synchronized.
       class CrawlState
         # @return [String, nil] this instance's own domain key, a default port
         #   dropped, which the crawl never fetches.
@@ -52,12 +58,16 @@ module PotatoMesh
         # @param max_domains [Integer] most domains the crawl may fetch.
         # @param max_requests [Integer] most requests the crawl may send.
         # @param deadline_seconds [Numeric] seconds the crawl may run.
+        # @param new_domains_per_relayer [Integer] most new domains one
+        #   relayer brings into one round of the crawl.
         # @param clock [#call] monotonic clock in seconds.
         def initialize(own_domain:, max_domains:, max_requests:, deadline_seconds:,
+                       new_domains_per_relayer: RELAYER_NEW_DOMAIN_QUOTA,
                        clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
           @own_domain = own_domain
           @max_domains = max_domains
           @max_requests = max_requests
+          @new_domains_per_relayer = new_domains_per_relayer
           @clock = clock
           @deadline = clock.call + deadline_seconds
           @walked = Set.new
@@ -68,6 +78,88 @@ module PotatoMesh
           @fetched_domains = Set.new
           @requests = 0
           @stop_reason = nil
+          @frontier = []
+          @new_domains = Hash.new { |relayers, relayer| relayers[relayer] = Set.new }
+          @deferred = []
+          @roots = Set.new
+        end
+
+        # Keep a record whose relayer's quota is spent for the next round.
+        #
+        # @param entry [Object] the decoded list entry.
+        # @param relayed_by [String] domain whose list holds it.
+        # @return [void]
+        def defer(entry, relayed_by)
+          @deferred << [entry, relayed_by]
+        end
+
+        # Start the next round: every relayer gets its quota again, and the
+        # records kept for this round are handed back.
+        #
+        # @return [Array<Array(Object, String)>] the kept records with their
+        #   relayers, in the order they were kept.
+        def next_round
+          deferred = @deferred
+          @deferred = []
+          @new_domains.clear
+          deferred
+        end
+
+        # Record that the crawl started from +domain+'s list.
+        #
+        # @param domain [String] a root domain.
+        # @return [void]
+        def mark_root(domain)
+          @roots << domain
+        end
+
+        # @param domain [String] a domain whose list was walked.
+        # @return [Boolean] true when the crawl started from it.
+        def root?(domain)
+          @roots.include?(domain)
+        end
+
+        # Queue +domain+ for the walk of its list, after every domain queued
+        # before it.
+        #
+        # @param domain [String] domain whose list is to walk.
+        # @param relayed [Boolean] whether a peer's list named the domain,
+        #   rather than the crawl starting from it.
+        # @return [void]
+        def enqueue(domain, relayed: false)
+          @frontier << [domain, relayed]
+        end
+
+        # Take every domain queued so far, one level of the walk, and start
+        # the level's first round: every relayer gets its quota again. The
+        # domains queued from now on form the next level (SPEC FB9).
+        #
+        # @return [Array<Array(String, Boolean)>] each domain and whether a
+        #   peer's list named it, in the order they were queued; empty once
+        #   nothing is left to walk.
+        def take_level
+          level = @frontier
+          @frontier = []
+          @new_domains.clear
+          level
+        end
+
+        # Let +relayer+ bring +domain+ into the crawl as a new domain, while
+        # it has brought fewer than its quota in this round; a domain it
+        # already brought is let through again.
+        #
+        # @param relayer [String, nil] the registrable domain of the peer
+        #   whose list names the domain, its host when it has none (SPEC
+        #   FB9).
+        # @param domain [String] domain key of the new domain.
+        # @return [Boolean] true when the domain may go on.
+        def admit_new_domain(relayer, domain)
+          brought = @new_domains[relayer]
+          return true if brought.include?(domain)
+          return false if brought.size >= @new_domains_per_relayer
+
+          brought << domain
+          true
         end
 
         # Whether the crawl must stop: a budget was spent or its deadline
@@ -183,13 +275,15 @@ module PotatoMesh
       end
 
       # Clear the process-wide federation peer state: the fetch cooldown, the
-      # backoff and the revalidation store of every peer host, and the
-      # registration verifications counted in flight.
+      # backoff and the revalidation store of every peer host, the
+      # registration verifications counted in flight, and the announce
+      # targets kept for the next cycle (SPEC FB5).
       #
       # @return [void]
       def clear_federation_crawl_state!
         federation_peer_backoff.reset!
         reset_federation_registration_slots!
+        reset_announce_backlog!
       end
     end
   end

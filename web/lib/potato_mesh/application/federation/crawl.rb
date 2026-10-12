@@ -89,7 +89,7 @@ module PotatoMesh
         id = string_or_nil(payload["id"])
         return [nil, nil, "missing instance id"] unless id
 
-        domain = sanitize_instance_domain(payload["domain"])
+        domain = federation_canonical_domain(payload["domain"])
         return [nil, nil, "missing instance domain"] unless domain
 
         # Accept both the v2 (snake_case) and legacy v1 (camelCase) wire keys so
@@ -375,18 +375,22 @@ module PotatoMesh
       # +last_update+ wins and an older copy never rolls a row back (SPEC
       # FL1). Missing counts are filled first, their fetches made once per
       # host; the row is checked again right before the write, as one stored
-      # while they were fetched may be newer.
+      # while they were fetched may be newer. A copy kept out that way still
+      # verified the stored row, whose verification time becomes now (SPEC
+      # FB2).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param crawl [CrawlState] the crawl.
       # @param host [String, nil] the record's host.
       # @param attributes [Hash] verified record attributes.
       # @param signature [String] the record's signature.
-      # @return [Boolean] true when the copy was written.
+      # @return [Boolean] true when the instance's row is stored afterwards:
+      #   the copy was written and kept by the caps, or the stored row was
+      #   at least as new.
       # @raise [ArgumentError] when the domain is invalid or restricted.
       def store_crawled_instance(db, crawl, host, attributes, signature)
         domain = attributes[:domain]
-        return false if crawled_copy_outdated?(db, attributes)
+        return touch_crawled_copy(db, attributes) if crawled_copy_outdated?(db, attributes)
 
         visit = crawl.visit(host)
         fill_missing_instance_counts!(
@@ -399,9 +403,19 @@ module PotatoMesh
             end
           },
         )
-        return false if crawled_copy_outdated?(db, attributes)
+        return touch_crawled_copy(db, attributes) if crawled_copy_outdated?(db, attributes)
 
         upsert_instance_record(db, attributes, signature)
+      end
+
+      # Record that the crawl verified the row stored under a copy it kept
+      # out (SPEC FB2).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param attributes [Hash] verified record attributes.
+      # @return [Boolean] true: the instance's row stays stored.
+      def touch_crawled_copy(db, attributes)
+        touch_instance_verification(db, attributes)
         true
       end
 
@@ -428,20 +442,24 @@ module PotatoMesh
       # Handle one entry of a peer's +/api/instances+ list.
       #
       # Every entry gets the local checks: its shape, the private flag, its
-      # signature, then FS9's id rule and FS8's well-known check, the
-      # document memoized per crawl. The network fetches after them, the
-      # node list, the count fallbacks and the walk of the entry's own list,
-      # happen once per host and crawl; the crawl never fetches this
-      # instance's own domain nor a host inside its peer fetch cooldown
-      # (SPEC FL1-FL3, FS8, FS9).
+      # signature, its signed +last_update+ (SPEC FB1) and its domain (SPEC
+      # FB10), then FS9's id rule and FS8's well-known check, the document
+      # memoized per crawl. An entry for a domain with no stored row is
+      # skipped when its registrable domain is full, and otherwise takes one
+      # of its relayer's new-domain slots or waits for the crawl's next round
+      # (SPEC FB6, FB9). The network fetches after them, the node list, the
+      # count fallbacks and the walk of the entry's own list, happen once per
+      # host and crawl; the list is queued, behind the lists queued before
+      # it, when the instance's row is kept (SPEC FB6); the crawl never
+      # fetches this instance's own domain nor a host inside its peer fetch
+      # cooldown (SPEC FL1-FL3, FS8, FS9).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param crawl [CrawlState] the crawl.
       # @param entry [Object] one decoded list entry.
       # @param relayed_by [String] domain whose list holds the entry.
-      # @param per_response_limit [Integer] most entries read per list.
       # @return [void]
-      def ingest_crawled_instance_entry(db, crawl, entry, relayed_by:, per_response_limit:)
+      def ingest_crawled_instance_entry(db, crawl, entry, relayed_by:)
         attributes, signature, reason = remote_instance_attributes_from_payload(entry)
         unless attributes && signature
           warn_log(
@@ -472,6 +490,29 @@ module PotatoMesh
           return
         end
 
+        if instance_last_update_ahead?(attributes[:last_update_time])
+          warn_log(
+            "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: attributes[:domain],
+            reason: "last_update in the future",
+            relayed_by: relayed_by,
+          )
+          return
+        end
+
+        refusal = federation_domain_refusal(attributes[:domain])
+        if refusal
+          warn_log(
+            "Discarded remote instance entry",
+            context: "federation.instances",
+            domain: attributes[:domain],
+            reason: refusal,
+            relayed_by: relayed_by,
+          )
+          return
+        end
+
         domain = attributes[:domain]
         if crawl.own_domain?(federation_domain_key(domain))
           debug_log(
@@ -485,6 +526,13 @@ module PotatoMesh
 
         host = federation_peer_host(domain)
         return if federation_crawl_skip?(crawl, host, domain, "Skipped remote instance entry")
+
+        case relayer_admission(db, crawl, attributes, relayed_by)
+        when :skip then return
+        when :defer
+          crawl.defer(entry, relayed_by)
+          return
+        end
 
         # The signature proves only that the record was signed by the key it
         # carries. Its id must be the one that key derives, and unless the
@@ -507,8 +555,7 @@ module PotatoMesh
         return unless visit_crawled_instance(crawl, domain, host)[:accepted]
 
         begin
-          store_crawled_instance(db, crawl, host, attributes, signature)
-          ingest_known_instances_from!(db, domain, crawl: crawl, per_response_limit: per_response_limit)
+          crawl.enqueue(domain, relayed: true) if store_crawled_instance(db, crawl, host, attributes, signature)
         rescue ArgumentError, SQLite3::Exception => e
           # One entry's database error ends that entry only (SPEC FK2).
           warn_log(
@@ -521,18 +568,20 @@ module PotatoMesh
         end
       end
 
-      # Walk the federation records exposed by the supplied domain, and
-      # recursively the lists of the peers it names.
+      # Walk the federation records exposed by the supplied domain, and then
+      # the lists of the peers it names, breadth first (SPEC FB6).
       #
-      # One crawl state runs through the recursion (SPEC FL1, FL6): each
-      # host is fetched at most once, the walk stops at the crawl's request
-      # budget, domain budget ({PotatoMesh::Config.federation_max_domains_per_crawl}
+      # One crawl state runs through the walk (SPEC FL1, FL6): each host is
+      # fetched at most once, the walk stops at the crawl's request budget,
+      # domain budget ({PotatoMesh::Config.federation_max_domains_per_crawl}
       # domains fetched) or deadline, and a host fetched inside its
       # {PotatoMesh::Config.federation_peer_fetch_cooldown_seconds} outside
       # this crawl is skipped. A peer is judged on one
       # +/api/nodes?limit=10+ list, its newest nodes inside the 7-day floor
       # (ACCEPTANCE FS-A5); node counts come from the signed record, else
-      # from {#fill_missing_instance_counts!} (SPEC FL2, RL9).
+      # from {#fill_missing_instance_counts!} (SPEC FL2, RL9). The domain is
+      # queued behind the domains the crawl already queued; with +walk+ the
+      # queue is walked until it is empty or the crawl stops.
       #
       # @param db [SQLite3::Database] open database connection used for writes.
       # @param domain [String] remote domain to crawl for federation records.
@@ -541,29 +590,134 @@ module PotatoMesh
       # @param per_response_limit [Integer, nil] maximum entries processed per response.
       # @param overall_limit [Integer, nil] most domains a crawl started here
       #   fetches.
+      # @param walk [Boolean] false queues the domain only, for the caller
+      #   to walk with {#walk_federation_frontier}.
       # @return [CrawlState] the crawl.
       def ingest_known_instances_from!(
         db,
         domain,
         crawl: nil,
         per_response_limit: nil,
-        overall_limit: nil
+        overall_limit: nil,
+        walk: true
       )
         crawl ||= new_federation_crawl(max_domains: overall_limit)
+        crawl.enqueue(domain)
+        walk_federation_frontier(db, crawl, per_response_limit) if walk
+        crawl
+      end
+
+      # Walk the lists the crawl queued, one level at a time, until nothing
+      # is left or the crawl stops (SPEC FB6): every list of one level is
+      # walked before the lists those name. Before the next level, the
+      # records of this level kept for a later round, their relayers' quotas
+      # spent, are taken up with fresh quotas, round after round, so a deeper
+      # level never spends the budget ahead of them (SPEC FB9).
+      #
+      # @param db [SQLite3::Database] open database connection used for writes.
+      # @param crawl [CrawlState] the crawl.
+      # @param per_response_limit [Integer, nil] maximum entries processed per response.
+      # @return [CrawlState] the crawl.
+      def walk_federation_frontier(db, crawl, per_response_limit = nil)
         per_response_limit ||= PotatoMesh::Config.federation_max_instances_per_response
-        sanitized = sanitize_instance_domain(domain)
-        return crawl unless sanitized
-        return crawl if federation_shutdown_requested? || crawl.stopped? || crawl.own_domain?(federation_domain_key(sanitized))
+        until federation_shutdown_requested? || crawl.stopped? || (level = crawl.take_level).empty?
+          level.each do |queued|
+            break if federation_shutdown_requested? || crawl.stopped?
+
+            walk_queued_instance_list(db, crawl, *queued, per_response_limit)
+          end
+          take_up_deferred_instance_entries(db, crawl)
+        end
+        crawl
+      end
+
+      # Take up the records the current level kept for a later round, round
+      # after round with fresh quotas, until none is left or the crawl stops
+      # (SPEC FB9). Each round lets every relayer bring its quota again, so
+      # each round takes up at least one record per relayer.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @return [void]
+      def take_up_deferred_instance_entries(db, crawl)
+        until federation_shutdown_requested? || crawl.stopped? || (deferred = crawl.next_round).empty?
+          deferred.each do |entry, relayed_by|
+            break if federation_shutdown_requested? || crawl.stopped?
+
+            ingest_deferred_instance_entry(db, crawl, entry, relayed_by)
+          end
+        end
+      end
+
+      # Take up one record kept for this round (SPEC FB9), with the rescue
+      # its relayer's list walk gave it: a database error outside the
+      # record's store ends the crawl for a root's record and is logged for
+      # any other (SPEC FK2).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @param entry [Object] the decoded list entry.
+      # @param relayed_by [String] domain whose list held it.
+      # @return [void]
+      def ingest_deferred_instance_entry(db, crawl, entry, relayed_by)
+        catch(FEDERATION_CRAWL_STOPPED) do
+          ingest_crawled_instance_entry(db, crawl, entry, relayed_by: relayed_by)
+        end
+      rescue ArgumentError, SQLite3::Exception => e
+        raise if crawl.root?(relayed_by)
+
+        warn_log(
+          "Failed to persist remote instance",
+          context: "federation.instances",
+          domain: relayed_by,
+          error_class: e.class.name,
+          error_message: e.message,
+        )
+      end
+
+      # Walk the list of one queued domain, unless it is this instance's own,
+      # federation refuses it (SPEC FB10), its host's list was walked in this
+      # crawl, or its host is skipped (SPEC FL1, FL3). A database error ends
+      # the walk of a list a peer named, logged as the entry that named it,
+      # and the crawl goes on; for a list the crawl started from it ends the
+      # crawl (SPEC FK2).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param crawl [CrawlState] the crawl.
+      # @param domain [String] queued domain.
+      # @param relayed [Boolean] whether a peer's list named the domain.
+      # @param per_response_limit [Integer] most entries read per list.
+      # @return [void]
+      def walk_queued_instance_list(db, crawl, domain, relayed, per_response_limit)
+        sanitized = federation_canonical_domain(domain)
+        return unless sanitized
+        return if crawl.own_domain?(federation_domain_key(sanitized))
+
+        refusal = federation_domain_refusal(sanitized)
+        if refusal
+          debug_log("Skipped remote instance crawl", context: "federation.instances", domain: sanitized, reason: refusal)
+          return
+        end
 
         host = federation_peer_host(sanitized)
-        return crawl if crawl.walked?(host)
-        return crawl if federation_crawl_skip?(crawl, host, sanitized, "Skipped remote instance crawl")
+        return if crawl.walked?(host)
+        return if federation_crawl_skip?(crawl, host, sanitized, "Skipped remote instance crawl")
 
         crawl.walk(host)
+        crawl.mark_root(sanitized) unless relayed
         catch(FEDERATION_CRAWL_STOPPED) do
           walk_remote_instance_list(db, crawl, sanitized, per_response_limit)
         end
-        crawl
+      rescue ArgumentError, SQLite3::Exception => e
+        raise unless relayed
+
+        warn_log(
+          "Failed to persist remote instance",
+          context: "federation.instances",
+          domain: domain,
+          error_class: e.class.name,
+          error_message: e.message,
+        )
       end
 
       # Fetch +domain+'s +/api/instances+ list and handle its entries.
@@ -587,39 +741,52 @@ module PotatoMesh
           return
         end
 
-        processed_entries = 0
-        payload.each do |entry|
+        entries = payload
+        limited = per_response_limit.to_i.positive? && payload.size > per_response_limit
+        entries = payload.first(per_response_limit) if limited
+        # Known peers first: a stored row needs no slot, so the peers this
+        # instance already holds are verified again before new domains spend
+        # the crawl's budget (SPEC FB9).
+        known, unknown = entries.partition { |entry| known_instance_entry?(db, entry) }
+        (known + unknown).each do |entry|
           break if federation_shutdown_requested? || crawl.stopped?
 
-          if per_response_limit && per_response_limit.positive? && processed_entries >= per_response_limit
-            debug_log(
-              "Skipped remote instance entry due to response limit",
-              context: "federation.instances",
-              domain: domain,
-              limit: per_response_limit,
-            )
-            break
-          end
-
-          processed_entries += 1
-          ingest_crawled_instance_entry(db, crawl, entry, relayed_by: domain, per_response_limit: per_response_limit)
+          ingest_crawled_instance_entry(db, crawl, entry, relayed_by: domain)
         end
+        return unless limited && !federation_shutdown_requested? && !crawl.stopped?
+
+        debug_log(
+          "Skipped remote instance entry due to response limit",
+          context: "federation.instances",
+          domain: domain,
+          limit: per_response_limit,
+        )
+      end
+
+      # Whether a list entry names a domain this instance holds a row for.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param entry [Object] one decoded list entry.
+      # @return [Boolean] true for a stored domain.
+      def known_instance_entry?(db, entry)
+        domain = entry.is_a?(Hash) && federation_canonical_domain(entry["domain"])
+        domain ? !stored_instance_key_and_update(db, domain).first.nil? : false
       end
 
       # Crawl the federation once from this instance's seeds and known peers
       # under one crawl state (SPEC FL3). The announcer thread runs it every
-      # announcement interval through {#run_federation_crawl_cycle}.
+      # announcement interval through {#run_federation_crawl_cycle}. Every
+      # root is queued before any list is walked, so the crawl reads the
+      # roots' lists first, in the keep order of the roots, and the lists
+      # they name after (SPEC FB4, FB6).
       #
       # @return [CrawlState] the finished crawl.
       def crawl_federation!
         crawl = new_federation_crawl
         roots = federation_target_domains(crawl.own_domain)
         db = open_database
-        roots.each do |root|
-          break if federation_shutdown_requested? || crawl.stopped?
-
-          ingest_known_instances_from!(db, root, crawl: crawl)
-        end
+        roots.each { |root| ingest_known_instances_from!(db, root, crawl: crawl, walk: false) }
+        walk_federation_frontier(db, crawl)
         info_log(
           "Federation crawl complete",
           context: "federation.instances",

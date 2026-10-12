@@ -263,7 +263,8 @@ module PotatoMesh
       # @return [Array(String, String)] pair of JSON output and base64 signature.
       def build_well_known_document
         last_update = latest_node_update_timestamp
-        domain_value = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))
+        # The canonical form peers compare the document with (SPEC FB3).
+        domain_value = federation_canonical_domain(app_constant(:INSTANCE_DOMAIN))
 
         payload = {
           "public_key" => app_constant(:INSTANCE_PUBLIC_KEY_PEM),

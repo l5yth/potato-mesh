@@ -1790,14 +1790,15 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.announce_instance_to_all_domains
     end
 
-    it "falls back to synchronous announcements when the queue is saturated" do
+    it "skips the announcements a saturated queue refuses instead of sending them itself (SPEC FB5)" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
       allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
       allow(federation_helpers).to receive(:wait_for_federation_tasks)
-      expect(federation_helpers).to receive(:announce_instance_to_domain).with("alpha.mesh", "payload-json").once
-      expect(federation_helpers).to receive(:announce_instance_to_domain).with("beta.mesh", "payload-json").once
+      expect(federation_helpers).not_to receive(:announce_instance_to_domain)
 
       federation_helpers.announce_instance_to_all_domains
+
+      expect(federation_helpers.warn_messages).to eq(["Skipped federation announcement"] * 2)
     end
 
     it "runs synchronously when the worker pool is unavailable" do

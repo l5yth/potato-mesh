@@ -45,7 +45,7 @@ RSpec.describe PotatoMesh::App::Instances do
   end
 
   describe ".load_instances_for_api" do
-    it "only returns instances updated within the configured rolling window" do
+    it "only returns instances this instance verified within the configured rolling window (SPEC FB2)" do
       fixed_time = Time.utc(2025, 1, 15, 12, 0, 0)
       allow(Time).to receive(:now).and_return(fixed_time)
 
@@ -54,47 +54,50 @@ RSpec.describe PotatoMesh::App::Instances do
       recent_timestamp = fixed_time.to_i - (week_seconds / 2)
       stale_timestamp = fixed_time.to_i - week_seconds - 60
 
+      # The stale row's signed last_update is recent: only the time this
+      # instance last verified it decides.
       with_db do |db|
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, last_verified_time) VALUES (?, ?, ?, ?, ?, ?)",
           [
             "recent-instance",
             "recent.mesh.test",
             PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
             recent_timestamp,
             0,
+            recent_timestamp,
           ],
         )
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, last_verified_time) VALUES (?, ?, ?, ?, ?, ?)",
           [
             "stale-instance",
             "stale.mesh.test",
             PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
-            stale_timestamp,
+            recent_timestamp,
             0,
+            stale_timestamp,
           ],
         )
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, is_private) VALUES (?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, is_private, last_verified_time) VALUES (?, ?, ?, ?, ?)",
           [
             "missing-instance",
             "missing.mesh.test",
             PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
             0,
+            recent_timestamp,
           ],
         )
       end
 
       payload = application_class.load_instances_for_api
       domains = payload.map { |row| row["domain"] }
-      lower_bound = fixed_time.to_i - week_seconds
 
       expect(domains).to include("recent.mesh.test")
       expect(domains).to include(application_class.app_constant(:INSTANCE_DOMAIN))
       expect(domains).not_to include("stale.mesh.test")
       expect(domains).not_to include("missing.mesh.test")
-      expect(payload.all? { |row| row["last_update"] >= lower_bound }).to be(true)
     end
 
     it "skips a row whose stored update time is not a number" do
@@ -118,7 +121,7 @@ RSpec.describe PotatoMesh::App::Instances do
 
       with_db do |db|
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link, last_verified_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
           [
             "instance-with-contact",
             "alpha.mesh.test",
@@ -126,10 +129,11 @@ RSpec.describe PotatoMesh::App::Instances do
             fixed_time.to_i,
             0,
             " https://example.org/contact ",
+            fixed_time.to_i,
           ],
         )
         db.execute(
-          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link, last_verified_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
           [
             "instance-without-contact",
             "beta.mesh.test",
@@ -137,6 +141,7 @@ RSpec.describe PotatoMesh::App::Instances do
             fixed_time.to_i,
             0,
             " \t ",
+            fixed_time.to_i,
           ],
         )
       end
@@ -156,8 +161,8 @@ RSpec.describe PotatoMesh::App::Instances do
       with_db do |db|
         db.execute(
           <<~SQL,
-          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, last_verified_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         SQL
           [
             "instance-with-nodes",
@@ -166,12 +171,13 @@ RSpec.describe PotatoMesh::App::Instances do
             fixed_time.to_i,
             0,
             42,
+            fixed_time.to_i,
           ],
         )
         db.execute(
           <<~SQL,
-          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, last_verified_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         SQL
           [
             "instance-with-zero",
@@ -180,6 +186,7 @@ RSpec.describe PotatoMesh::App::Instances do
             fixed_time.to_i,
             0,
             0,
+            fixed_time.to_i,
           ],
         )
       end
@@ -199,8 +206,8 @@ RSpec.describe PotatoMesh::App::Instances do
       with_db do |db|
         db.execute(
           <<~SQL,
-          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, meshcore_nodes_count, meshtastic_nodes_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, meshcore_nodes_count, meshtastic_nodes_count, last_verified_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         SQL
           [
             "instance-proto-counts",
@@ -211,12 +218,13 @@ RSpec.describe PotatoMesh::App::Instances do
             50,
             20,
             30,
+            fixed_time.to_i,
           ],
         )
         db.execute(
           <<~SQL,
-          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, last_verified_time)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         SQL
           [
             "instance-no-proto",
@@ -225,6 +233,7 @@ RSpec.describe PotatoMesh::App::Instances do
             fixed_time.to_i,
             0,
             10,
+            fixed_time.to_i,
           ],
         )
       end

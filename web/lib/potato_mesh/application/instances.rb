@@ -19,7 +19,8 @@ module PotatoMesh
     # Helper methods for maintaining and presenting instance records.
     module Instances
       # Remove duplicate instance records grouped by their canonical domain name
-      # while favouring the most recent entry.
+      # while favouring the most recent entry. The canonical form is the one
+      # the federation caps read (SPEC FB3).
       #
       # @return [void]
       def clean_duplicate_instances!
@@ -35,7 +36,7 @@ module PotatoMesh
         end
 
         grouped = rows.group_by do |row|
-          sanitize_instance_domain(row[1])&.downcase
+          federation_canonical_domain(row[1])
         rescue StandardError
           nil
         end
@@ -168,21 +169,26 @@ module PotatoMesh
         nil
       end
 
-      # Fetch all instance rows ready to be served by the API while handling
-      # malformed rows gracefully. The dataset is restricted to records updated
-      # within the rolling window defined by PotatoMesh::Config.week_seconds.
-      # Reads only: {#clean_duplicate_instances!} runs at boot and on each
+      # Fetch the instance rows ready to be served by the API while handling
+      # malformed rows gracefully. The dataset is restricted to the rows this
+      # instance verified within the rolling window defined by
+      # PotatoMesh::Config.week_seconds, by its own clock, and served in the
+      # keep order, at most {Federation::INSTANCE_ROW_LIMIT} of them (SPEC
+      # FB2, FB4). Each listed peer row carries its signed +last_update+.
+      # Reads only: {#clean_duplicate_instances!} and
+      # {Federation#enforce_instance_caps!} run at boot and on each
       # announcement cycle instead (SPEC RC4).
       #
       # @return [Array<Hash>] list of cleaned instance payloads.
       def load_instances_for_api
         now = Time.now.to_i
-        min_last_update_time = now - PotatoMesh::Config.week_seconds
+        min_verified_time = now - PotatoMesh::Config.week_seconds
         self_id = app_constant(:SELF_INSTANCE_ID)
         # Our own row is stored at boot and on each announcement cycle only, so
         # its time can trail a node heard since: it is listed by its newest
         # node, read now, as when every GET refreshed it first (SPEC RC4).
-        self_listed = (latest_node_update_timestamp || now) >= min_last_update_time
+        self_listed = (latest_node_update_timestamp || now) >= min_verified_time
+        order, order_params = instance_keep_order(now: now)
         db = open_database(readonly: true)
         db.results_as_hash = true
         sql = <<~SQL
@@ -193,12 +199,13 @@ module PotatoMesh
           FROM instances
           WHERE domain IS NOT NULL AND TRIM(domain) != ''
             AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
-            AND (id = ? OR (last_update_time IS NOT NULL AND last_update_time >= ?))
-          ORDER BY LOWER(domain)
+            AND (id = ? OR (typeof(last_verified_time) = 'integer' AND last_verified_time >= ?))
+          ORDER BY #{order}
+          LIMIT ?
         SQL
 
         rows = with_busy_retry do
-          db.execute(sql, [self_id, min_last_update_time])
+          db.execute(sql, [self_id, min_verified_time, *order_params, PotatoMesh::App::Federation::INSTANCE_ROW_LIMIT])
         end
 
         rows.each_with_object([]) do |row, memo|
@@ -208,8 +215,7 @@ module PotatoMesh
           if normalized["id"] == self_id
             next unless self_listed
           else
-            last_update_time = normalized["last_update"]
-            next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
+            next unless normalized["last_update"].is_a?(Integer)
           end
 
           memo << normalized

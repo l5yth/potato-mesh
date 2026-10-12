@@ -31,7 +31,17 @@ CREATE TABLE IF NOT EXISTS instances (
   meshtastic_nodes_count INTEGER,
   reticulum_nodes_count  INTEGER,
   contact_link      TEXT,
-  signature         TEXT
+  signature         TEXT,
+  -- This instance's clock: when it last stored or verified the row, when
+  -- the instance last announced itself to it, and when this instance first
+  -- stored it (SPEC FB2, FB9).
+  last_verified_time  INTEGER,
+  last_announced_time INTEGER,
+  first_verified_time INTEGER,
+  -- The domain's registrable domain, the group of the per-domain cap
+  -- (SPEC FB3).
+  registrable_domain  TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_domain ON instances(domain);
+CREATE INDEX IF NOT EXISTS idx_instances_registrable_domain ON instances(registrable_domain);

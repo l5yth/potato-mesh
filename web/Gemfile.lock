@@ -94,6 +94,7 @@ DEPENDENCIES
   kramdown (~> 2.4)
   kramdown-parser-gfm (~> 1.1)
   prometheus-client
+  public_suffix (= 7.0.5)
   puma (~> 8.0)
   rack-test (~> 2.1)
   rackup (~> 2.2)

@@ -157,8 +157,9 @@ module PotatoMesh
 
             id = string_or_nil(payload["id"]) || string_or_nil(payload["instanceId"])
             raw_domain_input = payload["domain"]
-            raw_domain = sanitize_instance_domain(raw_domain_input, downcase: false)
-            normalized_domain = raw_domain && sanitize_instance_domain(raw_domain)
+            # The canonical form the caps group and the row stores (SPEC FB3).
+            normalized_domain = federation_canonical_domain(raw_domain_input)
+            raw_domain = sanitize_instance_domain(raw_domain_input, downcase: false) || normalized_domain
             unless raw_domain && normalized_domain
               warn_log(
                 "Instance registration rejected",
@@ -298,6 +299,31 @@ module PotatoMesh
                 resolved_ip: ip,
               )
               halt 400, { error: "restricted domain" }.to_json
+            end
+
+            # Federation takes only hostnames that have a registrable domain
+            # (SPEC FB10).
+            domain_refusal = federation_domain_refusal(attributes[:domain])
+            if domain_refusal
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: domain_refusal,
+              )
+              halt 400, { error: domain_refusal }.to_json
+            end
+
+            # A signed last_update more than an hour ahead of this
+            # instance's clock is refused before any request (SPEC FB1).
+            if instance_last_update_ahead?(attributes[:last_update_time])
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "last_update in the future",
+              )
+              halt 400, { error: "last_update in the future" }.to_json
             end
 
             # An announcement under the stored key whose signed last_update is

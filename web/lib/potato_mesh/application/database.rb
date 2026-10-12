@@ -558,6 +558,49 @@ module PotatoMesh
           instance_columns << "reticulum_nodes_count"
         end
 
+        # Freshness is judged on this instance's clock (SPEC FB2). A row
+        # stored before the column existed is taken as verified at its signed
+        # update time, never later than now; one whose update time is not an
+        # integer or runs more than an hour ahead stays unverified.
+        unless instance_columns.include?("last_verified_time")
+          db.execute("ALTER TABLE instances ADD COLUMN last_verified_time INTEGER")
+          now = Time.now.to_i
+          db.execute(
+            "UPDATE instances SET last_verified_time = MIN(last_update_time, ?) " \
+            "WHERE typeof(last_update_time) = 'integer' AND last_update_time <= ?",
+            [now, now + PotatoMesh::App::Federation::LAST_UPDATE_MAX_AHEAD_SECONDS],
+          )
+          instance_columns << "last_verified_time"
+        end
+
+        unless instance_columns.include?("last_announced_time")
+          db.execute("ALTER TABLE instances ADD COLUMN last_announced_time INTEGER")
+          instance_columns << "last_announced_time"
+        end
+
+        # The longest-standing row ranks first (SPEC FB9): a stored row is
+        # taken as first verified when it was last verified.
+        unless instance_columns.include?("first_verified_time")
+          db.execute("ALTER TABLE instances ADD COLUMN first_verified_time INTEGER")
+          db.execute("UPDATE instances SET first_verified_time = last_verified_time")
+          instance_columns << "first_verified_time"
+        end
+
+        # The per-domain cap reads the stored group (SPEC FB3), computed here
+        # from each row's canonical domain; a row with none keeps NULL, and
+        # the boot's cap pass deletes it (SPEC FB10).
+        unless instance_columns.include?("registrable_domain")
+          db.execute("ALTER TABLE instances ADD COLUMN registrable_domain TEXT")
+          instance_record_transaction(db) do
+            db.execute("SELECT rowid, domain FROM instances").each do |rowid, domain|
+              group = federation_registrable_domain(domain)
+              db.execute("UPDATE instances SET registrable_domain = ? WHERE rowid = ?", [group, rowid]) if group
+            end
+          end
+          instance_columns << "registrable_domain"
+        end
+        db.execute("CREATE INDEX IF NOT EXISTS idx_instances_registrable_domain ON instances(registrable_domain)")
+
         telemetry_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry'").flatten
         if telemetry_tables.empty?

@@ -29,12 +29,14 @@ module PotatoMesh
         return false if federation_shutdown_requested?
 
         https_failures = []
+        answer = nil
 
         published = instance_uri_candidates(domain, "/api/instances").any? do |uri|
           break false if federation_shutdown_requested?
 
           begin
             response = perform_announce_request(uri, payload_json)
+            answer = response
             if response.is_a?(Net::HTTPSuccess)
               debug_log(
                 "Published federation announcement",
@@ -89,6 +91,7 @@ module PotatoMesh
           end
         end
 
+        record_announce_outcome(domain, answer)
         published
       end
 
@@ -143,6 +146,10 @@ module PotatoMesh
 
       # Run the periodic announcement cycle by signing the local payload and
       # dispatching it (preferably via the worker pool) to every peer domain.
+      # A peer that backs off, and an announcement the full worker queue
+      # refuses, are skipped until the next cycle, which offers the skipped
+      # ones first (SPEC FB5); an instance on an IP address announces nothing
+      # (SPEC FB10).
       #
       # @return [void]
       def announce_instance_to_all_domains
@@ -150,14 +157,26 @@ module PotatoMesh
         return if federation_shutdown_requested?
 
         # The instance housekeeping GET /api/instances no longer does: merge
-        # duplicate domains, then refresh the self record (SPEC RC4).
+        # duplicate domains, hold the rows to the caps, then refresh the self
+        # record (SPEC RC4, FB3, FB4).
         clean_duplicate_instances!
+        enforce_instance_caps!
         attributes, signature = ensure_self_instance_record!
+        # An instance on an IP address does not federate (SPEC FB10).
+        refusal = federation_domain_refusal(attributes[:domain])
+        if refusal
+          info_log("Skipped federation announcement cycle", context: "federation.announce", reason: refusal)
+          return
+        end
+
         payload_json = JSON.generate(instance_announcement_payload(attributes, signature))
-        domains = federation_target_domains(attributes[:domain])
+        # What the full queue skipped last cycle goes first (SPEC FB5).
+        domains = order_by_announce_backlog(federation_target_domains(attributes[:domain]))
         pool = federation_worker_pool
         scheduled = []
         sync_results = []
+        skipped = 0
+        backlog = []
 
         unless domains.empty?
           info_log(
@@ -170,6 +189,19 @@ module PotatoMesh
         domains.each_with_object(scheduled) do |domain, scheduled_tasks|
           break if federation_shutdown_requested?
 
+          backoff = federation_peer_backoff.backoff_seconds(federation_peer_host(domain))
+          if backoff.positive?
+            debug_log(
+              "Skipped federation announcement",
+              context: "federation.announce",
+              domain: domain,
+              reason: "peer backoff",
+              retry_in: backoff.ceil,
+            )
+            skipped += 1
+            next
+          end
+
           if pool
             begin
               task = pool.schedule do
@@ -179,11 +211,14 @@ module PotatoMesh
               next
             rescue PotatoMesh::App::WorkerPool::QueueFullError
               warn_log(
-                "Skipped asynchronous federation announcement",
+                "Skipped federation announcement",
                 context: "federation.announce",
                 domain: domain,
                 reason: "worker queue saturated",
               )
+              skipped += 1
+              backlog << domain
+              next
             rescue PotatoMesh::App::WorkerPool::ShutdownError
               warn_log(
                 "Worker pool unavailable, falling back to synchronous announcement",
@@ -197,6 +232,7 @@ module PotatoMesh
           sync_results << announce_instance_to_domain(domain, payload_json)
         end
 
+        remember_announce_backlog(backlog)
         async_results = wait_for_federation_tasks(scheduled)
         all_results = sync_results + Array(async_results)
 
@@ -209,6 +245,7 @@ module PotatoMesh
             target_count: domains.length,
             success_count: success_count,
             failure_count: failure_count,
+            skipped_count: skipped,
           )
         end
       end

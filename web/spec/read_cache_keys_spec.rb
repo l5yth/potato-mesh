@@ -377,10 +377,11 @@ RSpec.describe "Read-path cache keys and predicates" do
     def seed_duplicates_and_stale_self!
       application_class.ensure_self_instance_record!
       with_db do |db|
-        sql = "INSERT INTO instances (id, domain, pubkey, name, last_update_time, is_private, signature) VALUES (?, ?, ?, ?, ?, 0, ?)"
+        sql = "INSERT INTO instances (id, domain, pubkey, name, last_update_time, is_private, signature, last_verified_time) " \
+              "VALUES (?, ?, ?, ?, ?, 0, ?, ?)"
         pem = OpenSSL::PKey::RSA.new(2048).public_key.export
-        db.execute(sql, ["rc-dup-old", "rc-dup.example ", pem, "Old", now - 600, "sig-old"])
-        db.execute(sql, ["rc-dup-new", "RC-Dup.Example", pem, "New", now - 60, "sig-new"])
+        db.execute(sql, ["rc-dup-old", "rc-dup.example ", pem, "Old", now - 600, "sig-old", now - 600])
+        db.execute(sql, ["rc-dup-new", "RC-Dup.Example", pem, "New", now - 60, "sig-new", now - 60])
         db.execute("UPDATE instances SET last_update_time = ? WHERE id = ?", [now - 3600, SELF_INSTANCE_ID])
       end
     end

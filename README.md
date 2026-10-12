@@ -173,7 +173,7 @@ slug sets the URL and nav label:
 
 ### Federation
 
-- `FEDERATION=1` (default): announce this instance and crawl peers after boot and every 8 hours, and respond to crawlers.
+- `FEDERATION=1` (default): announce this instance and crawl peers after boot and every 8 hours, and respond to crawlers. An instance on an IP address does not announce itself, and peers refuse it; it still crawls peers and answers their announcements. Set `INSTANCE_DOMAIN` to a hostname such as `mesh.example.org` to announce it.
 - `FEDERATION=0`: fully isolated, no federation.
 - `PRIVATE=1` disables federation regardless of `FEDERATION`.
 - Federation requests send the User-Agent `PotatoMesh/<version> (+https://<domain>)`; `deploy/nginx.example.conf` has an optional rate limit for them.
@@ -236,7 +236,7 @@ directly in the web process's environment.
 | `SSE_PUBLISH_COOLDOWN` | `1.0` | Minimum seconds between SSE publishes, coalescing bursts. |
 | `SSE_THREAD_RESERVE` | `32` | Threads held back from SSE so ordinary requests keep being served. |
 | `FEDERATION_WORKERS` | `4` | Federation crawl worker-pool size. |
-| `FEDERATION_WORK_QUEUE` | `128` | Queued federation tasks before new ones are dropped. |
+| `FEDERATION_WORK_QUEUE` | `128` | Queued federation tasks; an announcement or crawl beyond them is skipped until the next cycle. |
 | `FEDERATION_TASK_TIMEOUT` | `120` | Seconds before one federation task, such as a crawl, is abandoned. |
 | `FEDERATION_SHUTDOWN_TIMEOUT` | `3` | Seconds to drain federation workers on shutdown. |
 | `FEDERATION_PEER_FETCH_COOLDOWN` | `900` | Minimum seconds between two fetches of one peer host. |
