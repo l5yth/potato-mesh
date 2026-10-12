@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-// Regression guard for audit finding D-010 (SPEC UX6, CT4 / ACCEPTANCE UX-A4,
-// CT-A4): live vs. paused must be visible text, not a glyph-only secret, and
-// the text names what a tap does: `● live · pause` while streaming,
-// `❚❚ paused HH:MM · resume` when frozen. The accessible name starts with the
-// visible state words, so it holds the visible label at every width (WCAG
-// 2.5.3), the action hidden from view on phones included.
+// Regression guard for audit finding D-010 (SPEC UX6, CT4, ST4 / ACCEPTANCE
+// UX-A4, CT-A4, ST-A3): live vs. paused must be visible text, not a glyph-only
+// secret, and the text names what a tap does: `● live · pause` while streaming,
+// `↻ polling · pause` while the stream is down, `❚❚ paused HH:MM · resume` when
+// frozen. The accessible name starts with the visible state words, so it holds
+// the visible label at every width (WCAG 2.5.3), the action hidden from view
+// on phones included.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -76,15 +77,30 @@ test('paused state without a timestamp still names the state and the action', ()
   assert.equal(state.ariaLabel, 'paused, resume auto-refresh');
 });
 
+test('polling state names the pause action after the refresh glyph; a pause wins over it (ST4)', () => {
+  const state = autorefreshControlState(false, null, true);
+  assert.equal(state.text, '↻ polling · pause');
+  assert.equal(state.status, '↻ polling');
+  assert.equal(state.ariaLabel, 'polling, pause auto-refresh');
+  assert.equal(state.ariaPressed, 'false');
+  assert.deepEqual(autorefreshControlState(true, '14:32', true), autorefreshControlState(true, '14:32'));
+  assert.deepEqual(autorefreshControlState(false, null, false), autorefreshControlState(false, null));
+});
+
 test('the accessible name starts with the visible state words and names the action (WCAG 2.5.3)', () => {
-  for (const state of [autorefreshControlState(false, null), autorefreshControlState(true, '14:32'), autorefreshControlState(true, '')]) {
+  for (const state of [
+    autorefreshControlState(false, null),
+    autorefreshControlState(false, null, true),
+    autorefreshControlState(true, '14:32'),
+    autorefreshControlState(true, ''),
+  ]) {
     // The state words follow the glyph and stay visible on phones; the action
     // follows the separator and shows from 660 px up.
     const words = state.status.slice(state.status.indexOf(' ') + 1);
     const action = state.text.slice(state.text.lastIndexOf(' · ') + 3);
     assert.ok(state.ariaLabel.startsWith(`${words}, `), `${state.ariaLabel} starts with ${words}`);
     assert.ok(state.ariaLabel.includes(`${action} auto-refresh`), `${state.ariaLabel} names ${action}`);
-    assert.doesNotMatch(state.ariaLabel, /[●❚]/, 'the glyph stays visual');
+    assert.doesNotMatch(state.ariaLabel, /[●❚↻]/, 'the glyph stays visual');
   }
 });
 
@@ -113,6 +129,15 @@ test('applyAutorefreshControlState replaces the previous label', () => {
   applyAutorefreshControlState(button, autorefreshControlState(false, null));
   assert.equal(button.innerHTML, `● live<span class="${ACTION_CLASS}"> · pause</span>`);
   assert.equal(button.getAttribute('aria-label'), 'live, pause auto-refresh');
+  assert.equal(button.getAttribute('aria-pressed'), 'false');
+});
+
+test('applyAutorefreshControlState renders the polling state with its action span (ST4)', () => {
+  const button = liveButton();
+  applyAutorefreshControlState(button, autorefreshControlState(false, null, true));
+  assert.equal(button.textContent, '↻ polling · pause');
+  assert.equal(button.innerHTML, `↻ polling<span class="${ACTION_CLASS}"> · pause</span>`);
+  assert.equal(button.getAttribute('aria-label'), 'polling, pause auto-refresh');
   assert.equal(button.getAttribute('aria-pressed'), 'false');
 });
 

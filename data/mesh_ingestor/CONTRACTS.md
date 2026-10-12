@@ -791,6 +791,14 @@ data: {"collection":"messages","hint":1700000000}
 - The server emits an initial `: connected` comment and periodic `: keepalive`
   heartbeat comments; the connection is closed after a bounded lifetime so the
   client's `EventSource` reconnects (and resyncs).
+- A refused stream (any answer but a 200 event stream, such as the `503` at the
+  subscriber cap or a proxy's `502` while the app restarts) is never retried by
+  `EventSource`. The dashboard then polls at `refresh_interval_seconds` and
+  opens the stream again after a delay drawn from 0.8 to 1.2 times a step of
+  5 s, doubling per refusal to 60 s, within 5-60 s; the open that succeeds
+  resyncs and resets the step. A dashboard hidden for 5 s closes its stream,
+  stops its poll and holds no subscriber slot; visible again, it reopens the
+  stream and restarts the poll with one resync.
 - Privacy. When `PRIVATE=1` no `messages` events are emitted (mirroring the
   disabled message API); the other collections still emit. Because events carry
   no rows, opt-out / hidden rows never traverse the stream - the client always
@@ -798,6 +806,6 @@ data: {"collection":"messages","hint":1700000000}
 - Config (web app). `EVENTS=0` disables the stream (clients fall back to
   polling at `refresh_interval_seconds`); `SSE_HEARTBEAT_SECONDS` (default 15),
   `SSE_MAX_LIFETIME_SECONDS` (default 600), and `LIVE_SAFETY_POLL_SECONDS`
-  (default 300, the client's slow fallback poll) tune the cadence. The endpoint
-  is additive - no existing `/api/*` shape changes.
+  (default 300, the client's slow fallback poll while its stream is open) tune
+  the cadence. The endpoint is additive - no existing `/api/*` shape changes.
 

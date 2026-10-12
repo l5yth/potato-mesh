@@ -250,8 +250,8 @@ import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/off
 import { createBasemapLayer } from './basemap-config.js';
 import { createTileFailurePolicy } from './main/tile-failure-policy.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
-import { createEventStream } from './main/event-stream.js';
 import { createPageOpenSequencer } from './main/page-open-sequencer.js';
+import { createStreamLifecycle } from './main/stream-lifecycle.js';
 import { flashNodeTargets, flashMessageTargets, flashElement, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import {
@@ -848,17 +848,27 @@ export function initializeApp(config) {
     });
   }
 
-  /** @type {ReturnType<typeof setTimeout>|null} */
-  let refreshTimer = null;
   let autorefreshPaused = false;
   let activeStatsRequestId = 0;
   // --- Live-update (SSE) state ---
-  /** @type {?ReturnType<typeof createEventStream>} */
-  let liveStream = null;
-  /** Whether an SSE stream is currently open and driving updates. */
-  let liveActive = false;
-  /** The auto-refresh timer cadence last armed (ms); exposed for tests. */
-  let autoRefreshIntervalMs = 0;
+  // The live stream, its poll, its retries and the hidden-tab gate (SPEC
+  // ST1-ST5): the safety poll while the stream streams, the REFRESH_MS poll
+  // while it is refused or unavailable, nothing in a tab hidden past its grace.
+  const streamLifecycle = createStreamLifecycle({
+    enabled: LIVE_UPDATES_ENABLED,
+    path: LIVE_UPDATES_PATH,
+    refreshMs: REFRESH_MS,
+    safetyPollMs: SAFETY_POLL_MS,
+    poll: () => refresh(),
+    onChange: collection => scheduleLiveRefresh(collection),
+    onResync: () => handleLiveResync(),
+    onError: (message, error) => console.debug('live updates:', message, error),
+    onModeChange: () => {
+      if (!autorefreshPaused) renderLiveToggle();
+    },
+    onStop: () => dropPendingLiveRefresh(),
+    documentRef: document,
+  });
   /** Collections flagged dirty by SSE pings, fetched on the next debounced refresh. */
   const dirtyCollections = new Set();
   /** @type {ReturnType<typeof setTimeout>|null} */
@@ -1163,33 +1173,13 @@ export function initializeApp(config) {
   }
 
   /**
-   * Open the SSE stream when live updates are enabled.
-   *
-   * @returns {boolean} true when a stream is active (caller uses the safety
-   *   poll); false when disabled/unsupported (caller uses the REFRESH_MS poll).
-   */
-  function startLiveUpdates() {
-    if (!LIVE_UPDATES_ENABLED) return false;
-    if (!liveStream) {
-      liveStream = createEventStream({
-        path: LIVE_UPDATES_PATH,
-        onChange: collection => scheduleLiveRefresh(collection),
-        onResync: () => handleLiveResync(),
-        onError: (message, error) => console.debug('live updates:', message, error),
-      });
-    }
-    liveActive = liveStream.start();
-    return liveActive;
-  }
-
-  /**
-   * Close the SSE stream and drop any pending live refresh.
+   * Drop a ping refresh still waiting for its debounce. The stream lifecycle
+   * calls this whenever it tears the stream and the poll down: a pause, a
+   * teardown, a tab hidden past its grace (SPEC ST5).
    *
    * @returns {void}
    */
-  function stopLiveUpdates() {
-    if (liveStream) liveStream.stop();
-    liveActive = false;
+  function dropPendingLiveRefresh() {
     if (liveRefreshTimer) {
       clearTimeout(liveRefreshTimer);
       liveRefreshTimer = null;
@@ -1198,38 +1188,39 @@ export function initializeApp(config) {
   }
 
   /**
+   * Write the live toggle's label from the stream's state (SPEC UX6, CT4,
+   * ST4): `● live · pause` while the stream streams, `↻ polling · pause`
+   * while the page polls because it is refused or unavailable.
+   *
+   * @returns {void}
+   */
+  function renderLiveToggle() {
+    applyAutorefreshControlState(
+      autorefreshToggle,
+      autorefreshControlState(false, null, streamLifecycle.mode() === 'polling'),
+    );
+  }
+
+  /**
    * Restart the auto-refresh according to the user's preferences.
    *
-   * With live updates active the SSE stream drives fetches and the timer is the
-   * slow safety poll ({@link SAFETY_POLL_MS}); otherwise it is the legacy
-   * {@link REFRESH_MS} poll. Paused auto-refresh arms no timer and closes the
-   * stream so no background requests are made (SPEC PS5).
+   * The stream lifecycle opens the SSE stream when live updates are enabled
+   * and arms the poll: the slow safety poll ({@link SAFETY_POLL_MS}) while the
+   * stream streams, the {@link REFRESH_MS} poll while it is refused or
+   * unavailable, no poll for a zero cadence (SPEC ST2). A second call keeps an
+   * open stream and re-arms the poll. Paused auto-refresh arms no timer and
+   * closes the stream so no background requests are made (SPEC PS5).
    *
    * @returns {void}
    */
   function restartAutoRefresh() {
-    // Tear down any existing timer so the interval never double-fires when
-    // the config is re-applied.
-    if (refreshTimer) {
-      clearInterval(refreshTimer);
-      refreshTimer = null;
-    }
-    autoRefreshIntervalMs = 0;
     // When the user has explicitly paused auto-refresh, skip arming the timer
     // and tear down the live stream so no background API requests are made.
     if (autorefreshPaused) {
-      stopLiveUpdates();
+      streamLifecycle.stop();
       return;
     }
-    // Prefer live push; fall back to polling when SSE is disabled/unsupported.
-    const live = startLiveUpdates();
-    const intervalMs = live ? SAFETY_POLL_MS : REFRESH_MS;
-    // Only arm the timer when a positive interval is configured; a zero or
-    // negative value means auto-refresh is intentionally disabled.
-    if (intervalMs > 0) {
-      autoRefreshIntervalMs = intervalMs;
-      refreshTimer = setInterval(refresh, intervalMs);
-    }
+    streamLifecycle.start();
   }
 
   const MAP_CENTER_COORDS = Object.freeze({ lat: config.mapCenter.lat, lon: config.mapCenter.lon });
@@ -6056,26 +6047,24 @@ export function initializeApp(config) {
   }
 
   // --- Auto-refresh play/pause toggle ---
-  // Live vs. paused is visible text that names the action (SPEC UX6, CT4):
-  // `\u25CF live \u00B7 pause` while streaming,
+  // Live vs. paused is visible text that names the action (SPEC UX6, CT4,
+  // ST4): `\u25CF live \u00B7 pause` while streaming,
+  // `\u21BB polling \u00B7 pause` while the stream is refused or unavailable,
   // `\u275A\u275A paused HH:MM \u00B7 resume` when frozen.
   if (autorefreshToggle) {
-    applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
+    renderLiveToggle();
     autorefreshToggle.addEventListener('click', () => {
       autorefreshPaused = !autorefreshPaused;
       if (autorefreshPaused) {
-        if (refreshTimer) {
-          clearInterval(refreshTimer);
-          refreshTimer = null;
-        }
-        // Also close the live stream so a paused dashboard makes no requests.
-        stopLiveUpdates();
+        // Close the live stream and clear the poll and a pending stream retry,
+        // so a paused dashboard makes no requests (SPEC PS5, ST3).
+        streamLifecycle.stop();
         applyAutorefreshControlState(
           autorefreshToggle,
           autorefreshControlState(true, pauseTimestampText(new Date()))
         );
       } else {
-        applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
+        renderLiveToggle();
         // SPEC OR1/OR5: during the initial load, that load is the refresh and
         // its pending start, which reads the pause state, resumes the stream
         // and the poll once the load settles or its bound has passed.
@@ -6379,10 +6368,10 @@ export function initializeApp(config) {
       adjustStatsForHiddenProtocols,
       /** Whether auto-refresh is currently paused. */
       isAutorefreshPaused: () => autorefreshPaused,
-      /** Whether an SSE live-update stream is currently active (test hook). */
-      isLiveActive: () => liveActive,
-      /** The auto-refresh cadence last armed, in ms (test hook). */
-      getAutoRefreshIntervalMs: () => autoRefreshIntervalMs,
+      /** Whether the SSE stream drives the page; false while it polls (SPEC ST2; test hook). */
+      isLiveActive: () => streamLifecycle.isStreaming(),
+      /** The poll cadence armed now, in ms; 0 when none (test hook). */
+      getAutoRefreshIntervalMs: () => streamLifecycle.intervalMs(),
       /** Count of flash rounds triggered by SSE pings (VF2 gating; test hook). */
       getLiveFlashCount: () => liveFlashCount,
       /** Node ids flashed by the most recent SSE-ping refresh (test hook). */
@@ -6406,15 +6395,12 @@ export function initializeApp(config) {
         }
         await liveRefreshPromise;
       },
-      /** Stop the auto-refresh timer, live stream, and relative-time ticker (test teardown). */
+      /** Stop the auto-refresh timer, live stream, hidden-tab gate and relative-time ticker (test teardown). */
       stopAutoRefresh: () => {
         // SPEC OR3: a start still waiting on the initial load never runs after this.
         pageOpen.cancelStart();
-        if (refreshTimer) {
-          clearInterval(refreshTimer);
-          refreshTimer = null;
-        }
-        stopLiveUpdates();
+        // The poll, the stream, a pending retry and the hidden-tab gate (SPEC ST5).
+        streamLifecycle.dispose();
         relativeTimeTicker.stop();
         // A filter repaint still waiting for its window never runs after the
         // teardown (SPEC DE4).

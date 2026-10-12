@@ -301,6 +301,89 @@ test('a stream error without onError does not throw', () => {
 });
 
 // ---------------------------------------------------------------------------
+// createEventStream — refused connections (SPEC ST1)
+// ---------------------------------------------------------------------------
+
+/** `EventSource.CLOSED`: the browser will not retry this connection. */
+const CLOSED = 2;
+/** `EventSource.CONNECTING`: the browser reconnects on its own. */
+const CONNECTING = 0;
+
+test('an error that leaves the source CLOSED drops it and calls onClosed; the next start opens a new one (ST1)', () => {
+  const FakeEventSource = makeFakeFactory();
+  let closed = 0;
+  const stream = createEventStream({
+    path: '/api/events',
+    onChange() {},
+    onClosed: () => {
+      closed += 1;
+    },
+    eventSourceFactory: FakeEventSource,
+  });
+  stream.start();
+  const refused = FakeEventSource.instances[0];
+  refused.readyState = CLOSED; // a 503 at the subscriber cap, or a proxy's 502
+  refused.dispatch('error', {});
+  assert.equal(stream.isActive(), false, 'the refused source is dropped');
+  assert.equal(closed, 1);
+  assert.equal(stream.start(), true);
+  assert.equal(FakeEventSource.instances.length, 2, 'the next start opens a new source');
+  assert.equal(stream.isActive(), true);
+});
+
+test('an error while the browser reconnects keeps the source (ST1)', () => {
+  const FakeEventSource = makeFakeFactory();
+  let closed = 0;
+  const stream = createEventStream({
+    path: '/api/events',
+    onChange() {},
+    onClosed: () => {
+      closed += 1;
+    },
+    eventSourceFactory: FakeEventSource,
+  });
+  stream.start();
+  FakeEventSource.instances[0].readyState = CONNECTING;
+  FakeEventSource.instances[0].dispatch('error', {});
+  assert.equal(stream.isActive(), true);
+  assert.equal(closed, 0);
+});
+
+test('an error from a source the stream no longer holds is ignored (ST1)', () => {
+  const FakeEventSource = makeFakeFactory();
+  let closed = 0;
+  const stream = createEventStream({
+    path: '/api/events',
+    onChange() {},
+    onClosed: () => {
+      closed += 1;
+    },
+    eventSourceFactory: FakeEventSource,
+  });
+  stream.start();
+  stream.stop();
+  stream.start();
+  const stale = FakeEventSource.instances[0];
+  stale.readyState = CLOSED;
+  stale.dispatch('error', {});
+  assert.equal(closed, 0);
+  assert.equal(stream.isActive(), true, 'the current source is kept');
+});
+
+test('a refused source without onClosed is still dropped and does not throw (ST1)', () => {
+  const FakeEventSource = makeFakeFactory();
+  const stream = createEventStream({
+    path: '/api/events',
+    onChange() {},
+    eventSourceFactory: FakeEventSource,
+  });
+  stream.start();
+  FakeEventSource.instances[0].readyState = CLOSED;
+  assert.doesNotThrow(() => FakeEventSource.instances[0].dispatch('error', {}));
+  assert.equal(stream.isActive(), false);
+});
+
+// ---------------------------------------------------------------------------
 // createEventStream — teardown
 // ---------------------------------------------------------------------------
 
