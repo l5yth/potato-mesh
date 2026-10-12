@@ -45,6 +45,7 @@ function makeControllableBackend() {
     write: wrap('write'),
     writeMany: wrap('writeMany'),
     remove: wrap('remove'),
+    removeMany: wrap('removeMany'),
     clearStore: wrap('clearStore'),
     fail,
     metaReads: () => metaReads,
@@ -73,6 +74,16 @@ test('memory backend round-trips reads, writes, batch, remove, and clear', async
   assert.deepEqual(await be.readAll('nodes'), []);
 });
 
+test('memory backend removeMany deletes keys across stores', async () => {
+  const be = createMemoryBackend();
+  await be.write('nodes', '!a', 1);
+  await be.write('nodes', '!b', 2);
+  await be.write('traces', 't', 3);
+  await be.removeMany([{ store: 'nodes', key: '!a' }, { store: 'traces', key: 't' }, { store: 'traces', key: 'absent' }]);
+  assert.deepEqual((await be.readAll('nodes')).map(row => row.key), ['!b']);
+  assert.deepEqual(await be.readAll('traces'), []);
+});
+
 // --- disabled (no backend) ----------------------------------------------
 
 test('a cache without a backend is disabled and every op is a safe no-op', async () => {
@@ -83,8 +94,11 @@ test('a cache without a backend is disabled and every op is a safe no-op', async
   assert.deepEqual(await cache.getAll('nodes'), []);
   // None of these throw.
   await cache.put('nodes', '!a', { x: 1 });
-  await cache.putAll('nodes', [{ key: '!a', value: {} }]);
+  assert.equal(await cache.putAll('nodes', [{ key: '!a', value: {} }]), false, 'nothing is stored');
   await cache.delete('nodes', '!a');
+  await cache.deleteMany([{ collection: 'nodes', key: '!a' }]);
+  assert.equal(await cache.getCoverage(), null);
+  assert.equal(await cache.putCoverage({ nodes: {} }), false);
   await cache.clearCollection('nodes');
   await cache.clear();
 });
@@ -122,9 +136,54 @@ test('putAll/getAll round-trip with key/value/cachedAt projection', async () => 
 test('putAll is a no-op for an empty or non-array argument', async () => {
   const be = createMemoryBackend();
   const cache = createDataCache({ backend: be });
-  await cache.putAll('nodes', []);
-  await cache.putAll('nodes', null);
+  assert.equal(await cache.putAll('nodes', []), true, 'nothing to store is stored');
+  assert.equal(await cache.putAll('nodes', null), true);
   assert.deepEqual(await be.readAll('nodes'), []);
+});
+
+test('putAll resolves true once stored (SPEC CC4)', async () => {
+  const cache = createDataCache({ backend: createMemoryBackend() });
+  assert.equal(await cache.putAll('nodes', [{ key: '!a', value: { n: 1 } }]), true);
+});
+
+test('deleteMany removes keys of several collections in one backend call (SPEC CC5)', async () => {
+  const mem = createMemoryBackend();
+  const calls = [];
+  const be = { ...mem, removeMany: async items => { calls.push(items); return mem.removeMany(items); } };
+  const cache = createDataCache({ backend: be });
+  await cache.put('nodes', '!a', { n: 1 });
+  await cache.put('positions', 'p1', { n: 2 });
+  await cache.put('positions', 'p2', { n: 3 });
+  await cache.deleteMany([{ collection: 'nodes', key: '!a' }, { collection: 'positions', key: 'p1' }]);
+  assert.deepEqual(calls, [[{ store: 'nodes', key: '!a' }, { store: 'positions', key: 'p1' }]]);
+  assert.deepEqual(await cache.getAll('nodes'), []);
+  assert.deepEqual((await cache.getAll('positions')).map(row => row.key), ['p2']);
+  await cache.deleteMany([]);
+  await cache.deleteMany(null);
+  assert.equal(calls.length, 1, 'nothing to delete makes no call');
+});
+
+test('the coverage marker round-trips and is stamped like a row (SPEC CC2)', async () => {
+  const be = createMemoryBackend();
+  const cache = createDataCache({ backend: be, now: () => 77 });
+  assert.equal(await cache.getCoverage(), null, 'no marker yet');
+  const marker = { nodes: { from: 0, to: 9, complete: true } };
+  assert.equal(await cache.putCoverage(marker), true);
+  assert.deepEqual(await cache.getCoverage(), marker);
+  assert.deepEqual(await be.read('meta', 'coverage'), { value: marker, cachedAt: 77 });
+  await be.write('meta', 'coverage', 'not a record');
+  assert.equal(await cache.getCoverage(), null, 'a malformed record reads as none');
+});
+
+test('clear and a schema change remove the coverage marker with the rows (SPEC CC2)', async () => {
+  const be = createMemoryBackend();
+  const cache = createDataCache({ backend: be, instanceId: 'x' });
+  await cache.putCoverage({ nodes: { from: 0, to: 9, complete: true } });
+  await cache.clear();
+  assert.equal(await cache.getCoverage(), null);
+  await cache.putCoverage({ nodes: { from: 0, to: 9, complete: true } });
+  const next = createDataCache({ backend: be, instanceId: 'x', schemaVersion: CACHE_SCHEMA_VERSION + 1 });
+  assert.equal(await next.getCoverage(), null);
 });
 
 test('delete removes a single key; clearCollection empties one collection', async () => {
@@ -226,7 +285,12 @@ test('per-operation backend errors degrade to safe no-ops', async () => {
   be.fail.add('write');
   await cache.put('nodes', '!a', { n: 1 }); // no throw
   be.fail.add('writeMany');
-  await cache.putAll('nodes', [{ key: '!a', value: {} }]); // no throw
+  assert.equal(await cache.putAll('nodes', [{ key: '!a', value: {} }]), false); // no throw
+  assert.equal(await cache.getCoverage(), null); // read failure → no marker
+  be.fail.add('write');
+  assert.equal(await cache.putCoverage({ nodes: {} }), false); // no throw
+  be.fail.add('removeMany');
+  await cache.deleteMany([{ collection: 'nodes', key: '!a' }]); // no throw
   be.fail.add('remove');
   await cache.delete('nodes', '!a'); // no throw
   be.fail.add('clearStore');
@@ -265,4 +329,64 @@ test('initialisation runs exactly once across many operations', async () => {
   await cache.getAll('nodes');
   // The schema marker is read exactly once — init is memoised, not re-run per op.
   assert.equal(be.metaReads(), 1, 'init reads the marker exactly once');
+});
+
+// --- store generation (SPEC CC4) ---------------------------------------------
+
+test('getGeneration mints a generation once and returns it after', async () => {
+  const be = createMemoryBackend();
+  let minted = 0;
+  const cache = createDataCache({ backend: be, now: () => 5, newGeneration: () => `g${(minted += 1)}` });
+  assert.equal(await cache.getGeneration(), 'g1');
+  assert.equal(await cache.getGeneration(), 'g1');
+  assert.deepEqual(await be.read('meta', 'generation'), { value: 'g1', cachedAt: 5 });
+  const other = createDataCache({ backend: be, newGeneration: () => 'never' });
+  assert.equal(await other.getGeneration(), 'g1', 'another tab reads the same generation');
+});
+
+test('every wipe gives the store a new generation: clear and a schema or instance change', async () => {
+  const be = createMemoryBackend();
+  let minted = 0;
+  const mint = () => `g${(minted += 1)}`;
+  const cache = createDataCache({ backend: be, instanceId: 'x', newGeneration: mint });
+  const first = await cache.getGeneration();
+  await cache.clear();
+  const second = await cache.getGeneration();
+  assert.notEqual(second, first, 'clear');
+  const newerSchema = createDataCache({ backend: be, instanceId: 'x', schemaVersion: CACHE_SCHEMA_VERSION + 1, newGeneration: mint });
+  await newerSchema.ready();
+  const third = await cache.getGeneration();
+  assert.notEqual(third, second, 'a schema change');
+  const otherInstance = createDataCache({ backend: be, instanceId: 'y', schemaVersion: CACHE_SCHEMA_VERSION + 1, newGeneration: mint });
+  await otherInstance.ready();
+  assert.notEqual(await cache.getGeneration(), third, 'an instance change');
+});
+
+test('the default generation is a fresh token per wipe', async () => {
+  const be = createMemoryBackend();
+  const cache = createDataCache({ backend: be });
+  const first = await cache.getGeneration();
+  assert.match(first, /^[0-9a-z]+-[0-9a-z]+$/);
+  await cache.clear();
+  assert.notEqual(await cache.getGeneration(), first);
+});
+
+test('getGeneration is null for a disabled cache and when the store fails', async () => {
+  assert.equal(await createDataCache({ backend: null }).getGeneration(), null);
+  const be = makeControllableBackend();
+  await be.write('meta', 'meta', MATCHING_MARKER);
+  const cache = createDataCache({ backend: be });
+  await cache.ready();
+  be.fail.add('write');
+  assert.equal(await cache.getGeneration(), null, 'minting fails');
+  be.fail.add('read');
+  assert.equal(await cache.getGeneration(), null, 'reading fails');
+});
+
+test('a store written before generations existed gets one on the first read', async () => {
+  const be = createMemoryBackend();
+  await be.write('meta', 'meta', MATCHING_MARKER); // matching marker, so init wipes nothing
+  const cache = createDataCache({ backend: be, now: () => 9, newGeneration: () => 'minted' });
+  assert.equal(await cache.getGeneration(), 'minted');
+  assert.deepEqual(await be.read('meta', 'generation'), { value: 'minted', cachedAt: 9 });
 });

@@ -118,6 +118,9 @@ import { createDataCache, CACHE_SCHEMA_VERSION } from './main/data-cache.js';
 import { createIndexedDbBackend } from './main/data-cache-idb.js';
 import { isExpired as isCacheEntryExpired, isStale as isCacheEntryStale } from './main/cache-lifetime.js';
 import { cacheKeyFor } from './main/cache-keys.js';
+import { createCoverageTracker } from './main/cache-coverage.js';
+import { createCacheWriteBack } from './main/cache-write-back.js';
+import { mergeNewerById, mergeNewerByCompositeKey } from './main/newer-wins-merge.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageIndex } from './message-replies.js';
 import { renderChatEntryContent } from './chat-entry-renderer.js';
@@ -128,7 +131,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
-import { maxRecordTimestamp, minRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from './incremental-helpers.js';
+import { maxRecordTimestamp, minRecordTimestamp, mergeById, trimToLimit, trimToWindow } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -490,19 +493,14 @@ export function initializeApp(config) {
    * loaded row, so a warm-cache load bridges the gap between the newest page
    * and the seeded cache instead of paging below the cache and orphaning the
    * window in between. 0 until the first fetch; on a cold load it equals the
-   * global-oldest, so the cold backfill is unchanged.
+   * global-oldest, so the cold backfill is unchanged. When the first load
+   * starts the backfill, the coverage plan sets it to where the walk begins:
+   * on a warm load whose cache stops short of the window, the oldest cached
+   * row (SPEC CC2).
    */
   let chatLiveFrontier = 0;
   /** Settles when the one-shot chat-history backfill finishes (test hook). */
   let backfillPromise = Promise.resolve();
-  /**
-   * Live frontiers for the bulk collections (oldest cursor value of the newest
-   * page) — the one-shot background backfill pages backward from here, exactly
-   * like {@link chatLiveFrontier}. 0 means "no backfill" (a short newest page,
-   * or a warm-cache load whose data is already seeded). Issue #832 / SPEC BP9a.
-   * @type {{ nodes: number, positions: number, telemetry: number, neighbors: number, traces: number, waypoints: number }}
-   */
-  let collectionLiveFrontiers = { nodes: 0, positions: 0, telemetry: 0, neighbors: 0, traces: 0, waypoints: 0 };
   /** One-shot guard: the bulk-collection backfill runs once after the first load. */
   let collectionsBackfilled = false;
   /** Settles when the one-shot bulk-collection backfill finishes (test hook). */
@@ -565,12 +563,17 @@ export function initializeApp(config) {
     isPrivate: isPrivateMode,
     now: () => Math.floor(Date.now() / 1000),
   });
-  /** Unix-seconds of the last full cache write-back (throttle gate). */
+  /** Unix-seconds of the last cache write-back (throttle gate). */
   let lastCacheWriteSeconds = 0;
-  /** Minimum seconds between full cache write-backs (the cache lags slightly). */
+  /** Minimum seconds between refresh write-backs (the cache lags slightly). */
   const CACHE_WRITE_INTERVAL_SECONDS = 30;
   /** Settles when the most recent write-back's stores have flushed (test hook). */
   let pendingCacheWrite = Promise.resolve();
+  /**
+   * Which window of each collection the rows in memory hold without a gap,
+   * and the backward walks the first load plans from it (SPEC CC1-CC3).
+   */
+  const cacheCoverage = createCoverageTracker();
 
   /**
    * Record (in ``localStorage``, synchronously readable by the cold-load boot
@@ -594,24 +597,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Persist a collection's current rows into the cache, fire-and-forget. The
-   * cache is best-effort and never blocks rendering (FC7).
-   *
-   * @param {string} collection Cache collection name.
-   * @param {Array<Object>} records Rows to persist.
-   * @returns {void}
-   */
-  function cacheWriteCollection(collection, records) {
-    if (!Array.isArray(records) || records.length === 0) return Promise.resolve();
-    const entries = [];
-    for (const record of records) {
-      const key = cacheKeyFor(collection, record);
-      if (key != null) entries.push({ key, value: record });
-    }
-    return entries.length > 0 ? dataCache.putAll(collection, entries) : Promise.resolve();
-  }
-
-  /**
    * Shallow-copy a chat message without its hydrated ``node`` so the cache stores
    * the raw row; the sender is re-resolved from the bulk node map on seed.
    *
@@ -626,28 +611,54 @@ export function initializeApp(config) {
   }
 
   /**
-   * Throttled full write-back of the live dashboard state to the cache (SPEC
-   * FC2). Runs at most once per {@link CACHE_WRITE_INTERVAL_SECONDS} (always on
-   * the first successful refresh). No-op when the cache is disabled.
+   * The rows the cache persists, per collection (SPEC FC1).
    *
+   * @returns {Object<string, Array<Object>>} Current rows by cache collection.
+   */
+  function cachedCollections() {
+    return {
+      nodes: allNodes,
+      positions: allPositionEntries,
+      telemetry: allTelemetryEntries,
+      neighbors: allNeighbors,
+      traces: allTraces,
+      waypoints: allWaypoints,
+      messages: allMessages,
+      encrypted: allEncryptedMessages,
+    };
+  }
+
+  /**
+   * The cache writer: it stores the rows changed since the last write-back,
+   * then the coverage marker (SPEC CC2, CC4). Messages are stored without
+   * their hydrated ``node`` ({@link messageForCache}).
+   */
+  const cacheWriter = createCacheWriteBack({
+    cache: dataCache,
+    collections: cachedCollections,
+    keyOf: cacheKeyFor,
+    storedValue: (collection, row) => (collection === 'messages' || collection === 'encrypted' ? messageForCache(row) : row),
+    coverage: () => cacheCoverage.snapshot(),
+  });
+
+  /**
+   * Write the live dashboard state back to the cache (SPEC FC2): the rows
+   * changed since the last write-back and the coverage marker (SPEC CC2,
+   * CC4). A refresh's write-back runs at most once per
+   * {@link CACHE_WRITE_INTERVAL_SECONDS} (always on the first successful
+   * refresh); the end of a backfill forces one, so the rows it paged in are
+   * stored at once (SPEC CC1). No-op when the cache is disabled.
+   *
+   * @param {{ force?: boolean }} [options] ``force`` skips the throttle.
    * @returns {void}
    */
-  function writeBackCache() {
+  function writeBackCache({ force = false } = {}) {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    if (lastCacheWriteSeconds && nowSeconds - lastCacheWriteSeconds < CACHE_WRITE_INTERVAL_SECONDS) {
+    if (!force && lastCacheWriteSeconds && nowSeconds - lastCacheWriteSeconds < CACHE_WRITE_INTERVAL_SECONDS) {
       return;
     }
     lastCacheWriteSeconds = nowSeconds;
-    pendingCacheWrite = Promise.allSettled([
-      cacheWriteCollection('nodes', allNodes),
-      cacheWriteCollection('positions', allPositionEntries),
-      cacheWriteCollection('telemetry', allTelemetryEntries),
-      cacheWriteCollection('neighbors', allNeighbors),
-      cacheWriteCollection('traces', allTraces),
-      cacheWriteCollection('waypoints', allWaypoints),
-      cacheWriteCollection('messages', allMessages.map(messageForCache)),
-      cacheWriteCollection('encrypted', allEncryptedMessages.map(messageForCache)),
-    ]);
+    pendingCacheWrite = cacheWriter.write();
     // Mark the cache populated so the next load skips the cold prefetch in favour
     // of the faster FC2 seed-then-delta path — only when we actually have data to
     // persist and the cache is enabled (PRIVATE / no-IndexedDB leave it cold).
@@ -655,21 +666,25 @@ export function initializeApp(config) {
   }
 
   /**
-   * Read non-expired entries for ``collection`` from the cache, deleting any
-   * past their eviction window so the store stays bounded across sessions
-   * (FC3/FC5). Returns the full entries (``{ key, value, cachedAt }``) so callers
-   * can both seed the value and judge staleness.
+   * Read non-expired entries for ``collection`` from the cache, collecting
+   * the keys of any past their eviction window into ``expired`` so the caller
+   * deletes them, in one transaction, and the store stays bounded across
+   * sessions (FC3/FC5, SPEC CC5). Returns the full entries
+   * (``{ key, value, cachedAt }``) so callers can both seed the value and
+   * judge staleness.
    *
    * @param {string} collection Cache collection name.
    * @param {number} nowSeconds Current time, unix seconds.
+   * @param {Array<{ collection: string, key: string }>} expired Receives the
+   *   expired entries.
    * @returns {Promise<Array<{ key: string, value: Object, cachedAt: number }>>} Live entries.
    */
-  async function readLiveCacheEntries(collection, nowSeconds) {
+  async function readLiveCacheEntries(collection, nowSeconds, expired) {
     const rows = await dataCache.getAll(collection);
     const live = [];
     for (const entry of rows) {
       if (isCacheEntryExpired(collection, entry, nowSeconds)) {
-        void dataCache.delete(collection, entry.key);
+        expired.push({ collection, key: entry.key });
       } else {
         live.push(entry);
       }
@@ -697,16 +712,27 @@ export function initializeApp(config) {
       return false;
     }
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries, waypointEntries] = await Promise.all([
-      readLiveCacheEntries('nodes', nowSeconds),
-      readLiveCacheEntries('positions', nowSeconds),
-      readLiveCacheEntries('telemetry', nowSeconds),
-      readLiveCacheEntries('neighbors', nowSeconds),
-      readLiveCacheEntries('traces', nowSeconds),
-      readLiveCacheEntries('waypoints', nowSeconds),
+    // SPEC CC4: the store generation before and after the reads; another
+    // tab's wipe in between changes it.
+    const generationBefore = await dataCache.getGeneration();
+    const expired = [];
+    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries, waypointEntries, storedMarker] = await Promise.all([
+      readLiveCacheEntries('nodes', nowSeconds, expired),
+      readLiveCacheEntries('positions', nowSeconds, expired),
+      readLiveCacheEntries('telemetry', nowSeconds, expired),
+      readLiveCacheEntries('neighbors', nowSeconds, expired),
+      readLiveCacheEntries('traces', nowSeconds, expired),
+      readLiveCacheEntries('waypoints', nowSeconds, expired),
+      dataCache.getCoverage(),
     ]);
-    const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds) : [];
-    const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds) : [];
+    const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds, expired) : [];
+    const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds, expired) : [];
+    const generation = (await dataCache.getGeneration()) === generationBefore ? generationBefore : undefined;
+    // A marker vouches only for the store it was written to: one written
+    // before a wipe, or read across one, is ignored (SPEC CC2, CC4).
+    const coverageMarker = storedMarker && generation != null && storedMarker.generation === generation ? storedMarker : null;
+    // SPEC CC5: every expired entry goes in one transaction, fire-and-forget.
+    void dataCache.deleteMany(expired);
     // SPEC OR2: a refresh loaded network rows while the cache was read; the
     // cached rows are older, so they must not replace them.
     if (pageOpen.hasNetworkData()) return false;
@@ -723,6 +749,8 @@ export function initializeApp(config) {
       return false;
     }
 
+    // SPEC CC2: the windows these rows hold, for the first refresh's plan.
+    cacheCoverage.seed(coverageMarker);
     allNodes = nodeEntries.map(entry => entry.value);
     allPositionEntries = positionEntries.map(entry => entry.value);
     allTelemetryEntries = telemetryEntries.map(entry => entry.value);
@@ -736,6 +764,8 @@ export function initializeApp(config) {
     ]);
     allMessages = Array.isArray(seededChat) ? seededChat : [];
     allEncryptedMessages = Array.isArray(seededEncrypted) ? seededEncrypted : [];
+    // SPEC CC4: these rows are what the cache holds; write back only changes.
+    cacheWriter.seeded(cachedCollections(), coverageMarker, generation);
 
     // FC3 staleness: when every cached node copy is older than the 24 h node
     // staleness window, prefer a full node refresh (high-water 0 → since=0) over
@@ -769,7 +799,8 @@ export function initializeApp(config) {
    * @returns {Promise<void>} Resolves once the cache is cleared.
    */
   async function clearDataCache() {
-    await dataCache.clear();
+    // Queued behind a running write-back; the next one stores every row again.
+    await cacheWriter.clear(() => dataCache.clear());
     // Re-enable the cold prefetch on the next load now that the cache is empty.
     setCachePresentFlag(false);
   }
@@ -4001,7 +4032,7 @@ export function initializeApp(config) {
 
   /** The chat history walk: a page at a time, one flush at its end (SPEC BK1). */
   const chatBackfill = createChatBackfill({
-    pages: before => paginateMessagesImpl(MESSAGE_LIMIT, { before, chatEnabled: CHAT_ENABLED, normaliseMessageLimit }),
+    pages: chatHistoryPages,
     commit: commitHistoricalMessages,
     flush: flushBackfillRepaint,
     logger: console,
@@ -4109,7 +4140,9 @@ export function initializeApp(config) {
    * how to re-derive the rendered state the merged collection feeds.
    *
    * Cursor columns match each route's server-side ``ORDER BY`` (SPEC BP1):
-   * ``last_heard`` for nodes, ``rx_time`` for the rest.
+   * ``last_heard`` for nodes, ``rx_time`` for the rest. ``fetchPage`` takes
+   * the walk's lower bound as ``since`` (SPEC BP2, CC2). A page row that meets
+   * a held one keeps the newer of the two (SPEC CC6).
    *
    * @type {ReadonlyArray<Object>}
    */
@@ -4121,42 +4154,42 @@ export function initializeApp(config) {
   const COLLECTION_BACKFILLS = [
     {
       name: 'nodes',
-      fetchPage: (limit, before) => fetchNodes(limit, 0, { before }),
+      fetchPage: (limit, before, since) => fetchNodes(limit, since, { before }),
       idOf: row => row && row.node_id,
       cursorOf: row => row && row.last_heard,
-      merge: batch => { allNodes = mergeById(allNodes, batch, 'node_id'); },
+      merge: batch => { allNodes = mergeNewerById(allNodes, batch, 'node_id', 'last_heard'); },
       refine: rebuildNodeDerivedState,
     },
     {
       name: 'positions',
-      fetchPage: (limit, before) => fetchPositions(limit, 0, { before }),
+      fetchPage: (limit, before, since) => fetchPositions(limit, since, { before }),
       idOf: row => row && row.id,
       cursorOf: row => row && row.rx_time,
       merge: batch => {
-        allPositionEntries = trimToWindow(mergeById(allPositionEntries, batch, 'id'), recentBackfillFloor());
+        allPositionEntries = trimToWindow(mergeNewerById(allPositionEntries, batch, 'id', 'rx_time'), recentBackfillFloor());
       },
       refine: rebuildNodeDerivedState,
     },
     {
       name: 'telemetry',
-      fetchPage: (limit, before) => fetchTelemetry(limit, 0, { before }),
+      fetchPage: (limit, before, since) => fetchTelemetry(limit, since, { before }),
       idOf: row => row && row.id,
       cursorOf: row => row && row.rx_time,
       merge: batch => {
-        allTelemetryEntries = trimToWindow(mergeById(allTelemetryEntries, batch, 'id'), recentBackfillFloor());
+        allTelemetryEntries = trimToWindow(mergeNewerById(allTelemetryEntries, batch, 'id', 'rx_time'), recentBackfillFloor());
       },
       refine: rebuildNodeDerivedState,
     },
     {
       name: 'neighbors',
-      fetchPage: (limit, before) => fetchNeighbors(limit, 0, { before }),
+      fetchPage: (limit, before, since) => fetchNeighbors(limit, since, { before }),
       // Composite primary key (node_id, neighbor_id) — unique per tuple, so the
       // inclusive boundary row is de-duplicated across pages.
       idOf: row => (row ? `${row.node_id}|${row.neighbor_id}` : undefined),
       cursorOf: row => row && row.rx_time,
       merge: batch => {
         allNeighbors = trimToWindow(
-          mergeByCompositeKey(allNeighbors, batch, ['node_id', 'neighbor_id']),
+          mergeNewerByCompositeKey(allNeighbors, batch, ['node_id', 'neighbor_id'], 'rx_time'),
           longBackfillFloor(),
         );
       },
@@ -4170,24 +4203,24 @@ export function initializeApp(config) {
       // Fetch raw (applyAgeFilter:false) so the pager sees the server's true page
       // length for short-page termination; the age bound is applied by the
       // window-trim in merge() instead.
-      fetchPage: (limit, before) => fetchTraces(limit, 0, { before, applyAgeFilter: false }),
+      fetchPage: (limit, before, since) => fetchTraces(limit, since, { before, applyAgeFilter: false }),
       idOf: row => row && row.id,
       cursorOf: row => row && row.rx_time,
       merge: batch => {
-        allTraces = trimToWindow(mergeById(allTraces, batch, 'id'), longBackfillFloor());
+        allTraces = trimToWindow(mergeNewerById(allTraces, batch, 'id', 'rx_time'), longBackfillFloor());
       },
       refine: noopRefine,
     },
     {
       name: 'waypoints',
-      fetchPage: (limit, before) => fetchWaypoints(limit, 0, { before }),
+      fetchPage: (limit, before, since) => fetchWaypoints(limit, since, { before }),
       // Composite server upsert key (id, protocol) — SPEC W5 — so the inclusive
       // boundary row de-duplicates across pages and protocols never collide.
       idOf: row => (row ? `${row.protocol}|${row.id}` : undefined),
       cursorOf: row => row && row.rx_time,
       merge: batch => {
         allWaypoints = trimToWindow(
-          mergeByCompositeKey(allWaypoints, batch, ['id', 'protocol']),
+          mergeNewerByCompositeKey(allWaypoints, batch, ['id', 'protocol'], 'rx_time'),
           recentBackfillFloor(),
         );
       },
@@ -4332,25 +4365,45 @@ export function initializeApp(config) {
   }
 
   /**
-   * Page one collection backward from its live frontier, committing+rendering
-   * each page, until the visibility window is exhausted. A no-op (no request)
-   * when the collection recorded no frontier — a short newest page or a warm-cache
-   * load. Errors are swallowed (logged) so one failing stream never aborts the
-   * others or the rendered newest page — mirroring {@link backfillChatHistory}.
+   * The chat history walk's pages below ``before`` (SPEC CC2): the walk stops
+   * where the coverage plan says the cached rows begin, and its pages and its
+   * end move the chat's coverage.
+   *
+   * @param {number} before Inclusive cursor the walk starts at.
+   * @returns {AsyncGenerator<Array<Object>>} The walk's pages.
+   */
+  function chatHistoryPages(before) {
+    return cacheCoverage.pages('messages', before, (until, onEnd) =>
+      paginateMessagesImpl(MESSAGE_LIMIT, { before, until, onEnd, chatEnabled: CHAT_ENABLED, normaliseMessageLimit }),
+    );
+  }
+
+  /**
+   * Page one collection backward along the walk the first load planned
+   * (SPEC CC2), committing+rendering each page: from the oldest row of a full
+   * newest page to the window's end, from a full warm delta page down to the
+   * cached rows, or from the oldest cached row when the cache stops short of
+   * the window. A no-op (no request) when the plan has no walk — a short
+   * newest page, or a warm load whose cache holds the window. The walk's pages
+   * and its end move the collection's coverage. Errors are swallowed (logged)
+   * so one failing stream never aborts the others or the rendered newest page
+   * — mirroring {@link backfillChatHistory}.
    *
    * @param {Object} spec One {@link COLLECTION_BACKFILLS} entry.
-   * @returns {Promise<void>} Resolves when this collection's window is exhausted.
+   * @returns {Promise<void>} Resolves when this collection's walk has ended.
    */
   async function backfillCollection(spec) {
-    const before = collectionLiveFrontiers[spec.name];
-    if (!(before > 0)) return;
+    const walk = cacheCoverage.walkOf(spec.name);
+    if (!walk) return;
     try {
-      for await (const batch of paginateCollection(spec.fetchPage, {
+      for await (const batch of cacheCoverage.pages(spec.name, walk.before, (until, onEnd) => paginateCollection(spec.fetchPage, {
         limit: NODE_LIMIT,
-        before,
+        before: walk.before,
+        until,
         idOf: spec.idOf,
         cursorOf: spec.cursorOf,
-      })) {
+        onEnd,
+      }))) {
         commitBackfillPage(spec, batch);
       }
     } catch (err) {
@@ -4364,20 +4417,23 @@ export function initializeApp(config) {
    * collections backward through their visibility windows concurrently, each
    * merging its pages as they arrive and coalescing the repaints onto idle time
    * (see {@link commitBackfillPage}). Each {@link backfillCollection} self-gates on
-   * its frontier, so a collection with none (a short newest page, or a warm-cache
-   * load) returns without a request and the fan-out is a clean no-op when there is
-   * nothing to page — no pointless request, no empty long-load. Once every window
-   * is exhausted, a final {@link flushBackfillRepaint} paints the complete state
-   * immediately rather than waiting on the trailing idle callback. Invoked once
-   * (guarded by ``collectionsBackfilled`` in {@link refresh}).
+   * its planned walk, so a collection with none (a short newest page, or a warm
+   * load whose cache holds the window) returns without a request and the fan-out
+   * is a clean no-op when there is nothing to page — no pointless request, no
+   * empty long-load. Once every walk has ended, a final {@link flushBackfillRepaint}
+   * paints the complete state immediately rather than waiting on the trailing idle
+   * callback, and a write-back stores what the walks paged in and their coverage
+   * (SPEC CC1). Invoked once (guarded by ``collectionsBackfilled`` in {@link refresh}).
    *
-   * @returns {Promise<void>} Resolves when every collection's window is exhausted.
+   * @returns {Promise<void>} Resolves when every collection's walk has ended.
    */
   async function backfillAllCollections() {
     await Promise.all(COLLECTION_BACKFILLS.map(spec => backfillCollection(spec)));
     // The whole window is now merged; render the final coalesced state at once
     // instead of waiting for the pending idle repaint.
     flushBackfillRepaint();
+    // SPEC CC1: store the paged-in rows now, not at a later refresh's end.
+    writeBackCache({ force: true });
   }
 
   /**
@@ -5812,25 +5868,31 @@ export function initializeApp(config) {
       if (incomingTrTs > lastTraceTimestamp) lastTraceTimestamp = incomingTrTs;
       if (incomingWpTs > lastWaypointTimestamp) lastWaypointTimestamp = incomingWpTs;
 
-      // Capture each bulk collection's live frontier (oldest cursor of the
-      // newest page) so the one-shot background backfill (issue #832) can page
-      // backward from there, exactly like chatLiveFrontier. Cold load only: a
-      // warm-cache load already has the deeper history seeded (and its useSince
-      // delta pages are short), and a *short* newest page means the window is
-      // already exhausted — both record 0 so no pointless backward request fires
-      // (avoids an empty, long-loading page). The cursor column matches each
-      // route's server-side ORDER BY: last_heard for nodes, rx_time for the rest.
-      if (!useSince) {
-        const frontierIfFull = (rows, cap, keys) =>
-          Array.isArray(rows) && rows.length >= cap ? minRecordTimestamp(rows, keys) : 0;
-        collectionLiveFrontiers = {
-          nodes: frontierIfFull(incomingNodes, NODE_LIMIT, ['last_heard']),
-          positions: frontierIfFull(incomingPositions, NODE_LIMIT, ['rx_time']),
-          telemetry: frontierIfFull(incomingTelemetry, NODE_LIMIT, ['rx_time']),
-          neighbors: frontierIfFull(incomingNeighbors, NODE_LIMIT, ['rx_time']),
-          traces: frontierIfFull(incomingTraces, TRACE_LIMIT, ['rx_time']),
-          waypoints: frontierIfFull(incomingWaypoints, NODE_LIMIT, ['rx_time']),
-        };
+      // SPEC CC2: the window each paged collection holds without a gap. Until
+      // the one-shot backfills (issue #802, #832) start, each refresh plans
+      // their walks from its pages: a newest page that came back full walks to
+      // the window's end; on a warm load a delta page that came back full
+      // walks down to the cached rows, and a cache whose coverage stops short
+      // of the window walks on below its rows; a short newest page walks
+      // nothing. Later refreshes move the coverage. A collection a refresh did
+      // not fetch keeps what it had. The cursor is each route's ORDER BY column.
+      // The chat's encrypted page shares its route and `since`: the plaintext
+      // page is complete up to that page's newest row too.
+      const chatHorizon = maxRecordTimestamp(incomingEncryptedMessages, ['rx_time']);
+      const coveragePages = [
+        ['nodes', want('nodes'), incomingNodes, NODE_LIMIT, nodeSince],
+        ['messages', want('messages'), incomingMessages, MESSAGE_LIMIT, msgSince, chatHorizon],
+        ['positions', want('positions'), incomingPositions, NODE_LIMIT, posSince],
+        ['telemetry', want('telemetry'), incomingTelemetry, NODE_LIMIT, telSince],
+        ['neighbors', want('neighbors'), incomingNeighbors, NODE_LIMIT, nbSince],
+        ['traces', want('traces'), incomingTraces, TRACE_LIMIT, trSince],
+        ['waypoints', want('waypoints') && !isPrivateMode, incomingWaypoints, NODE_LIMIT, wpSince],
+      ];
+      for (const [name, fetched, rows, cap, since, horizon] of coveragePages) {
+        if (!fetched) continue;
+        const planning = name === 'messages' ? !chatHistoryBackfilled : !collectionsBackfilled;
+        if (planning) cacheCoverage.plan(name, { rows, cap, since, horizon, warm: useSince });
+        else cacheCoverage.refreshed(name, { rows, cap, since, horizon });
       }
 
       // Merge incremental results into the module-level collections.  On first
@@ -5847,35 +5909,37 @@ export function initializeApp(config) {
       // SPEC DR4: the raw collections before this merge, so the planner can
       // tell which ones the delta (or a window trim) actually changed.
       const rawBefore = rawCollections();
-      allNodes = merge ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
+      // SPEC CC6: on a key collision the row with the newer own time wins, so
+      // a late response cannot set a row back.
+      allNodes = merge ? mergeNewerById(allNodes, incomingNodes, 'node_id', 'last_heard') : incomingNodes;
       allPositionEntries = merge
-        ? trimToWindow(mergeById(allPositionEntries, incomingPositions, 'id'), recentWindowFloor)
+        ? trimToWindow(mergeNewerById(allPositionEntries, incomingPositions, 'id', 'rx_time'), recentWindowFloor)
         : incomingPositions;
       allTelemetryEntries = merge
-        ? trimToWindow(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), recentWindowFloor)
+        ? trimToWindow(mergeNewerById(allTelemetryEntries, incomingTelemetry, 'id', 'rx_time'), recentWindowFloor)
         : incomingTelemetry;
       allNeighbors = merge
-        ? trimToWindow(mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id']), longWindowFloor)
+        ? trimToWindow(mergeNewerByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id'], 'rx_time'), longWindowFloor)
         : incomingNeighbors;
       allTraces = merge
-        ? trimToWindow(mergeById(allTraces, incomingTraces, 'id'), longWindowFloor)
+        ? trimToWindow(mergeNewerById(allTraces, incomingTraces, 'id', 'rx_time'), longWindowFloor)
         : incomingTraces;
       // Waypoints merge on the composite (id, protocol) — the server's upsert
       // key (SPEC W5) — so a re-broadcast replaces its row and same-id
       // waypoints from different protocols stay distinct.
       allWaypoints = merge
-        ? trimToWindow(mergeByCompositeKey(allWaypoints, incomingWaypoints, ['id', 'protocol']), recentWindowFloor)
+        ? trimToWindow(mergeNewerByCompositeKey(allWaypoints, incomingWaypoints, ['id', 'protocol'], 'rx_time'), recentWindowFloor)
         : incomingWaypoints;
       // Encrypted blobs only feed the mixed Log tab (itself capped), so a count
       // cap is the right memory bound for them.
       const encryptedMessages = merge
-        ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
+        ? trimToLimit(mergeNewerById(allEncryptedMessages, incomingEncryptedMessages, 'id', 'rx_time'), MESSAGE_LIMIT)
         : incomingEncryptedMessages;
       // Plaintext chat is shown for the full seven-day window (issue #796), so
       // bound the retained set by that window rather than a row count — a count
       // cap would silently drop older-but-in-window messages on the next merge.
       const messages = merge
-        ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
+        ? trimToWindow(mergeNewerById(allMessages, incomingMessages, 'id', 'rx_time'), messageWindowFloor)
         : incomingMessages;
 
       // Aggregate per-source snapshots into locals and enrich the node collection
@@ -5902,7 +5966,7 @@ export function initializeApp(config) {
       // newest page as-is.
       const chatBefore = { messages: allMessages, encrypted: allEncryptedMessages };
       allMessages = merge
-        ? trimToWindow(mergeById(allMessages, hydratedChat, 'id'), messageWindowFloor)
+        ? trimToWindow(mergeNewerById(allMessages, hydratedChat, 'id', 'rx_time'), messageWindowFloor)
         : hydratedChat;
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
       repaintPlanner.noteCollections(chatBefore, { messages: allMessages, encrypted: allEncryptedMessages });
@@ -5930,15 +5994,24 @@ export function initializeApp(config) {
       // instead of blocking the first paint on the whole backward pagination.
       // Runs once after the first load — whether that load was cold or seeded
       // from cache — so any window not already present in the cache is filled.
+      // SPEC CC2: on a warm load the coverage plan says whether and where the
+      // chat walks, so a cache that holds the window fetches no history again;
+      // a cold load walks from its newest page's oldest row, as before. The
+      // walk's end writes the rows it paged in back at once (SPEC CC1).
       if (!chatHistoryBackfilled) {
         chatHistoryBackfilled = true;
-        backfillPromise = backfillChatHistory();
-        void backfillPromise;
+        const chatWalk = cacheCoverage.walkOf('messages');
+        const chatStart = chatWalk ? chatWalk.before : (useSince ? 0 : chatLiveFrontier);
+        if (chatStart > 0) {
+          chatLiveFrontier = chatStart;
+          backfillPromise = backfillChatHistory().then(() => writeBackCache({ force: true }));
+          void backfillPromise;
+        }
       }
       // Likewise stream the rest of every bulk collection's window in the
       // background (issue #832) so the node table / map fill past the newest
       // 1000-row page the server returns at once. One-shot after the first load;
-      // a no-op when no collection recorded a frontier (warm load / short page).
+      // a no-op when no collection has a planned walk (SPEC CC2).
       if (!collectionsBackfilled) {
         collectionsBackfilled = true;
         collectionBackfillPromise = backfillAllCollections();
@@ -6382,6 +6455,8 @@ export function initializeApp(config) {
       getLoadedMessageCount: () => allMessages.length,
       /** Number of node rows currently loaded into the table (test use only). */
       getLoadedNodeCount: () => allNodes.length,
+      /** Node records currently loaded (test use only). */
+      getLoadedNodes: () => allNodes,
       /** Waypoints currently loaded (SPEC W8 plumbing; test use only). */
       getLoadedWaypoints: () => allWaypoints,
       /** Waypoint keys faded by the most recent SSE-ping refresh (test hook). */

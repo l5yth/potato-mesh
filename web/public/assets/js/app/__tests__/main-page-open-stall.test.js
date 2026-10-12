@@ -31,35 +31,12 @@ import assert from 'node:assert/strict';
 import * as sequencer from '../main/page-open-sequencer.js';
 import { createFakeIndexedDb } from './fake-indexeddb.js';
 import {
-  COLD_NODES, boot, settle, waitFor, finishInitialLoad, releaseExcept,
+  boot, settle, waitFor, finishInitialLoad, releaseExcept, coldNodes, hangFirstNodes,
 } from './page-open-harness.js';
 
 /** The bounds, read through the namespace so this file loads before SPEC OR5. */
 const SEED = sequencer.SEED_TIMEOUT_MS;
 const START = sequencer.START_TIMEOUT_MS;
-
-/**
- * Count the cold (first-load) `/api/nodes` fetches.
- *
- * @param {Array<{ url: string }>} calls Recorded fetch calls.
- * @returns {number}
- */
-const coldNodes = (calls) => calls.filter((c) => COLD_NODES.test(c.url)).length;
-
-/**
- * Wait until the first refresh has asked for the nodes, then answer every
- * other held GET and leave that one hanging.
- *
- * @param {Array<Object>} calls Recorded fetch calls.
- * @returns {Promise<Object>} The hanging `/api/nodes` call.
- */
-async function hangFirstNodes(calls) {
-  await waitFor(() => coldNodes(calls) === 1);
-  const hung = calls.find((c) => COLD_NODES.test(c.url));
-  releaseExcept(calls, hung);
-  await settle();
-  return hung;
-}
 
 test('OR5: a cache open blocked by another tab runs the page network-only (FC7)', async () => {
   const fake = createFakeIndexedDb();

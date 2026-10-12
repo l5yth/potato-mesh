@@ -169,26 +169,49 @@ export async function fetchMessages(limit, options = {}) {
  *
  * Iteration stops when a short page signals the window is exhausted, when a page
  * yields no new rows (the server ignored the cursor, or every row was a boundary
- * duplicate), when no row carries a usable cursor value, or when ``maxPages`` is
- * hit as a runaway backstop.
+ * duplicate), when no row carries a usable cursor value, when a page's oldest
+ * cursor is at or below ``until`` (the rows below are already held; SPEC CC2),
+ * or when ``maxPages`` is hit as a runaway backstop. ``fetchPage`` also gets
+ * ``until`` as an inclusive lower bound, which the routes take as ``since``
+ * (SPEC BP2), so a walk down to held rows fetches none of them; a short page
+ * then means it reached ``until``. ``onEnd`` then hears why: ``'exhausted'``
+ * (a short or empty page, the window has no older row), ``'reached'``
+ * (``until``), ``'stalled'`` (no new rows, no cursor, or a body that is not a
+ * list) or ``'max'``. A page that fails to load ends the walk with its error
+ * instead.
  *
- * @param {(limit: number, before: number) => Promise<Array<Object>>} fetchPage
- *   Fetches one page bounded by an inclusive ``before`` cursor (0 ⇒ newest page).
- * @param {{ limit: number, before?: number, maxPages?: number,
- *   idOf: (row: Object) => *, cursorOf: (row: Object) => * }} options
+ * @param {(limit: number, before: number, since: number) => Promise<Array<Object>>} fetchPage
+ *   Fetches one page bounded by an inclusive ``before`` cursor (0 ⇒ newest page)
+ *   and an inclusive lower bound ``since`` (0 ⇒ none).
+ * @param {{ limit: number, before?: number, until?: number, maxPages?: number,
+ *   idOf: (row: Object) => *, cursorOf: (row: Object) => *,
+ *   onEnd?: (reason: string) => void }} options
  *   ``limit`` page size; ``before`` optional seed cursor (resume just past an
- *   already-loaded newest page); ``maxPages`` runaway backstop; ``idOf`` per-row
- *   dedup key; ``cursorOf`` per-row cursor value (the column the route orders by).
+ *   already-loaded newest page); ``until`` optional stop cursor and lower bound (0
+ *   walks to the end of the window); ``maxPages`` runaway backstop; ``idOf`` per-row dedup
+ *   key; ``cursorOf`` per-row cursor value (the column the route orders by);
+ *   ``onEnd`` optional end report, called once when the walk stops by itself.
  * @yields {Array<Object>} The de-duplicated new rows of each page.
  * @returns {AsyncGenerator<Array<Object>>}
  */
-export async function* paginateCollection(fetchPage, { limit, before: initialBefore = 0, maxPages = 200, idOf, cursorOf }) {
+export async function* paginateCollection(fetchPage, { limit, before: initialBefore = 0, until = 0, maxPages = 200, idOf, cursorOf, onEnd }) {
   const seen = new Set();
+  const stopAt = Number.isFinite(until) && until > 0 ? until : 0;
+  const end = reason => {
+    if (typeof onEnd === 'function') onEnd(reason);
+  };
   let before = Number.isFinite(initialBefore) && initialBefore > 0 ? initialBefore : 0;
   for (let page = 0; page < maxPages; page += 1) {
     // eslint-disable-next-line no-await-in-loop -- pages are inherently sequential (cursor depends on the prior page).
-    const batch = await fetchPage(limit, before);
-    if (!Array.isArray(batch) || batch.length === 0) return;
+    const batch = await fetchPage(limit, before, stopAt);
+    if (!Array.isArray(batch)) {
+      end('stalled');
+      return;
+    }
+    if (batch.length === 0) {
+      end(stopAt > 0 ? 'reached' : 'exhausted');
+      return;
+    }
     const fresh = [];
     let oldest = 0;
     for (const row of batch) {
@@ -205,11 +228,25 @@ export async function* paginateCollection(fetchPage, { limit, before: initialBef
     if (fresh.length > 0) {
       yield fresh;
     }
-    // A short page means the window is exhausted; no new rows (or no usable
-    // cursor) means we cannot make further progress without looping forever.
-    if (batch.length < limit || fresh.length === 0 || oldest === 0) return;
+    // A short page means the window is exhausted, or, with `until`, that the
+    // rows down to it are in; no new rows (or no usable cursor) means we cannot
+    // make further progress without looping forever.
+    if (batch.length < limit) {
+      end(stopAt > 0 ? 'reached' : 'exhausted');
+      return;
+    }
+    if (fresh.length === 0 || oldest === 0) {
+      end('stalled');
+      return;
+    }
+    // The rows at and below `until` are held already (SPEC CC2).
+    if (stopAt > 0 && oldest <= stopAt) {
+      end('reached');
+      return;
+    }
     before = oldest;
   }
+  end('max');
 }
 
 /**
@@ -222,23 +259,27 @@ export async function* paginateCollection(fetchPage, { limit, before: initialBef
  * window (issue #802).
  *
  * @param {number} limit Page size (rows requested per API call).
- * @param {{ encrypted?: boolean, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
+ * @param {{ encrypted?: boolean, before?: number, until?: number, chatEnabled?: boolean,
+ *   normaliseMessageLimit?: Function, maxPages?: number, onEnd?: (reason: string) => void }} [options]
  *   Retrieval flags, dependency hooks, an optional ``before`` cursor to seed the
  *   walk from (used to resume paging just past an already-loaded newest page),
- *   and an optional page-count backstop.
+ *   an optional page-count backstop, and the stop cursor and end report of
+ *   {@link paginateCollection}.
  * @yields {Array<Object>} The de-duplicated new rows of each page.
  * @returns {AsyncGenerator<Array<Object>>}
  */
 export async function* paginateMessages(limit, options = {}) {
-  const { maxPages = 200, before = 0, ...fetchOptions } = options;
+  const { maxPages = 200, before = 0, until = 0, onEnd, ...fetchOptions } = options;
   yield* paginateCollection(
-    (pageLimit, pageBefore) => fetchMessages(pageLimit, { ...fetchOptions, before: pageBefore }),
+    (pageLimit, pageBefore, pageSince) => fetchMessages(pageLimit, { ...fetchOptions, before: pageBefore, since: pageSince }),
     {
       limit,
       before,
+      until,
       maxPages,
       idOf: row => row && row.id,
       cursorOf: row => row && row.rx_time,
+      onEnd,
     },
   );
 }

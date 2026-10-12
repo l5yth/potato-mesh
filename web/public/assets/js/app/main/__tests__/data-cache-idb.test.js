@@ -68,6 +68,24 @@ test('remove and clearStore delete data', async () => {
   assert.deepEqual(await be.readAll('traces'), []);
 });
 
+test('removeMany deletes keys of several stores in one transaction (SPEC CC5)', async () => {
+  const fake = createFakeIndexedDb();
+  const be = createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'db8' });
+  await be.write('nodes', '!a', { value: 1 });
+  await be.write('positions', 'p1', { value: 2 });
+  await be.write('positions', 'p2', { value: 3 });
+  fake.resetIoStats();
+  await be.removeMany([{ store: 'nodes', key: '!a' }, { store: 'positions', key: 'p1' }, { store: 'positions', key: 'p2' }]);
+  const io = fake.ioStats();
+  assert.equal(io.transactions.readwrite, 1, 'one transaction');
+  assert.deepEqual(io.writes, [{ stores: ['nodes', 'positions'], puts: 0, deletes: 3 }]);
+  assert.deepEqual(await be.readAll('nodes'), []);
+  assert.deepEqual(await be.readAll('positions'), []);
+  fake.resetIoStats();
+  await be.removeMany([]);
+  assert.equal(fake.ioStats().transactions.readwrite, 0, 'nothing to delete opens no transaction');
+});
+
 test('data persists across backend handles over the same database', async () => {
   const { factory } = createFakeIndexedDb();
   const first = createIndexedDbBackend({ indexedDB: factory, databaseName: 'shared' });

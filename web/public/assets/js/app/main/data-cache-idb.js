@@ -18,8 +18,9 @@
  * IndexedDB backend adapter for {@link module:main/data-cache} (SPEC FC1).
  *
  * Maps the cache's small async key/value backend interface
- * (`read`/`readAll`/`write`/`writeMany`/`remove`/`clearStore`) onto IndexedDB
- * object stores — one per cached collection plus a `meta` marker store. The
+ * (`read`/`readAll`/`write`/`writeMany`/`remove`/`removeMany`/`clearStore`)
+ * onto IndexedDB object stores — one per cached collection plus a `meta`
+ * marker store. The
  * database is opened lazily and the handle is memoised. When IndexedDB is
  * unavailable (e.g. the Node test runner, or a privacy-hardened browser) the
  * factory returns `null` so {@link module:main/data-cache} runs disabled and the
@@ -121,6 +122,33 @@ export function createIndexedDbBackend({
   }
 
   /**
+   * Run one transaction over `stores` and resolve with the callback's result
+   * once the transaction commits.
+   *
+   * @param {string|Array<string>} stores Object store name, or the names of
+   *   every store the transaction spans.
+   * @param {IDBTransactionMode} mode Transaction mode.
+   * @param {(transaction: IDBTransaction) => Promise<*>} run Issues requests
+   *   against the transaction's stores.
+   * @returns {Promise<*>} The callback's resolved value after commit.
+   */
+  async function withTransaction(stores, mode, run) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      let result;
+      const transaction = db.transaction(stores, mode);
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error || new Error('IndexedDB transaction failed'));
+      transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+      Promise.resolve(run(transaction))
+        .then(value => {
+          result = value;
+        })
+        .catch(reject);
+    });
+  }
+
+  /**
    * Run a transaction against one store and resolve with the callback's result
    * once the transaction commits.
    *
@@ -129,20 +157,8 @@ export function createIndexedDbBackend({
    * @param {(store: IDBObjectStore) => Promise<*>} run Issues requests against the store.
    * @returns {Promise<*>} The callback's resolved value after commit.
    */
-  async function withStore(store, mode, run) {
-    const db = await open();
-    return new Promise((resolve, reject) => {
-      let result;
-      const transaction = db.transaction(store, mode);
-      transaction.oncomplete = () => resolve(result);
-      transaction.onerror = () => reject(transaction.error || new Error('IndexedDB transaction failed'));
-      transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
-      Promise.resolve(run(transaction.objectStore(store)))
-        .then(value => {
-          result = value;
-        })
-        .catch(reject);
-    });
+  function withStore(store, mode, run) {
+    return withTransaction(store, mode, transaction => run(transaction.objectStore(store)));
   }
 
   return {
@@ -170,6 +186,16 @@ export function createIndexedDbBackend({
     },
     async remove(store, key) {
       return withStore(store, 'readwrite', objectStore => promisifyRequest(objectStore.delete(key)));
+    },
+    async removeMany(items) {
+      if (items.length === 0) return undefined;
+      // One transaction for every key, whatever its store (SPEC CC5): the
+      // seed's eviction no longer queues a transaction per expired entry in
+      // front of the first write-back.
+      const stores = [...new Set(items.map(item => item.store))];
+      return withTransaction(stores, 'readwrite', transaction =>
+        Promise.all(items.map(item => promisifyRequest(transaction.objectStore(item.store).delete(item.key)))),
+      );
     },
     async clearStore(store) {
       return withStore(store, 'readwrite', objectStore => promisifyRequest(objectStore.clear()));
