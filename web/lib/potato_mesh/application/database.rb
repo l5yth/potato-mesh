@@ -15,6 +15,7 @@
 # frozen_string_literal: true
 
 require_relative "database/schema_guard"
+require_relative "database/keeper"
 
 module PotatoMesh
   module App
@@ -61,12 +62,24 @@ module PotatoMesh
 
       # Open a connection to the application database applying common pragmas.
       #
+      # A busy connection waits up to +db_busy_timeout_ms+ in a busy handler
+      # that sleeps in Ruby, without the GVL, so the thread of this process
+      # that holds the write lock runs on and releases it; +busy_timeout=+
+      # would sleep inside SQLite holding the GVL, and the waiter would give
+      # up first (SPEC SK4). A connection belongs to the thread that opened
+      # it: while it waits, its SQLite mutex is held, so another thread's
+      # statement on it blocks holding the GVL and neither thread wakes, and
+      # an interrupt that lands in the wait leaves the mutex held until that
+      # thread closes the connection. +journal_size_limit+ trims the WAL back
+      # to +db_journal_size_limit_bytes+ after a checkpoint (SPEC SK3).
+      #
       # @param readonly [Boolean] whether to open the database in read-only mode.
       # @return [SQLite3::Database] configured database handle.
       def open_database(readonly: false)
         SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: readonly).tap do |db|
-          db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
+          db.busy_handler_timeout = PotatoMesh::Config.db_busy_timeout_ms
           db.execute("PRAGMA foreign_keys = ON")
+          db.execute("PRAGMA journal_size_limit = #{Integer(PotatoMesh::Config.db_journal_size_limit_bytes)}")
         end
       end
 

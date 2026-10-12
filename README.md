@@ -133,6 +133,17 @@ repository root when unset:
 - Well-known document: `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`
 - Database: `$XDG_DATA_HOME/potato-mesh`
 
+While the web app runs, its newest writes sit in `mesh.db-wal` beside
+`mesh.db`. Copy the database with:
+
+```bash
+sqlite3 ~/.local/share/potato-mesh/mesh.db ".backup mesh-copy.db"
+```
+
+In Docker, prefix it with `docker compose exec web` and use
+`/app/.local/share/potato-mesh/` for both files. After a graceful stop of the
+web app, `mesh.db` alone holds every write.
+
 If the web app exits at boot with `Instance private key file cannot be parsed`,
 restore the file it names from a backup, or delete that file to start with a new
 key. A new key gives the instance a new id; peers replace its old record when it

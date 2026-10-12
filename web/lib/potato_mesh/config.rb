@@ -23,6 +23,9 @@ module PotatoMesh
     DEFAULT_DB_BUSY_TIMEOUT_MS = 5_000
     DEFAULT_DB_BUSY_MAX_RETRIES = 5
     DEFAULT_DB_BUSY_RETRY_DELAY = 0.05
+    # Size SQLite trims the WAL back to after a checkpoint (SPEC SK3): just
+    # above the 1000 pages of 4 KiB its automatic checkpoint lets it reach.
+    DEFAULT_DB_JOURNAL_SIZE_LIMIT_BYTES = 4 * 1024 * 1024
     DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
     DEFAULT_REFRESH_INTERVAL_SECONDS = 60
     # Slow safety-poll cadence used by the dashboard when live SSE updates are
@@ -224,6 +227,13 @@ module PotatoMesh
     # @return [Float] seconds to wait between retries.
     def db_busy_retry_delay
       DEFAULT_DB_BUSY_RETRY_DELAY
+    end
+
+    # Retrieve the size SQLite trims the WAL back to after a checkpoint.
+    #
+    # @return [Integer] limit in bytes, set as +PRAGMA journal_size_limit+.
+    def db_journal_size_limit_bytes
+      DEFAULT_DB_JOURNAL_SIZE_LIMIT_BYTES
     end
 
     # Default rolling retention window in seconds.
