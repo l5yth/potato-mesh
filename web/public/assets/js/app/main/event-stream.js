@@ -28,6 +28,10 @@
  * client reports inactive so the caller can fall back to polling. The browser's
  * `EventSource` reconnects on its own after a transient error; every (re)connect
  * fires `onResync` so the caller can recover any change missed during the gap.
+ * A connection the server refuses (any answer but a 200 event stream, such as
+ * the 503 at the subscriber cap or a proxy's 502 while the app restarts) ends
+ * `CLOSED`, and the browser never retries it: the client drops that source and
+ * reports `onClosed`, so the caller can poll and retry (SPEC ST1).
  *
  * @module main/event-stream
  */
@@ -47,6 +51,14 @@ export const LIVE_COLLECTIONS = Object.freeze([
   'traces',
   'waypoints',
 ]);
+
+/**
+ * `EventSource.readyState` of a connection the browser has given up on: it
+ * fires one `error` and never reconnects (SPEC ST1).
+ *
+ * @type {number}
+ */
+export const EVENT_SOURCE_CLOSED = 2;
 
 /**
  * Resolve the `EventSource` constructor to use.
@@ -94,6 +106,9 @@ export function parseChangeEvent(data) {
  *   caller can run a full delta resync.
  * @param {(message: string, error: ?Object) => void} [options.onError]
  *   Optional diagnostic sink for stream errors and malformed payloads.
+ * @param {() => void} [options.onClosed] Invoked when the server refused the
+ *   connection and the browser gave up on it; the source is already dropped,
+ *   so `isActive()` reads false and the next `start` opens a new one (ST1).
  * @param {Function} [options.eventSourceFactory] `EventSource` constructor
  *   override (used by tests); defaults to `globalThis.EventSource`.
  * @returns {{start: () => boolean, stop: () => void, isActive: () => boolean}}
@@ -101,7 +116,7 @@ export function parseChangeEvent(data) {
  *   caller can fall back to polling.
  */
 export function createEventStream(options = {}) {
-  const { path, onChange, onResync, onError, eventSourceFactory } = options;
+  const { path, onChange, onResync, onError, onClosed, eventSourceFactory } = options;
   const Factory = resolveEventSourceFactory(eventSourceFactory);
   let source = null;
 
@@ -122,9 +137,14 @@ export function createEventStream(options = {}) {
     if (typeof onChange === 'function') onChange(change.collection, change.hint);
   };
 
-  const handleError = (event) => {
-    // EventSource reconnects on its own; surface the blip and keep the stream.
+  const handleError = (instance, event) => {
     report('sse connection error', event);
+    // A dropped connection leaves the source CONNECTING: the browser reconnects
+    // on its own, so keep it. A refused one leaves it CLOSED for good: drop it
+    // and tell the caller (SPEC ST1). A source already stopped is not ours.
+    if (instance !== source || instance.readyState !== EVENT_SOURCE_CLOSED) return;
+    source = null;
+    if (typeof onClosed === 'function') onClosed();
   };
 
   return {
@@ -144,9 +164,10 @@ export function createEventStream(options = {}) {
         source = null;
         return false;
       }
+      const instance = source;
       source.addEventListener('open', handleOpen);
       source.addEventListener('change', handleChange);
-      source.addEventListener('error', handleError);
+      source.addEventListener('error', (event) => handleError(instance, event));
       return true;
     },
 
@@ -165,7 +186,8 @@ export function createEventStream(options = {}) {
     },
 
     /**
-     * @returns {boolean} true while a stream is open.
+     * @returns {boolean} true while a stream is open or reconnecting; false
+     *   once stopped or refused (ST1).
      */
     isActive() {
       return source !== null;

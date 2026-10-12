@@ -15,20 +15,21 @@
  */
 
 /**
- * Visible live/paused state for the auto-refresh toggle (SPEC UX6, CT4, audit
- * D-010).
+ * Visible live/paused state for the auto-refresh toggle (SPEC UX6, CT4, ST4,
+ * audit D-010).
  *
  * The single most important status on a live dashboard — whether the data is
  * streaming or frozen — must be readable text, not a glyph-only secret, and
  * the text names what a tap does: `● live · pause` while streaming,
- * `❚❚ paused HH:MM · resume` (the freeze moment) when paused. The action
- * renders in its own span, which base.css hides on phones so pausing does not
- * wrap the meta row. The accessible name starts with the visible state words,
- * so it holds the visible label at every width (WCAG 2.5.3), and goes on with
- * the action and what it acts on: `live, pause auto-refresh`. The helpers are
- * pure so the control's contract is unit-testable; the app applies them to the
- * existing `#autorefreshToggle` button, whose server-rendered markup is the
- * live state.
+ * `↻ polling · pause` while the stream is down or unavailable and the page
+ * polls instead, `❚❚ paused HH:MM · resume` (the freeze moment) when paused.
+ * The action renders in its own span, which base.css hides on phones so
+ * pausing does not wrap the meta row. The accessible name starts with the
+ * visible state words, so it holds the visible label at every width (WCAG
+ * 2.5.3), and goes on with the action and what it acts on: `live, pause
+ * auto-refresh`. The helpers are pure so the control's contract is
+ * unit-testable; the app applies them to the existing `#autorefreshToggle`
+ * button, whose server-rendered markup is the live state.
  *
  * @module main/autorefresh-control
  */
@@ -40,8 +41,8 @@ const ACTION_CLASS = 'autorefresh-toggle__action';
  * Build one control state from its parts, so the visible label and the
  * accessible name cannot drift apart.
  *
- * @param {string} glyph State glyph (`●`, `❚❚`); visual only, left out of the name.
- * @param {string} words State words, visible at every width (`live`, `paused 14:32`).
+ * @param {string} glyph State glyph (`●`, `↻`, `❚❚`); visual only, left out of the name.
+ * @param {string} words State words, visible at every width (`live`, `polling`, `paused 14:32`).
  * @param {string} action What a tap does (`pause`, `resume`).
  * @param {string} ariaPressed `aria-pressed` value: `true` while paused.
  * @returns {{text: string, status: string, ariaLabel: string, ariaPressed: string}} Control state.
@@ -57,14 +58,19 @@ function controlState(glyph, words, action, ariaPressed) {
  * @param {boolean} paused Whether auto-refresh (stream + safety poll) is paused.
  * @param {?string} pausedAtText Clock text of the pause moment (`HH:MM`), when
  *   known; blank/omitted renders the bare paused state.
+ * @param {boolean} [polling=false] Whether the page polls because the stream
+ *   is down or unavailable (SPEC ST4); a pause wins over it.
  * @returns {{text: string, status: string, ariaLabel: string, ariaPressed: string}}
  *   Control state: `text` is the whole visible label and starts with `status`,
  *   the glyph and state words that stay visible on phones; the rest names the
  *   action. `ariaLabel` starts with the state words.
  */
-export function autorefreshControlState(paused, pausedAtText) {
-  if (!paused) return controlState('●', 'live', 'pause', 'false');
-  return controlState('❚❚', pausedAtText ? `paused ${pausedAtText}` : 'paused', 'resume', 'true');
+export function autorefreshControlState(paused, pausedAtText, polling = false) {
+  if (paused) {
+    return controlState('❚❚', pausedAtText ? `paused ${pausedAtText}` : 'paused', 'resume', 'true');
+  }
+  if (polling) return controlState('↻', 'polling', 'pause', 'false');
+  return controlState('●', 'live', 'pause', 'false');
 }
 
 /**

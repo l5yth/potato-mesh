@@ -57,6 +57,8 @@
 * Web: every button and button-like control without a focus ring of its own shows the accent focus ring when reached by keyboard, and chat tabs show it inside the tab strip (SPEC CT2)
 * Web: the protocol toggles stay hidden on an instance with one active protocol, the filter shows its × only with text in it, the region selector hides with fewer than two regions, the map's full-screen button hides where the browser has no full-screen support, and the meta row no longer jumps while the dashboard loads (SPEC CT3)
 * Web: the live toggle reads "● live · pause" and "❚❚ paused HH:MM · resume", framed in the accent while paused; on phones it reads "● live" and "❚❚ paused HH:MM" (SPEC CT4)
+* Web: when the server refuses the live stream, as at the SSE subscriber cap or behind a proxy while the app restarts, the dashboard polls every 60 s instead of every 5 minutes, opens the stream again after 5 s, doubling to 60 s, and its live toggle reads "↻ polling · pause" until the stream is back; with `EVENTS=0` it reads "↻ polling · pause" too (SPEC ST1-ST4)
+* Web: a dashboard hidden for more than 5 s closes its live stream and stops its poll, and holds no SSE slot while hidden; visible again, it reopens the stream and catches up with one refresh (SPEC ST5)
 * Web: the Chromium that renders `/og-image.png` keeps its sandbox unless `OG_IMAGE_NO_SANDBOX=1`, which the Docker images and the Compose default set, and keeps the same-origin policy and site isolation on (SPEC FE3/FE4)
 * Web: the federation page shows a numeric frequency or version instead of an empty cell (SPEC FE5)
 * Web: buttons, row toggles, the footer, the badge popover and the nodes table's group header use the dashboard's blue-black palette instead of neutral greys (SPEC GF1/GF2/GF3)
