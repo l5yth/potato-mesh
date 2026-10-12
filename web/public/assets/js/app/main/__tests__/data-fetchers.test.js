@@ -686,6 +686,141 @@ test('paginateCollection stops cleanly when a page is not an array', async () =>
 });
 
 // ---------------------------------------------------------------------------
+// paginateCollection stop cursor and end report (SPEC CC2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a pager to its end, collecting the ids it yielded, the cursors it
+ * asked for and the end reasons it reported.
+ *
+ * @param {(limit: number, before: number) => Promise<*>} fetchPage Page source.
+ * @param {Object} options Pager options besides `idOf`, `cursorOf` and `onEnd`.
+ * @returns {Promise<{ out: Array<Array<number>>, calls: Array<number>, ends: Array<string> }>}
+ */
+async function walkReporting(fetchPage, options) {
+  const out = [];
+  const calls = [];
+  const ends = [];
+  const recording = async (limit, before, since) => {
+    calls.push(before);
+    return fetchPage(limit, before, since);
+  };
+  for await (const batch of paginateCollection(recording, {
+    idOf: r => r.id, cursorOf: r => r.t, ...options, onEnd: reason => ends.push(reason),
+  })) {
+    out.push(batch.map(r => r.id));
+  }
+  return { out, calls, ends };
+}
+
+/** Full pages of two rows, keyed by the cursor they answer. */
+const TWO_ROW_PAGES = {
+  0: [{ id: 5, t: 50 }, { id: 4, t: 40 }],
+  40: [{ id: 4, t: 40 }, { id: 3, t: 30 }],
+  30: [{ id: 3, t: 30 }, { id: 2, t: 20 }],
+  20: [{ id: 2, t: 20 }, { id: 1, t: 10 }],
+  10: [{ id: 1, t: 10 }],
+};
+
+test('paginateCollection ends after the page that reaches until and reports reached (SPEC CC2)', async () => {
+  const { out, calls, ends } = await walkReporting(async (limit, before) => TWO_ROW_PAGES[before], { limit: 2, until: 35 });
+  assert.deepEqual(out, [[5, 4], [3]], 'the page at or below until is the last one');
+  assert.deepEqual(calls, [0, 40]);
+  assert.deepEqual(ends, ['reached']);
+});
+
+test('paginateCollection hands until to the page source as a lower bound (SPEC BP2, CC2)', async () => {
+  const bounds = [];
+  // A source that honours the bound: rows at or above it only.
+  const bounded = async (limit, before, since) => {
+    bounds.push(since);
+    return (TWO_ROW_PAGES[before] || []).filter(row => row.t >= since);
+  };
+  const { out, ends } = await walkReporting(bounded, { limit: 2, until: 30 });
+  assert.deepEqual(out, [[5, 4], [3]]);
+  assert.deepEqual(bounds, [30, 30]);
+  assert.deepEqual(ends, ['reached'], 'a full page down to the bound reached it');
+  const short = await walkReporting(async (limit, before, since) => [{ id: 9, t: Math.max(since, 31) }], { limit: 2, until: 30 });
+  assert.deepEqual(short.ends, ['reached'], 'a short page above the bound reached it');
+  const empty = await walkReporting(async () => [], { limit: 2, until: 30 });
+  assert.deepEqual(empty.ends, ['reached'], 'an empty page above the bound reached it');
+  const open = await walkReporting(async (limit, before, since) => {
+    bounds.push(since);
+    return [];
+  }, { limit: 2 });
+  assert.equal(bounds.at(-1), 0, 'without until there is no lower bound');
+  assert.deepEqual(open.ends, ['exhausted']);
+});
+
+test('paginateCollection ignores a non-positive until and walks to a short page, reported exhausted', async () => {
+  for (const until of [0, -5, Number.NaN]) {
+    const { out, ends } = await walkReporting(async (limit, before) => TWO_ROW_PAGES[before], { limit: 2, until });
+    assert.deepEqual(out, [[5, 4], [3], [2], [1]]);
+    assert.deepEqual(ends, ['exhausted']);
+  }
+});
+
+
+test('paginateCollection reports an empty page as exhausted', async () => {
+  const { out, ends } = await walkReporting(async () => [], { limit: 2 });
+  assert.deepEqual(out, []);
+  assert.deepEqual(ends, ['exhausted']);
+});
+
+test('paginateCollection reports a body that is not a list, no new rows or no cursor as stalled', async () => {
+  const bodies = [
+    async () => ({ error: 'nope' }),
+    async () => [{ id: 5, t: 50 }, { id: 4, t: 40 }], // the server ignores the cursor
+    async () => [{ id: 7 }, { id: 8 }], // full, without a cursor
+  ];
+  for (const fetchPage of bodies) {
+    const { ends } = await walkReporting(fetchPage, { limit: 2 });
+    assert.deepEqual(ends, ['stalled']);
+  }
+});
+
+test('paginateCollection reports the page limit as max', async () => {
+  let n = 0;
+  const { ends } = await walkReporting(async () => {
+    n += 1;
+    return [{ id: 100 - n, t: 100 - n }];
+  }, { limit: 1, maxPages: 3 });
+  assert.deepEqual(ends, ['max']);
+});
+
+test('paginateCollection reports nothing when a page fails to load', async () => {
+  const ends = [];
+  await assert.rejects(async () => {
+    // eslint-disable-next-line no-unused-vars
+    for await (const _ of paginateCollection(async () => { throw new Error('page failed'); }, {
+      limit: 2, idOf: r => r.id, cursorOf: r => r.t, onEnd: reason => ends.push(reason),
+    })) { /* nothing yields */ }
+  }, /page failed/);
+  assert.deepEqual(ends, []);
+});
+
+test('paginateMessages passes until and onEnd to the pager (SPEC CC2)', async () => {
+  const stub = withFetchStub(url => {
+    const before = Number(new URL(url, 'http://x').searchParams.get('before'));
+    if (before === 0) return { body: [{ id: 5, rx_time: 50 }, { id: 4, rx_time: 40 }] };
+    return { body: [{ id: 4, rx_time: 40 }, { id: 3, rx_time: 30 }] };
+  });
+  try {
+    const ends = [];
+    const out = [];
+    for await (const batch of paginateMessages(2, { until: 45, onEnd: reason => ends.push(reason), normaliseMessageLimit: n => n })) {
+      out.push(batch.map(r => r.id));
+    }
+    assert.deepEqual(out, [[5, 4]]);
+    assert.deepEqual(ends, ['reached']);
+    assert.equal(stub.calls.length, 1);
+    assert.equal(new URL(stub.calls[0].url, 'http://x').searchParams.get('since'), '45', 'until goes out as since');
+  } finally {
+    stub.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // responsePromise (cold-load boot prefetch consumption)
 // ---------------------------------------------------------------------------
 

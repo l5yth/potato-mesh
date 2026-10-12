@@ -28,7 +28,11 @@
  *
  * Per-entry timestamps are recorded here (`cachedAt`); the staleness-vs-eviction
  * lifetime policy (FC3) lives in a separate helper and is applied by the refresh
- * wiring, keeping this module a dumb, durable key/value layer.
+ * wiring, keeping this module a dumb, durable key/value layer. Beside the schema
+ * marker the `meta` store holds the coverage marker (SPEC CC2), which a wipe of
+ * the collections removes with them, and the store's generation (SPEC CC4),
+ * which every wipe replaces, so another tab can tell the store was emptied
+ * under it.
  *
  * @module main/data-cache
  */
@@ -64,6 +68,25 @@ export const CACHE_COLLECTIONS = Object.freeze([
 const META_STORE = 'meta';
 /** Key under which the marker record is written in {@link META_STORE}. */
 const META_KEY = 'meta';
+/**
+ * Key of the coverage marker in {@link META_STORE}: per collection, the window
+ * its cached rows hold without a gap (SPEC CC2, `main/cache-coverage.js`).
+ */
+const COVERAGE_KEY = 'coverage';
+/**
+ * Key of the store's generation in {@link META_STORE}: a token every wipe of
+ * the collections replaces (SPEC CC4).
+ */
+const GENERATION_KEY = 'generation';
+
+/**
+ * A new store generation: unique enough to tell two wipes apart; not a secret.
+ *
+ * @returns {string} The token.
+ */
+function newStoreGeneration() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /**
  * Create an in-memory cache backend implementing the backend interface used by
@@ -72,7 +95,9 @@ const META_KEY = 'meta';
  *
  * The backend interface is a small async keyed store, namespaced by `store`:
  * `read(store, key)`, `readAll(store)`, `write(store, key, record)`,
- * `writeMany(store, items)`, `remove(store, key)`, `clearStore(store)`.
+ * `writeMany(store, items)`, `remove(store, key)`, `removeMany(items)` (keys
+ * of several stores at once; one transaction in IndexedDB, SPEC CC5),
+ * `clearStore(store)`.
  *
  * @returns {{
  *   read: (store: string, key: string) => Promise<*>,
@@ -80,6 +105,7 @@ const META_KEY = 'meta';
  *   write: (store: string, key: string, record: *) => Promise<void>,
  *   writeMany: (store: string, items: Array<{ key: string, record: * }>) => Promise<void>,
  *   remove: (store: string, key: string) => Promise<void>,
+ *   removeMany: (items: Array<{ store: string, key: string }>) => Promise<void>,
  *   clearStore: (store: string) => Promise<void>
  * }} In-memory backend.
  */
@@ -121,6 +147,9 @@ export function createMemoryBackend() {
     async remove(store, key) {
       storeMap(store).delete(key);
     },
+    async removeMany(items) {
+      for (const item of items) storeMap(item.store).delete(item.key);
+    },
     async clearStore(store) {
       storeMap(store).clear();
     },
@@ -142,23 +171,32 @@ export function createMemoryBackend() {
  *   schemaVersion?: number,
  *   instanceId?: string,
  *   isPrivate?: boolean,
- *   now?: () => number
+ *   now?: () => number,
+ *   newGeneration?: () => string
  * }} [options] Configuration. `backend` is the durable store (omit/`null` for a
  *   disabled cache); `instanceId` scopes the cache to one instance (e.g. the
  *   instance domain); `isPrivate` disables+wipes the cache; `now` supplies the
  *   write clock in **unix seconds** (matching the API's record timestamps so the
- *   lifetime helper can compare them; injectable for tests).
+ *   lifetime helper can compare them; injectable for tests); `newGeneration`
+ *   mints a store generation (injectable for tests).
  * @returns {{
  *   ready: () => Promise<void>,
  *   isDisabled: () => boolean,
  *   get: (collection: string, key: string) => Promise<{ value: *, cachedAt: number }|undefined>,
  *   getAll: (collection: string) => Promise<Array<{ key: string, value: *, cachedAt: number }>>,
  *   put: (collection: string, key: string, value: *) => Promise<void>,
- *   putAll: (collection: string, entries: Array<{ key: string, value: * }>) => Promise<void>,
+ *   putAll: (collection: string, entries: Array<{ key: string, value: * }>) => Promise<boolean>,
  *   delete: (collection: string, key: string) => Promise<void>,
+ *   deleteMany: (entries: Array<{ collection: string, key: string }>) => Promise<void>,
+ *   getCoverage: () => Promise<*>,
+ *   putCoverage: (marker: Object) => Promise<boolean>,
+ *   getGeneration: () => Promise<?string>,
  *   clearCollection: (collection: string) => Promise<void>,
  *   clear: () => Promise<void>
- * }} Cache API.
+ * }} Cache API. `putAll` and `putCoverage` resolve `true` once stored and
+ *   `false` when the cache is disabled or the write failed (FC7).
+ *   `getGeneration` resolves the store's generation, minting one when the
+ *   store has none, or `null` when the cache is disabled or the store fails.
  */
 export function createDataCache({
   backend = null,
@@ -166,14 +204,18 @@ export function createDataCache({
   instanceId = '',
   isPrivate = false,
   now = () => Math.floor(Date.now() / 1000),
+  newGeneration = newStoreGeneration,
 } = {}) {
   let disabled = false;
   /** @type {Promise<void>|null} */
   let readyPromise = null;
 
   /**
-   * Remove every cached data collection (the schema marker is managed
-   * separately so a post-clear cache can still write without re-invalidating).
+   * Remove every cached data collection and the coverage marker that
+   * describes them (SPEC CC2), then give the store a new generation (SPEC
+   * CC4): a tab that wrote rows before can tell they are gone. The schema
+   * marker is managed separately so a post-clear cache can still write
+   * without re-invalidating.
    *
    * @returns {Promise<void>} Resolves once all collections are cleared.
    */
@@ -181,6 +223,8 @@ export function createDataCache({
     for (const collection of CACHE_COLLECTIONS) {
       await backend.clearStore(collection);
     }
+    await backend.remove(META_STORE, COVERAGE_KEY);
+    await backend.write(META_STORE, GENERATION_KEY, { value: newGeneration(), cachedAt: now() });
   }
 
   /**
@@ -269,15 +313,18 @@ export function createDataCache({
 
     async putAll(collection, entries) {
       await ready();
-      if (disabled || !Array.isArray(entries) || entries.length === 0) return;
+      if (disabled) return false;
+      if (!Array.isArray(entries) || entries.length === 0) return true;
       try {
         const cachedAt = now();
         await backend.writeMany(
           collection,
           entries.map(({ key, value }) => ({ key, record: { value, cachedAt } })),
         );
+        return true;
       } catch (error) {
-        /* silent no-op (FC7). */
+        /* silent no-op (FC7); the caller keeps the rows as unwritten. */
+        return false;
       }
     },
 
@@ -288,6 +335,55 @@ export function createDataCache({
         await backend.remove(collection, key);
       } catch (error) {
         /* silent no-op (FC7). */
+      }
+    },
+
+    async deleteMany(entries) {
+      await ready();
+      if (disabled || !Array.isArray(entries) || entries.length === 0) return;
+      try {
+        // One backend call, so the seed's eviction is one transaction (SPEC CC5).
+        await backend.removeMany(entries.map(({ collection, key }) => ({ store: collection, key })));
+      } catch (error) {
+        /* silent no-op (FC7): the entries stay expired and the next seed retries. */
+      }
+    },
+
+    async getCoverage() {
+      await ready();
+      if (disabled) return null;
+      try {
+        const record = await backend.read(META_STORE, COVERAGE_KEY);
+        return record && typeof record === 'object' && 'value' in record ? record.value : null;
+      } catch (error) {
+        return null;
+      }
+    },
+
+    async putCoverage(marker) {
+      await ready();
+      if (disabled) return false;
+      try {
+        await backend.write(META_STORE, COVERAGE_KEY, { value: marker, cachedAt: now() });
+        return true;
+      } catch (error) {
+        /* silent no-op (FC7). */
+        return false;
+      }
+    },
+
+    async getGeneration() {
+      await ready();
+      if (disabled) return null;
+      try {
+        const record = await backend.read(META_STORE, GENERATION_KEY);
+        if (record && typeof record === 'object' && typeof record.value === 'string') return record.value;
+        // A store written before generations existed gets one now.
+        const value = newGeneration();
+        await backend.write(META_STORE, GENERATION_KEY, { value, cachedAt: now() });
+        return value;
+      } catch (error) {
+        return null;
       }
     },
 

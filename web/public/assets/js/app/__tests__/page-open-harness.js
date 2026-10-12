@@ -60,9 +60,12 @@ export const COLD_NODES = /\/api\/nodes\?limit=1000$/;
  * Build a stub `fetch` that holds every collection GET until released;
  * backward pages (`before=`) and every other route answer at once.
  *
+ * @param {?(url: string, body: *) => *} [serve] Optional body override,
+ *   called when the request is made with the default body: a held request
+ *   answers what the server held when it was asked.
  * @returns {{ fetch: Function, calls: Array<{ url: string, released: boolean, release: Function }> }}
  */
-export function heldFetch() {
+export function heldFetch(serve = null) {
   const calls = [];
   const body = (url) => {
     if (url.includes('/api/messages') && url.includes('encrypted=true')) return [];
@@ -75,7 +78,8 @@ export function heldFetch() {
     return [];
   };
   const fetch = (url) => new Promise((resolve) => {
-    const respond = () => resolve({ ok: true, status: 200, json: () => Promise.resolve(body(url)) });
+    const served = serve ? serve(url, body(url)) : undefined;
+    const respond = () => resolve({ ok: true, status: 200, json: () => Promise.resolve(serve ? served : body(url)) });
     const call = {
       url,
       released: false,
@@ -176,15 +180,16 @@ export async function finishInitialLoad(u, calls, message = 'the initial load se
  * Boot one dashboard over the held fetch and a fake EventSource. The cache is
  * off unless `indexedDB` is given.
  *
- * @param {{ indexedDB?: Object, withToggle?: boolean, captureBounds?: boolean, flushCache?: boolean }} [options]
+ * @param {{ indexedDB?: Object, withToggle?: boolean, captureBounds?: boolean, flushCache?: boolean, serve?: Function }} [options]
  *   Optional IndexedDB factory, whether to render `#autorefreshToggle`,
  *   whether to capture the page-open bound timers ({@link captureBoundTimers}),
- *   and whether the teardown waits for the cache write-back (not when the
- *   cache open never answers: the write-back then waits forever).
+ *   whether the teardown waits for the cache write-back (not when the
+ *   cache open never answers: the write-back then waits forever), and a body
+ *   override for the held fetch ({@link heldFetch}).
  * @returns {Promise<Object>} The test utils, the fetch calls, the stream accessor,
  *   the toggle's click, the captured bounds (or null), and the teardown.
  */
-export async function boot({ indexedDB, withToggle = false, captureBounds = false, flushCache = true } = {}) {
+export async function boot({ indexedDB, withToggle = false, captureBounds = false, flushCache = true, serve = null } = {}) {
   const env = createDomEnvironment({ includeBody: true });
   env.registerElement('chat', env.createElement('div', 'chat'));
   const clickHandlers = [];
@@ -196,7 +201,7 @@ export async function boot({ indexedDB, withToggle = false, captureBounds = fals
     };
     env.registerElement('autorefreshToggle', toggle);
   }
-  const stub = heldFetch();
+  const stub = heldFetch(serve);
   const saved = { fetch: globalThis.fetch, es: globalThis.EventSource, idb: globalThis.indexedDB };
   globalThis.fetch = stub.fetch;
   globalThis.indexedDB = indexedDB;
@@ -236,6 +241,29 @@ export async function boot({ indexedDB, withToggle = false, captureBounds = fals
  */
 export function releaseExcept(calls, kept) {
   for (const c of calls) if (c !== kept) c.release();
+}
+
+/**
+ * Count the cold (first-load) `/api/nodes` fetches.
+ *
+ * @param {Array<{ url: string }>} calls Recorded fetch calls.
+ * @returns {number}
+ */
+export const coldNodes = (calls) => calls.filter((c) => COLD_NODES.test(c.url)).length;
+
+/**
+ * Wait until the first refresh has asked for the nodes, then answer every
+ * other held GET and leave that one hanging.
+ *
+ * @param {Array<Object>} calls Recorded fetch calls.
+ * @returns {Promise<Object>} The hanging `/api/nodes` call.
+ */
+export async function hangFirstNodes(calls) {
+  await waitFor(() => coldNodes(calls) === 1);
+  const hung = calls.find((c) => COLD_NODES.test(c.url));
+  releaseExcept(calls, hung);
+  await settle();
+  return hung;
 }
 
 /**

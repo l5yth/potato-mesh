@@ -24,6 +24,16 @@
  */
 
 /**
+ * Empty I/O counters for {@link createFakeIndexedDb}.
+ *
+ * @returns {{ transactions: { readonly: number, readwrite: number }, puts: number,
+ *   deletes: number, putsByStore: Object<string, number>, writes: Array<Object> }}
+ */
+function emptyIoStats() {
+  return { transactions: { readonly: 0, readwrite: 0 }, puts: 0, deletes: 0, putsByStore: {}, writes: [] };
+}
+
+/**
  * Create a fake `IDBFactory`-like object plus test controls.
  *
  * @returns {{
@@ -32,12 +42,17 @@
  *   setOpenMode: (mode: ?string) => void,
  *   unblock: () => void,
  *   closedCount: () => number,
+ *   ioStats: () => Object,
+ *   resetIoStats: () => void,
  * }} `factory` is assignable to `globalThis.indexedDB`; `setFailMode('request')`
  *   makes the next write throw (for error-path coverage). `setOpenMode` sets
  *   how later opens answer: `'blocked'` fires `onblocked` and waits until
  *   `unblock()` (another tab holding an older version closes), `'never'` never
  *   answers, `'error'` fires `onerror`, `null` (the default) opens at once.
- *   `closedCount()` counts `close()` calls on the fake databases.
+ *   `closedCount()` counts `close()` calls on the fake databases. `ioStats()`
+ *   counts the transactions by mode, the `put` and `delete` requests (puts
+ *   also per store) and, per `readwrite` transaction, its stores and requests
+ *   (`writes`), since the start or the last `resetIoStats()`.
  */
 export function createFakeIndexedDb() {
   const databases = new Map();
@@ -45,6 +60,7 @@ export function createFakeIndexedDb() {
   let openMode = null;
   const blockedOpens = [];
   let closed = 0;
+  let io = emptyIoStats();
 
   /**
    * Build a fake database backed by a map of object stores.
@@ -61,33 +77,53 @@ export function createFakeIndexedDb() {
       createObjectStore(name) {
         stores.set(name, new Map());
       },
-      transaction(storeName) {
-        if (!stores.has(storeName)) {
-          throw new Error(`NotFoundError: ${storeName}`);
+      transaction(storeNames, mode = 'readonly') {
+        // One store name or a list of them, like IDBDatabase#transaction.
+        const names = Array.isArray(storeNames) ? storeNames : [storeNames];
+        for (const name of names) {
+          if (!stores.has(name)) {
+            throw new Error(`NotFoundError: ${name}`);
+          }
         }
+        io.transactions[mode] = (io.transactions[mode] || 0) + 1;
+        const ops = { stores: names, puts: 0, deletes: 0 };
+        if (mode === 'readwrite') io.writes.push(ops);
         const queue = [];
         const tx = { oncomplete: null, onerror: null, onabort: null, error: null };
-        const map = stores.get(storeName);
         const push = exec => {
           const request = { onsuccess: null, onerror: null, result: undefined, error: null };
           queue.push({ request, exec });
           return request;
         };
-        tx.objectStore = () => ({
-          get: key => push(() => map.get(key)),
-          getAll: () => push(() => [...map.values()]),
-          getAllKeys: () => push(() => [...map.keys()]),
-          put: (record, key) =>
-            push(() => {
-              if (failMode === 'request') {
-                failMode = null;
-                throw new Error('put failed');
-              }
-              map.set(key, record);
-            }),
-          delete: key => push(() => map.delete(key)),
-          clear: () => push(() => map.clear()),
-        });
+        tx.objectStore = (name = names[0]) => {
+          if (!names.includes(name)) {
+            throw new Error(`NotFoundError: ${name} is not in the transaction`);
+          }
+          const map = stores.get(name);
+          return {
+            get: key => push(() => map.get(key)),
+            getAll: () => push(() => [...map.values()]),
+            getAllKeys: () => push(() => [...map.keys()]),
+            put: (record, key) => {
+              ops.puts += 1;
+              io.puts += 1;
+              io.putsByStore[name] = (io.putsByStore[name] || 0) + 1;
+              return push(() => {
+                if (failMode === 'request') {
+                  failMode = null;
+                  throw new Error('put failed');
+                }
+                map.set(key, record);
+              });
+            },
+            delete: key => {
+              ops.deletes += 1;
+              io.deletes += 1;
+              return push(() => map.delete(key));
+            },
+            clear: () => push(() => map.clear()),
+          };
+        };
         setTimeout(() => {
           for (const { request, exec } of queue) {
             try {
@@ -150,5 +186,9 @@ export function createFakeIndexedDb() {
       for (const finish of blockedOpens.splice(0)) setTimeout(finish, 0);
     },
     closedCount: () => closed,
+    ioStats: () => JSON.parse(JSON.stringify(io)),
+    resetIoStats: () => {
+      io = emptyIoStats();
+    },
   };
 }
