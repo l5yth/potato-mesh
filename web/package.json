@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "mkdir -p reports coverage && NODE_V8_COVERAGE=coverage node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/javascript-junit.xml && node ./scripts/export-coverage.js"
+    "test": "mkdir -p reports coverage && NODE_V8_COVERAGE=coverage node --test --experimental-test-coverage --test-coverage-include='public/assets/js/**' --test-coverage-exclude='**/__tests__/**' --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/javascript-junit.xml --test-reporter=lcov --test-reporter-destination=reports/javascript-node.lcov && node ./scripts/export-coverage.js && node ./scripts/check-coverage.js reports/javascript-node.lcov --lines 97.584 --branches 91.099"
   },
   "devDependencies": {
     "istanbul-lib-coverage": "^3.2.2",

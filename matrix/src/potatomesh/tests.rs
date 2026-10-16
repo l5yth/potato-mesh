@@ -1,0 +1,580 @@
+// Copyright © 2025-26 l5yth & contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use super::*;
+
+#[test]
+fn deserialize_sample_message_array() {
+    let json = r#"
+        [
+          {
+            "id": 2947676906,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 1,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Ping",
+            "rssi": -111,
+            "hop_limit": 1,
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "TEST",
+            "snr": -9.0,
+            "node_id": "!06871773"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
+    assert_eq!(msgs.len(), 1);
+    let m = &msgs[0];
+    assert_eq!(m.id, 2947676906);
+    assert_eq!(m.from_id.as_deref(), Some("!da6556d4"));
+    assert_eq!(m.node_id.as_deref(), Some("!06871773"));
+    assert_eq!(m.portnum.as_deref(), Some("TEXT_MESSAGE_APP"));
+    assert_eq!(m.lora_freq, Some(868));
+    assert!((m.snr.unwrap() - (-9.0)).abs() < f32::EPSILON);
+}
+
+#[test]
+fn deserialize_message_with_missing_optional_fields() {
+    let json = r#"
+        [
+          {
+            "id": 1,
+            "rx_time": 0,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!abcd1234",
+            "to_id": "^all",
+            "channel": 1,
+            "text": "Ping",
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "TEST",
+            "node_id": "!abcd1234"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
+    assert_eq!(msgs.len(), 1);
+    let m = &msgs[0];
+    assert!(m.portnum.is_none());
+    assert!(m.rssi.is_none());
+    assert!(m.hop_limit.is_none());
+    assert!(m.snr.is_none());
+    assert!(m.protocol.is_none());
+}
+
+#[test]
+fn deserialize_message_with_meshcore_protocol() {
+    let json = r#"
+        [
+          {
+            "id": 42,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 0,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Hi from meshcore",
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "General",
+            "node_id": "!da6556d4",
+            "protocol": "meshcore"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].protocol.as_deref(), Some("meshcore"));
+}
+
+/// The web app flags a MeshCore channel line whose sender it matched by
+/// name with `sender_verified: false` and leaves the key off every other
+/// row (SPEC SV2); both shapes parse in one batch.
+#[test]
+fn deserialize_sender_verified_flag() {
+    let json = r#"
+        [
+          {
+            "id": 1,
+            "rx_time": 1785090651,
+            "rx_iso": "2026-07-26T18:30:51Z",
+            "from_id": "!a11ce001",
+            "to_id": "^all",
+            "text": "Alice: Ping",
+            "protocol": "meshcore",
+            "node_id": "!a11ce001",
+            "sender_verified": false
+          },
+          {
+            "id": 2,
+            "rx_time": 1785090652,
+            "rx_iso": "2026-07-26T18:30:52Z",
+            "from_id": "!0badc0de",
+            "to_id": "^all",
+            "text": "Ping",
+            "protocol": "meshtastic",
+            "node_id": "!0badc0de"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("flagged batch parses");
+    assert_eq!(msgs[0].sender_verified, Some(false));
+    assert_eq!(msgs[1].sender_verified, None);
+}
+
+/// Regression (live outage 2026-07-26, ACCEPTANCE MB-A1): the web API
+/// compacts NULL/empty columns *out* of each row (`compact_api_row`), and
+/// `CONTRACTS.md` declares `channel_name` present "only when not encrypted
+/// and known" — so a row without the key is contract-conformant. The
+/// bridge modeled the field as required, and serde failed the ENTIRE
+/// batch on the one such row (`missing field \`channel_name\``), leaving
+/// the bridge unable to fetch any messages at all. The second row below is
+/// the offending production row verbatim.
+#[test]
+fn deserialize_batch_with_row_missing_channel_name() {
+    let json = r#"
+        [
+          {
+            "id": 2947676906,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 1,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Ping",
+            "rssi": -111,
+            "hop_limit": 1,
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "TEST",
+            "snr": -9.0,
+            "node_id": "!06871773"
+          },
+          {
+            "id": 2810844287777950,
+            "rx_time": 1785090651,
+            "rx_iso": "2026-07-26T18:30:51Z",
+            "from_id": "!88e00b48",
+            "to_id": "^all",
+            "channel": 24,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "lilygo: moin moin",
+            "lora_freq": 869,
+            "modem_preset": "SF8/BW62/CR5",
+            "snr": -5.25,
+            "ingestor": "!930d4a21",
+            "protocol": "meshcore",
+            "node_id": "!88e00b48"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> =
+        serde_json::from_str(json).expect("row without channel_name must parse");
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[0].id, 2947676906);
+    assert_eq!(msgs[1].id, 2810844287777950);
+}
+
+/// Regression companion to `deserialize_batch_with_row_missing_channel_name`
+/// (ACCEPTANCE MB-A1): `compact_api_row` may strip EVERY conditional field,
+/// leaving only the contract-required `id` / `rx_time` / `rx_iso` (e.g. an
+/// emoji-reaction row whose `text` is empty and whose sender never
+/// resolved). Such a row must parse rather than poison the batch.
+#[test]
+fn deserialize_maximally_compacted_row() {
+    let json = r#"
+        [
+          {
+            "id": 7,
+            "rx_time": 1785090000,
+            "rx_iso": "2026-07-26T18:20:00Z",
+            "reply_id": 42,
+            "emoji": "1"
+          }
+        ]
+        "#;
+
+    let msgs: Vec<PotatoMessage> =
+        serde_json::from_str(json).expect("maximally compacted row must parse");
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].id, 7);
+    assert_eq!(msgs[0].rx_time, 1785090000);
+}
+
+#[test]
+fn deserialize_sample_node() {
+    let json = r#"
+        {
+          "node_id": "!67fc83cb",
+          "short_name": "83CB",
+          "long_name": "Meshtastic 83CB",
+          "role": "CLIENT_HIDDEN",
+          "last_heard": 1764250515,
+          "first_heard": 1758993817,
+          "last_seen_iso": "2025-11-27T13:35:15Z"
+        }
+        "#;
+
+    let node: PotatoNode = serde_json::from_str(json).expect("valid node json");
+    assert_eq!(node.node_id, "!67fc83cb");
+    assert_eq!(node.short_name.as_deref(), Some("83CB"));
+    assert_eq!(node.long_name, "Meshtastic 83CB");
+    assert_eq!(node.role.as_deref(), Some("CLIENT_HIDDEN"));
+    assert_eq!(node.last_heard, Some(1764250515));
+    assert_eq!(node.first_heard, Some(1758993817));
+    assert!(node.latitude.is_none());
+}
+
+#[test]
+fn node_hex_id_is_stripped_correctly() {
+    let with_bang = "!deadbeef";
+    let hex = with_bang.trim_start_matches('!');
+    assert_eq!(hex, "deadbeef");
+
+    let already_hex = "cafebabe";
+    let hex2 = already_hex.trim_start_matches('!');
+    assert_eq!(hex2, "cafebabe");
+}
+
+#[test]
+fn test_new_potato_client() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    assert_eq!(client.cfg.base_url, "http://localhost:8080");
+    assert_eq!(client.cfg.poll_interval_secs, 60);
+}
+
+#[test]
+fn test_messages_url() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+}
+
+#[test]
+fn test_messages_url_with_trailing_slash() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080/".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+}
+
+#[test]
+fn test_messages_url_with_existing_api_suffix() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080/api/".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+}
+
+#[test]
+fn test_node_url() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    assert_eq!(
+        client.node_url("1234"),
+        "http://localhost:8080/api/nodes/%211234"
+    );
+}
+
+#[tokio::test]
+async fn test_fetch_messages_success() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/messages")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"
+                [
+                  {
+                    "id": 2947676906, "rx_time": 1764241436, "rx_iso": "2025-11-27T11:03:56Z",
+                    "from_id": "!da6556d4", "to_id": "^all", "channel": 1,
+                    "portnum": "TEXT_MESSAGE_APP", "text": "Ping", "rssi": -111,
+                    "hop_limit": 1, "lora_freq": 868, "modem_preset": "MediumFast",
+                    "channel_name": "TEST", "snr": -9.0, "node_id": "!06871773"
+                  }
+                ]
+                "#,
+        )
+        .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.fetch_messages(FetchParams::default()).await;
+
+    mock.assert();
+    assert!(result.is_ok());
+    let messages = result.unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, 2947676906);
+}
+
+#[tokio::test]
+async fn test_health_check_success() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server.mock("GET", "/version").with_status(200).create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.health_check().await;
+
+    mock.assert();
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_health_check_strips_api_suffix() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server.mock("GET", "/version").with_status(200).create();
+
+    let http_client = reqwest::Client::new();
+    let mut base = server.url();
+    base.push_str("/api");
+    let config = PotatomeshConfig {
+        base_url: base,
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.health_check().await;
+
+    mock.assert();
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_health_check_failure() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server.mock("GET", "/version").with_status(500).create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.health_check().await;
+
+    mock.assert();
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_fetch_messages_error() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/messages")
+        .with_status(500)
+        .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.fetch_messages(FetchParams::default()).await;
+
+    mock.assert();
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_fetch_messages_with_limit_and_since() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/messages")
+        .match_query(mockito::Matcher::AllOf(vec![
+            mockito::Matcher::UrlEncoded("limit".into(), "10".into()),
+            mockito::Matcher::UrlEncoded("since".into(), "123".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("[]")
+        .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let params = FetchParams {
+        limit: Some(10),
+        since: Some(123),
+    };
+    let result = client.fetch_messages(params).await;
+
+    mock.assert();
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_empty());
+}
+
+/// Regression (live 2026-07-27, ACCEPTANCE NL-A1): node lookups must
+/// request the CANONICAL bang-prefixed id (percent-encoded `%21`), never
+/// the bare hex. The web API resolves a bare all-decimal-digit ref (e.g.
+/// `27336717`, a valid 8-hex id) as a Meshtastic node *num* and 404s,
+/// which cost the bridge five failed polls and a dropped message. Only
+/// the canonical path is mounted here — a bare-hex request hits no mock
+/// and fails the lookup.
+#[tokio::test]
+async fn get_node_requests_canonical_bang_id() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+            .mock("GET", "/api/nodes/%2127336717")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"node_id":"!27336717","long_name":"🦅 Birdperson/portable/pocket","short_name":"🦅"}"#,
+            )
+            .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.get_node("!27336717").await;
+
+    mock.assert();
+    let node = result.expect("canonical bang-id lookup must succeed");
+    assert_eq!(node.node_id, "!27336717");
+}
+
+#[tokio::test]
+async fn test_get_node_cache_hit() {
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: "http://localhost:8080".to_string(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let node = PotatoNode {
+        node_id: "!1234".to_string(),
+        short_name: Some("test".to_string()),
+        long_name: "test node".to_string(),
+        role: None,
+        hw_model: None,
+        last_heard: None,
+        first_heard: None,
+        latitude: None,
+        longitude: None,
+        altitude: None,
+    };
+    client
+        .nodes_cache
+        .write()
+        .await
+        .insert("1234".to_string(), node.clone());
+    let result = client.get_node("!1234").await;
+    assert!(result.is_ok());
+    let got = result.unwrap();
+    assert_eq!(got.node_id, "!1234");
+    assert_eq!(got.short_name.unwrap(), "test");
+}
+
+#[tokio::test]
+async fn test_get_node_cache_miss() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/nodes/%211234")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"
+                {
+                  "node_id": "!1234", "short_name": "test", "long_name": "test node",
+                  "role": "test", "hw_model": "test", "last_heard": 1, "first_heard": 1,
+                  "latitude": 1.0, "longitude": 1.0, "altitude": 1.0
+                }
+                "#,
+        )
+        .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+
+    // first call, should miss cache and hit the server
+    let result = client.get_node("!1234").await;
+    mock.assert();
+    assert!(result.is_ok());
+
+    // second call, should hit cache
+    let result2 = client.get_node("!1234").await;
+    assert!(result2.is_ok());
+    // mockito would panic here if we made a second request
+}
+
+#[tokio::test]
+async fn test_get_node_error() {
+    let mut server = mockito::Server::new_async().await;
+    let mock = server
+        .mock("GET", "/api/nodes/%211234")
+        .with_status(500)
+        .create();
+
+    let http_client = reqwest::Client::new();
+    let config = PotatomeshConfig {
+        base_url: server.url(),
+        poll_interval_secs: 60,
+    };
+    let client = PotatoClient::new(http_client, config);
+    let result = client.get_node("!1234").await;
+    mock.assert();
+    assert!(result.is_err());
+}

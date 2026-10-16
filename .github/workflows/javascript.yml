@@ -35,20 +35,28 @@ jobs:
         working-directory: web
     steps:
     - uses: actions/checkout@v7
-    - name: Set up Node.js 22
+    - name: Set up Node.js 24
+      # SPEC CV3: the coverage floor was measured on Node 24; V8's branch
+      # counts differ between major versions.
       uses: actions/setup-node@v7
       with:
-        node-version: '22'
+        node-version: '24'
     - name: Install dependencies
       run: npm ci
     - name: Run JavaScript tests
+      # SPEC CV3: npm test ends with scripts/check-coverage.js, which fails
+      # below the coverage floor set in package.json. The floor measures
+      # public/assets/js only: web/scripts (the istanbul exporter and the
+      # check itself) is CI tooling, left out (SPEC CV7).
       run: npm test
     - name: Upload coverage to Codecov
+      # Node's lcov of the sources only, with every branch arm (SPEC CV6).
       if: always()
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        files: web/reports/javascript-coverage.json
+        files: web/reports/javascript-node.lcov
+        disable_search: true
         flags: frontend
         name: frontend
         fail_ci_if_error: false

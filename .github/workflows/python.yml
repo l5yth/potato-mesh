@@ -64,15 +64,25 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r data/requirements.txt -r data/requirements-dev.txt
     - name: Test with pytest and coverage
+      # SPEC CV4: branches count, and the 3.14 leg fails below the coverage
+      # floor, lines and branches combined as coverage.py's fail-under
+      # measures them. The floor was measured on 3.14, so 3.13 runs without
+      # it. --cov=data/tools measures the capture tool also when no test
+      # imports it; tests/debug.py and tests/dump.py are live-radio developer
+      # scripts, left out (SPEC CV7).
+      env:
+        COVERAGE_CORE: ctrace
+        COV_FAIL_UNDER: ${{ matrix.python-version == '3.14' && '--cov-fail-under=96.477' || '' }}
       run: |
         mkdir -p reports
-        pytest --cov=data --cov-report=term --cov-report=xml:reports/python-coverage.xml --junitxml=reports/python-junit.xml
+        pytest --cov=data --cov=data/tools --cov-branch --cov-precision=3 $COV_FAIL_UNDER --cov-report=term --cov-report=xml:reports/python-coverage.xml --junitxml=reports/python-junit.xml
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: reports/python-coverage.xml
+        disable_search: true
         flags: python-ingestor
         fail_ci_if_error: false
         name: python-ingestor
