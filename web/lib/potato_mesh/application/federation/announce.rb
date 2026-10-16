@@ -19,7 +19,9 @@ module PotatoMesh
     module Federation
       # Announce the local instance record to a remote federation peer,
       # cycling through resolved IP addresses when transport-level failures
-      # occur.
+      # occur. The plain http candidate follows only a refused https
+      # connection or a domain with a port of its own (SPEC FT1); the worker
+      # pool's task timeout ends the announcement (SPEC FT4).
       #
       # @param domain [String] remote peer hostname.
       # @param payload_json [String] JSON-encoded announcement body.
@@ -58,6 +60,12 @@ module PotatoMesh
               # on most production peers — without adding any chance of success.
               break false
             end
+          rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
+            # The task is over: the peer backs off as after any failed
+            # announcement (SPEC FB5), and no later candidate is sent (SPEC
+            # FT4).
+            record_announce_outcome(domain, nil)
+            raise
           rescue StandardError => e
             metadata = {
               context: "federation.announce",
@@ -66,7 +74,7 @@ module PotatoMesh
               error_message: e.message,
             }
 
-            if uri.scheme == "https" && https_connection_refused?(e)
+            if federation_http_fallback?(uri, e)
               debug_log(
                 "HTTPS federation announcement failed, retrying with HTTP",
                 **metadata,
@@ -77,6 +85,7 @@ module PotatoMesh
                 "Federation announcement raised exception",
                 **metadata,
               )
+              break false
             end
             false
           end
@@ -96,7 +105,9 @@ module PotatoMesh
       end
 
       # Execute a POST announcement request against the supplied URI, cycling
-      # through resolved IP addresses on connection-level failures.
+      # through resolved IP addresses on connection-level failures. When
+      # every address fails, a refusal on any of them is raised (SPEC FT1);
+      # the worker pool's task timeout is raised at once (SPEC FT4).
       #
       # @param uri [URI::Generic] target endpoint.
       # @param payload_json [String] JSON-encoded announcement body.
@@ -107,21 +118,27 @@ module PotatoMesh
         addresses = remote_addresses.empty? ? [nil] : remote_addresses
 
         last_error = nil
+        refused = nil
         addresses.each do |address|
           break if federation_shutdown_requested?
 
           begin
             return perform_single_announce_request(uri, payload_json, ip_address: address&.to_s)
+          rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
+            # Never another address after the task's timeout (SPEC FT4).
+            raise
           rescue StandardError => e
             if connection_refused_or_unreachable?(e)
               last_error = e
+              refused ||= e if https_connection_refused?(e)
             else
               raise
             end
           end
         end
 
-        raise(last_error || StandardError.new("all resolved addresses failed"))
+        # A refusal on any address is the host's refusal (SPEC FT1).
+        raise(refused || last_error || StandardError.new("all resolved addresses failed"))
       end
 
       # Execute a single POST announcement request, optionally pinning the
@@ -135,7 +152,9 @@ module PotatoMesh
       # @raise [StandardError] when the request fails.
       def perform_single_announce_request(uri, payload_json, ip_address: nil)
         http = build_remote_http_client(uri, ip_address: ip_address)
-        Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
+        # Timeout::Error, so Net::HTTP closes a socket the timeout
+        # interrupts, mid-handshake too (SPEC FT3).
+        Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout, Timeout::Error) do
           http.start do |connection|
             request = build_federation_http_request(Net::HTTP::Post, uri)
             request.body = payload_json

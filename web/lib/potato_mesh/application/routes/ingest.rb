@@ -239,10 +239,12 @@ module PotatoMesh
               halt 400, { error: "missing required fields" }.to_json
             end
 
+            # A variant verified as v1 clears the announcement's own counts
+            # (counts_of), which are then read from the peer (SPEC FT2).
             signature_valid = verify_instance_signature(attributes, signature, attributes[:pubkey])
             if !signature_valid && contact_link
               stripped_attributes = attributes.merge(contact_link: nil)
-              signature_valid = verify_instance_signature(stripped_attributes, signature, attributes[:pubkey])
+              signature_valid = verify_instance_signature(stripped_attributes, signature, attributes[:pubkey], counts_of: attributes)
             end
             # Some remote peers sign payloads using a canonicalised lowercase
             # domain while still sending a mixed-case domain. Retry signature
@@ -250,10 +252,10 @@ module PotatoMesh
             # fails to maximise interoperability.
             if !signature_valid && raw_domain && normalized_domain && raw_domain.casecmp?(normalized_domain) && raw_domain != normalized_domain
               alternate_attributes = attributes.merge(domain: raw_domain)
-              signature_valid = verify_instance_signature(alternate_attributes, signature, attributes[:pubkey])
+              signature_valid = verify_instance_signature(alternate_attributes, signature, attributes[:pubkey], counts_of: attributes)
               if !signature_valid && contact_link
                 stripped_alternate = alternate_attributes.merge(contact_link: nil)
-                signature_valid = verify_instance_signature(stripped_alternate, signature, attributes[:pubkey])
+                signature_valid = verify_instance_signature(stripped_alternate, signature, attributes[:pubkey], counts_of: attributes)
               end
             end
 
@@ -399,8 +401,8 @@ module PotatoMesh
 
                 # v2 announcements carry SIGNED counts, kept verbatim so the
                 # stored and later relayed record stays signature-consistent;
-                # only an announcement without counts is completed from the
-                # peer (SPEC FS2, FL2).
+                # only an announcement without counts, a v1 one included, is
+                # completed from the peer (SPEC FS2, FL2, FT2).
                 fill_missing_instance_counts!(
                   attributes,
                   domain: attributes[:domain],

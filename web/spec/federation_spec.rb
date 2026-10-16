@@ -1701,7 +1701,9 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(federation_helpers).to receive(:perform_instance_http_request) do |uri|
         calls << uri.scheme
         if uri.scheme == "https"
-          raise PotatoMesh::App::InstanceFetchError, "Errno::ECONNREFUSED: refused"
+          # As raise_instance_fetch_error wraps it: the refusal is the cause
+          # the fallback rule reads (SPEC FT1).
+          raise PotatoMesh::App::InstanceFetchError, "Errno::ECONNREFUSED: refused", cause: Errno::ECONNREFUSED.new("refused")
         else
           '{"ok":true}'
         end
