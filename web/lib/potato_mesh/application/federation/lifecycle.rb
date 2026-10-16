@@ -21,6 +21,11 @@ module PotatoMesh
       # decomposing a target sleep into shutdown-aware increments.
       FEDERATION_SLEEP_SLICE_SECONDS = 0.2
 
+      # Held while the federation worker pool is looked up and, when none is
+      # alive, created and stored, so two threads never create two pools
+      # (SPEC FT5).
+      FEDERATION_WORKER_POOL_MUTEX = Mutex.new
+
       # Retrieve or initialize the worker pool servicing federation jobs.
       #
       # @return [PotatoMesh::App::WorkerPool, nil] active worker pool or nil when disabled.
@@ -38,7 +43,8 @@ module PotatoMesh
       # pool thread while the announcer waits for it.  An inbound announcement
       # schedules no crawl (SPEC FL3).  The pool is lazily
       # instantiated on first use and is memoized on the Sinatra settings object so
-      # that all requests share the same instance.  An +at_exit+ hook
+      # that all requests share the same instance; the lookup and the creation
+      # run under {FEDERATION_WORKER_POOL_MUTEX} (SPEC FT5).  An +at_exit+ hook
       # ({#ensure_federation_shutdown_hook!}) guarantees the pool drains cleanly on
       # process termination even when the announcer thread is still alive.
       #
@@ -49,18 +55,20 @@ module PotatoMesh
 
         ensure_federation_shutdown_hook!
 
-        existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
-        return existing if existing&.alive?
+        FEDERATION_WORKER_POOL_MUTEX.synchronize do
+          existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
+          next existing if existing&.alive?
 
-        pool = PotatoMesh::App::WorkerPool.new(
-          size: PotatoMesh::Config.federation_worker_pool_size,
-          max_queue: PotatoMesh::Config.federation_worker_queue_capacity,
-          task_timeout: PotatoMesh::Config.federation_task_timeout_seconds,
-          name: "potato-mesh-fed",
-        )
+          pool = PotatoMesh::App::WorkerPool.new(
+            size: PotatoMesh::Config.federation_worker_pool_size,
+            max_queue: PotatoMesh::Config.federation_worker_queue_capacity,
+            task_timeout: PotatoMesh::Config.federation_task_timeout_seconds,
+            name: "potato-mesh-fed",
+          )
 
-        set(:federation_worker_pool, pool) if respond_to?(:set)
-        pool
+          set(:federation_worker_pool, pool) if respond_to?(:set)
+          pool
+        end
       end
 
       # Ensure federation background workers are torn down during process exit.

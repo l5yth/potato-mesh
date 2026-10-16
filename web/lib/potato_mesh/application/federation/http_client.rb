@@ -32,6 +32,24 @@ module PotatoMesh
         false
       end
 
+      # Whether a request that failed over https may be sent again to the
+      # plain http candidate (SPEC FT1): only when the https connection was
+      # refused, or when the domain names a port other than 443, where an
+      # instance may serve plain http alone. A certificate failure, any other
+      # TLS error, a timeout or an unreachable host ends the request on
+      # https, so the identity check (SPEC FS8), the node list and the
+      # announcement are never downgraded by whoever can break a handshake.
+      #
+      # @param uri [URI::Generic] the candidate that failed.
+      # @param error [StandardError] what the attempt raised.
+      # @return [Boolean] true when the http candidate may follow.
+      def federation_http_fallback?(uri, error)
+        return false unless uri.scheme == "https"
+        return true unless uri.port == uri.default_port
+
+        https_connection_refused?(error)
+      end
+
       # Determine whether an error indicates a transport-level connection
       # failure that may succeed on an alternative resolved address.
       #
@@ -175,6 +193,10 @@ module PotatoMesh
         end
         http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
         http.read_timeout = PotatoMesh::Config.remote_instance_read_timeout
+        # Net::HTTP sends an idempotent request again after a timeout or a
+        # dropped connection, and that second attempt would run past the
+        # request's deadline, so each request is sent once (SPEC FT3).
+        http.max_retries = 0
         http.use_ssl = uri.scheme == "https"
         return http unless http.use_ssl?
 

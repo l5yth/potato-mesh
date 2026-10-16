@@ -138,6 +138,9 @@ module PotatoMesh
         return [nil, nil, oversized] if oversized
 
         [attributes, signature, nil]
+      rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
+        # The pool's task timeout ends the crawl, not this record (SPEC FT4).
+        raise
       rescue StandardError => e
         [nil, nil, e.message]
       end

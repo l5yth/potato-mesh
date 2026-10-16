@@ -74,7 +74,8 @@ module PotatoMesh
       # address is attempted sequentially; when a connection-level error
       # (refused, unreachable, timeout) is raised the next address is tried.
       # Non-connection errors (SSL failures, HTTP-level errors) are raised
-      # immediately without trying further addresses.
+      # immediately without trying further addresses.  When every address
+      # fails, a refusal on any of them is raised (SPEC FT1).
       #
       # @param uri [URI::Generic] target endpoint to request.
       # @return [String] raw HTTP response body on success.
@@ -88,6 +89,7 @@ module PotatoMesh
         addresses = remote_addresses.empty? ? [nil] : remote_addresses
 
         last_error = nil
+        refused = nil
         addresses.each do |address|
           break if federation_shutdown_requested?
 
@@ -96,13 +98,16 @@ module PotatoMesh
           rescue InstanceFetchError => e
             if connection_refused_or_unreachable?(e)
               last_error = e
+              refused ||= e if https_connection_refused?(e)
             else
               raise
             end
           end
         end
 
-        raise last_error || InstanceFetchError.new("all resolved addresses failed")
+        # A refusal on any address is the host's refusal, whatever the last
+        # address raised, so the plain http candidate may follow (SPEC FT1).
+        raise refused || last_error || InstanceFetchError.new("all resolved addresses failed")
       rescue ArgumentError, SocketError, Timeout::Error => e
         # +resolve_remote_ip_addresses+ runs the DNS lookup before the wrapped
         # HTTP attempt: a blank/restricted host raises ArgumentError, an
@@ -138,7 +143,10 @@ module PotatoMesh
         http = build_remote_http_client(uri, ip_address: ip_address)
         revalidate = federation_revalidated_path?(uri)
         kept = revalidate ? federation_peer_backoff.validators(uri.host, uri.to_s) : nil
-        Timeout.timeout(timeout) do
+        # Timeout::Error, not Timeout's default internal exception, which no
+        # rescue sees: Net::HTTP then closes a socket the timeout interrupts,
+        # mid-handshake too (SPEC FT3).
+        Timeout.timeout(timeout, Timeout::Error) do
           http.start do |connection|
             request = build_federation_http_request(Net::HTTP::Get, uri)
             request["If-None-Match"] = kept[:etag] if kept && kept[:etag]
@@ -237,7 +245,11 @@ module PotatoMesh
       # A host backing off sends nothing (SPEC FL4). The outcome feeds the
       # backoff: a transport failure, a 429 or a 503 backs off the host,
       # honouring a +Retry-After+; any other answer clears it. A request this
-      # instance's own deadline kept from being sent counts neither way.
+      # instance's own deadline kept from being sent counts neither way; one
+      # the worker pool's task timeout cuts short counts as a failure before
+      # the timeout ends the task (SPEC FT4). The plain http candidate
+      # follows only a refused https connection or a domain with a port of
+      # its own (SPEC FT1, {#federation_http_fallback?}).
       #
       # @param domain [String] peer hostname.
       # @param path [String] request path.
@@ -263,8 +275,16 @@ module PotatoMesh
               federation_peer_backoff.record_success(host)
               return [payload, uri]
             end
+          rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
+            # The pool's task timeout cut the fetch short: it counts as a
+            # failed fetch, so the host backs off and a later crawl skips it,
+            # and the task ends (SPEC FL4, FL6, FT4).
+            federation_peer_backoff.record_failure(host)
+            raise
           rescue JSON::ParserError => e
+            # The peer answered; plain http adds no chance (SPEC FT1).
             errors << "#{uri}: invalid JSON (#{e.message})"
+            break
           rescue InstanceHttpResponseError => e
             # Peer answered at the HTTP layer (e.g. 4xx/5xx).  Falling back to
             # the next transport candidate (http:// after https://) adds noise
@@ -282,6 +302,7 @@ module PotatoMesh
           rescue InstanceFetchError => e
             errors << "#{uri}: #{e.message}"
             failed = true
+            break unless federation_http_fallback?(uri, e)
           end
         end
         federation_peer_backoff.record_failure(host, retry_after: retry_after) if failed

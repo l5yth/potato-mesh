@@ -200,6 +200,7 @@ slug sets the URL and nav label:
 - `FEDERATION=0`: fully isolated, no federation.
 - `PRIVATE=1` disables federation regardless of `FEDERATION`.
 - Federation requests send the User-Agent `PotatoMesh/<version> (+https://<domain>)`; `deploy/nginx.example.conf` has an optional rate limit for them.
+- Serve `https` with a valid certificate, or let port 443 refuse connections: peers fall back to plain `http` only when `https` is refused or `INSTANCE_DOMAIN` names a port.
 
 ### API
 

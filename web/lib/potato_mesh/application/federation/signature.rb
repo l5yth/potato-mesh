@@ -95,24 +95,43 @@ module PotatoMesh
       # Verify a base64 RSA-SHA256 instance signature, accepting both the v2
       # (snake) and legacy v1 (camel) canonical forms (SPEC FS4 accept-both).
       #
+      # The v1 form signs no node count, so whoever relayed or replayed a v1
+      # record could have written its counts. A record that verifies only
+      # under v1 has its four counts cleared in +counts_of+, and both paths
+      # then read them from the record's own domain, as for a record without
+      # counts ({#fill_missing_instance_counts!}, SPEC FT2).
+      #
       # @param attributes [Hash] canonical instance attributes.
       # @param signature [String, nil] base64-encoded signature bytes.
       # @param public_key_pem [String, nil] PEM-encoded RSA public key.
+      # @param counts_of [Hash] the attributes whose counts a v1 record
+      #   clears: +attributes+, or the record a verified variant of them
+      #   stands for.
       # @return [Boolean] true when the signature validates under either form.
-      def verify_instance_signature(attributes, signature, public_key_pem)
-        return false unless signature && public_key_pem
+      def verify_instance_signature(attributes, signature, public_key_pem, counts_of: attributes)
+        version = instance_signature_version(attributes, signature, public_key_pem)
+        INSTANCE_COUNT_KEYS.each { |key| counts_of[key] = nil } if version == 1
+        !version.nil?
+      end
+
+      # The canonical form an instance signature verifies under (SPEC FS4).
+      #
+      # @param attributes [Hash] canonical instance attributes.
+      # @param signature [String, nil] base64-encoded signature bytes.
+      # @param public_key_pem [String, nil] PEM-encoded RSA public key.
+      # @return [Integer, nil] 2 for the v2 snake_case canonical, 1 when only
+      #   the legacy v1 camelCase canonical verifies, nil when neither does.
+      def instance_signature_version(attributes, signature, public_key_pem)
+        return nil unless signature && public_key_pem
 
         signature_bytes = Base64.strict_decode64(signature)
         key = OpenSSL::PKey::RSA.new(public_key_pem)
-        candidates = [
-          canonical_instance_payload_v2(attributes),
-          canonical_instance_payload_v1(attributes),
-        ]
-        candidates.any? do |canonical|
-          key.verify(OpenSSL::Digest::SHA256.new, signature_bytes, canonical)
-        end
+        return 2 if key.verify(OpenSSL::Digest::SHA256.new, signature_bytes, canonical_instance_payload_v2(attributes))
+        return 1 if key.verify(OpenSSL::Digest::SHA256.new, signature_bytes, canonical_instance_payload_v1(attributes))
+
+        nil
       rescue ArgumentError, OpenSSL::PKey::PKeyError
-        false
+        nil
       end
     end
   end
