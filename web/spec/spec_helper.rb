@@ -16,15 +16,19 @@
 
 require "simplecov"
 require "simplecov_json_formatter"
+require_relative "support/coverage_gate"
 
 SimpleCov.formatters = SimpleCov::Formatter::MultiFormatter.new(
   [
     SimpleCov::Formatter::SimpleFormatter,
     SimpleCov::Formatter::HTMLFormatter,
     SimpleCov::Formatter::JSONFormatter,
+    CoverageGate::LcovFormatter,
   ],
 )
 
+# SimpleCov measures web/ only. tests/cypher.rb and tests/rainbow.rb are
+# offline developer scripts outside it, left out of the floor (SPEC CV7).
 SimpleCov.start do
   enable_coverage :branch
   add_filter "/spec/"
@@ -47,6 +51,13 @@ require_relative "../app"
 
 require "rack/test"
 require "rspec"
+
+# SPEC CV1, CV2: a full-suite run, and any run with COVERAGE_GATE=1 (CI),
+# exits non-zero below these floors: the lowest of five runs on 2026-10-16
+# (98.794% and 87.603%) less 0.1 point, truncated to two decimals, the
+# precision SimpleCov compares at. Raise them by the same rule as coverage
+# grows; never lower them.
+CoverageGate.apply_floor(SimpleCov, RSpec.configuration, spec_dir: __dir__, line: 98.69, branch: 87.50)
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|

@@ -66,13 +66,19 @@ jobs:
         run: cargo test --all --all-features --verbose
       - name: Run tests with coverage
         working-directory: ./matrix
+        # SPEC CV5: fails below the line coverage floor of the bridge's
+        # sources; the unit tests (src/tests.rs, src/*/tests.rs) and tests/
+        # are not source. The stable toolchain measures no branches (cargo
+        # llvm-cov --branch needs nightly).
         run: |
-          cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+          cargo llvm-cov --all-features --workspace --ignore-filename-regex '(^|/)tests(/|\.rs$)' --lcov --output-path coverage.lcov --fail-under-lines 85.61
       - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./matrix/coverage.lcov
+          disable_search: true
           flags: matrix-bridge
           name: matrix-bridge
           fail_ci_if_error: false

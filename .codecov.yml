@@ -12,13 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# SPEC CV6: the project status fails on any drop against the base commit (a
+# ratchet, like each suite's own floor, CV2-CV5, until coverage reaches 100%);
+# the patch status needs every changed line covered.
 coverage:
   status:
     project:
       default:
-        target: 100%
-        threshold: 10%
+        target: auto
+        threshold: 0%
     patch:
       default:
         target: 100%
-        threshold: 10%
+        threshold: 0%
+
+# SPEC CV6: a suite a pull request's path filters skip keeps its last upload
+# (carryforward), so the project status still compares every suite.
+flag_management:
+  default_rules:
+    carryforward: true

@@ -51,6 +51,12 @@ jobs:
     - name: Set up dependencies
       run: bundle install
     - name: Run tests
+      # SPEC CV2: rspec exits non-zero below the coverage floor in
+      # web/spec/spec_helper.rb, and writes coverage/lcov.info for Codecov.
+      # COVERAGE_GATE=1 applies the floor even if the run loads fewer spec
+      # files, so CI fails closed.
+      env:
+        COVERAGE_GATE: "1"
       run: |
         mkdir -p tmp/test-results
         bundle exec rspec \
@@ -68,9 +74,13 @@ jobs:
         flags: sinatra-${{ matrix.ruby-version }}
         fail_ci_if_error: false
     - name: Upload coverage to Codecov
+      # Also below the floor; only the LCOV report, which carries branches (SPEC CV6).
+      if: ${{ !cancelled() }}
       uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./web/coverage/lcov.info
+        disable_search: true
         fail_ci_if_error: false
         flags: sinatra-${{ matrix.ruby-version }}
       env:
