@@ -477,6 +477,13 @@ The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_wee
 - A `GET /api/instances` miss only reads. Duplicate domains are merged, rows past the instance caps (3 per registrable domain, 512 in all, SPEC FB3, FB4) and rows of domains that do not federate (SPEC FB10) are evicted, and the self record is refreshed at boot and on each federation announcement cycle.
 - This instance's own row is listed unless its newest node was heard more than 7 days ago, with the fields of its last refresh.
 
+### GET cache headers (SPEC DN1, DN2, DN5)
+
+- A `GET /api/*` with `since` above 0 answers `Cache-Control: public, no-cache` (`private, no-cache` under `PRIVATE=1`) on every answer, a `304` included. Browsers revalidate it on every request; an unchanged answer is a `304` with the same weak `ETag`.
+- An empty list (`[]`) answers `no-cache` the same way, its `304` included.
+- Every other read answers `public, must-revalidate, max-age=10` (`private` under `PRIVATE=1`), the bucketed series `max-age=30`. A `before` page without `since` is such a read.
+- `since` is read as an integer: `0`, a negative value or one that is not a number reads as no `since`.
+
 ### GET endpoint backward pagination (`?before=`)
 
 The eight bulk collection endpoints - `GET /api/nodes`, `/api/positions`,

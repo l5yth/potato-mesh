@@ -27,6 +27,11 @@ module PotatoMesh
         # on the query string sees every one (SPEC RC6).
         QUERY_ONLY_PARAMS = %w[since before limit windowSeconds bucketSeconds window_seconds bucket_seconds].freeze
 
+        # The weak ETag of the empty list, the answer of a read that holds no
+        # row: every read route sets its weak ETag from the MD5 of its body
+        # before it calls +api_cache_control+ (SPEC DN5).
+        EMPTY_LIST_ETAG = %(W/"#{Digest::MD5.hexdigest("[]")}").freeze
+
         # Register read-only API endpoints that expose cached mesh data and
         # instance metadata. Invoked by Sinatra during extension registration.
         #
@@ -35,6 +40,7 @@ module PotatoMesh
         def self.registered(app)
           known_protocols = KNOWN_PROTOCOLS
           query_only_params = QUERY_ONLY_PARAMS
+          empty_list_etag = EMPTY_LIST_ETAG
 
           app.helpers do
             # Sanitise the protocol query parameter to a known value.
@@ -45,10 +51,50 @@ module PotatoMesh
 
             # Set Cache-Control headers appropriate for the current mode.
             # Private-mode instances must not allow intermediary caches to
-            # store responses that may contain filtered data.
-            define_method(:api_cache_control) do |max_age: 10|
+            # store responses that may contain filtered data.  A delta read
+            # is +no-cache+: a browser revalidates it on every request, so a
+            # repeat of its URL gets the rows stored since and an unchanged
+            # one is a 304 from the weak ETag (SPEC DN1).  So is an empty
+            # list: the refresh of an empty collection sends its full read's
+            # URL again, and gets the first row once one is stored (DN5).
+            # Every other read keeps +max_age+.
+            #
+            # @param max_age [Integer] seconds a full read may be reused.
+            # @param revalidate [Boolean] whether the answer is +no-cache+;
+            #   by default for a delta read or an empty list.
+            # @return [void]
+            define_method(:api_cache_control) do |max_age: 10, revalidate: (delta_read? || empty_list_answer?)|
               visibility = private_mode? ? :private : :public
-              cache_control visibility, :must_revalidate, max_age: max_age
+              if revalidate
+                cache_control visibility, :no_cache
+              else
+                cache_control visibility, :must_revalidate, max_age: max_age
+              end
+            end
+
+            # Whether this read is a delta: its +since+, coerced as the routes
+            # and the queries coerce it, is above 0 (SPEC DN1).  A +before+
+            # page without one is not (DN2).
+            #
+            # @return [Boolean] true when +since+ is above 0.
+            define_method(:delta_read?) do
+              (coerce_integer(params["since"]) || 0).positive?
+            end
+
+            # Whether the answer is the empty list: the weak ETag the route
+            # has set by now is the empty list's (SPEC DN5).
+            #
+            # @return [Boolean] true when the route answers +[]+.
+            define_method(:empty_list_answer?) do
+              response["ETag"] == empty_list_etag
+            end
+
+            # Whether the request revalidates a stored empty list: its
+            # +If-None-Match+ names the empty list's weak ETag (SPEC DN5).
+            #
+            # @return [Boolean] true when a 304 would answer an empty list.
+            define_method(:revalidates_empty_list?) do
+              env["HTTP_IF_NONE_MATCH"].to_s.split(",").map(&:strip).include?(empty_list_etag)
             end
 
             # Whether a collection page at +limit+ is served uncached: only the
@@ -100,6 +146,12 @@ module PotatoMesh
                 params.delete(name)
               end
             end
+            # A route's +etag+ halts a revalidated read with its 304 before
+            # the route sets its headers; set here, a delta read's +no-cache+
+            # is on that 304 and on every other answer to it, and a stored
+            # empty list's is on its 304 (SPEC DN1, DN5).  A route that
+            # answers rows sets its own header over this one.
+            api_cache_control(revalidate: true) if delta_read? || revalidates_empty_list?
           end
 
           app.before "/api/messages*" do
