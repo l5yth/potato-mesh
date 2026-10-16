@@ -403,26 +403,30 @@ RSpec.describe "Federation crawl limits" do
 
     it "lets the worker pool's task timeout end a crawl" do
       fed.lists[hostile] = %w[p1 p2 p3 p4].map { |name| peers.record("#{name}.fed.invalid") }
+      # The first request holds until the pool's task timeout interrupts it,
+      # however late that fires, so the crawl cannot go on by itself. After 5 s
+      # it ends anyway, so a pool and a wait that both ignore their timeouts
+      # fail, not hang.
+      gate = Queue.new
       first = true
       fed.hooks << lambda do |_entry|
         if first
           first = false
-          sleep 0.6
+          gate.pop(timeout: 5)
         end
       end
       worker_pool = PotatoMesh::App::WorkerPool.new(size: 1, max_queue: 2, task_timeout: 0.3, name: "spec-fl6")
 
       task = worker_pool.schedule { crawl(hostile) }
-      outcome = begin
-          task.wait(timeout: 5)
-          :completed
-        rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
-          :timed_out
-        ensure
-          worker_pool.shutdown(timeout: 1, force_kill_after: 1)
-        end
+      begin
+        # The pool's message: the wait's own deadline raises "task deadline
+        # exceeded", which is no task timeout ending the crawl (SPEC FL6).
+        expect { task.wait(timeout: 3) }.to raise_error(PotatoMesh::App::WorkerPool::TaskTimeoutError, "task exceeded timeout")
+      ensure
+        gate.close
+        worker_pool.shutdown(timeout: 1, force_kill_after: 1)
+      end
 
-      expect(outcome).to eq(:timed_out)
       expect(fed.total).to eq(1)
     end
 

@@ -39,10 +39,17 @@ RSpec.describe PotatoMesh::App::WorkerPool do
     end
 
     it "fails tasks that exceed the configured timeout" do
+      gate = Queue.new
       with_pool(task_timeout: 0.01) do |pool|
-        task = pool.schedule { sleep 0.05; :late }
-        expect { task.wait(timeout: 1) }.to raise_error(described_class::TaskTimeoutError)
+        # The job holds until the pool's task timeout interrupts it, however
+        # late that fires. The message is the pool's: the wait's own deadline
+        # raises "task deadline exceeded". After 5 s the job ends anyway, so a
+        # pool and a wait that both ignore their timeouts fail, not hang.
+        task = pool.schedule { gate.pop(timeout: 5); :late }
+        expect { task.wait(timeout: 3) }.to raise_error(described_class::TaskTimeoutError, "task exceeded timeout")
       end
+    ensure
+      gate.close
     end
 
     it "ignores invalid timeout values" do
@@ -130,13 +137,20 @@ RSpec.describe PotatoMesh::App::WorkerPool do
 
   describe PotatoMesh::App::WorkerPool::Task do
     it "raises a timeout when the job exceeds the provided deadline" do
+      gate = Queue.new
       with_pool do |pool|
-        task = pool.schedule { sleep 0.1; :done }
+        # The job holds until the gate opens, so the first wait can only end
+        # at its own deadline, however late it wakes. After 5 s the job ends
+        # anyway, so a wait that ignores its deadline fails instead of hanging.
+        task = pool.schedule { gate.pop(timeout: 5); :done }
         expect do
           task.wait(timeout: 0.01)
-        end.to raise_error(PotatoMesh::App::WorkerPool::TaskTimeoutError)
-        expect(task.wait(timeout: 1)).to eq(:done)
+        end.to raise_error(PotatoMesh::App::WorkerPool::TaskTimeoutError, "task deadline exceeded")
+        gate << :open
+        expect(task.wait(timeout: 5)).to eq(:done)
       end
+    ensure
+      gate.close
     end
 
     it "reports completion status" do
