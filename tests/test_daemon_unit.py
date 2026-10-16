@@ -126,10 +126,16 @@ def test_close_interface_respects_timeout(monkeypatch):
 
     class SlowInterface:
         def close(self):
-            blocker.wait(timeout=0.1)
+            # Held until the test releases it, so the close still runs however
+            # late the 0.01 s join returns. After 5 s it ends anyway, so a
+            # _close_interface that waits for the close fails instead of hanging.
+            blocker.wait(timeout=5.0)
 
-    daemon._close_interface(SlowInterface())
-    assert any("timeout_seconds" in entry for entry in log_calls)
+    try:
+        daemon._close_interface(SlowInterface())
+        assert any("timeout_seconds" in entry for entry in log_calls)
+    finally:
+        blocker.set()
 
 
 def test_close_interface_immediate_path(monkeypatch):
