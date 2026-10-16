@@ -62,6 +62,7 @@ require_relative "application/api_cache"
 require_relative "application/aggregate_windows"
 require_relative "application/asset_cache_control"
 require_relative "application/security_headers"
+require_relative "application/ingest_content_type"
 require_relative "application/public_scheme"
 require_relative "application/pubsub"
 require_relative "application/pages"
@@ -247,6 +248,10 @@ module PotatoMesh
       use PotatoMesh::App::AssetCacheControl,
           immutable: APP_VERSION_PINNED
       use App::Prometheus::RouteCollector # path label: the matched route (SPEC PG1)
+      # Inside the logger, the security headers and the route collector: an
+      # ingest POST that does not declare application/json, and a form body on
+      # any path, get 415 before anything parses the body (SPEC IH1, IH4).
+      use PotatoMesh::App::IngestContentType
       # The Exporter and the /metrics route print this one view, which builds
       # the per-node series from the rows /api/nodes would list (SPEC PM1, PG2).
       set :prometheus_export_registry,

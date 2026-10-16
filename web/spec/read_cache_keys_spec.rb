@@ -452,18 +452,19 @@ RSpec.describe "Read-path cache keys and predicates" do
   end
 
   describe "cost parameters from the query string only (RC6)" do
-    # GET +path+ with a form-encoded body and parse the JSON answer.
+    # GET +path+ with a form-encoded body: since IH4 no path takes a form
+    # body, so the request answers 415 before Rack parses it.
     #
     # @param path [String] request path with query.
     # @param body [String] form-encoded request body.
-    # @return [Object] parsed body.
-    def get_json_with_form_body(path, body)
+    # @return [void]
+    def expect_form_body_refused(path, body)
       get path, {}, { input: body, "CONTENT_TYPE" => "application/x-www-form-urlencoded" }
-      expect(last_response.status).to eq(200), "GET #{path} with body #{body} answered #{last_response.status}"
-      JSON.parse(last_response.body)
+      expect(last_response.status).to eq(415), "GET #{path} with body #{body} answered #{last_response.status}"
+      expect(JSON.parse(last_response.body)).to eq("error" => "Content-Type must be application/json")
     end
 
-    it "answers a GET whose form body carries since, before or limit as if the body were absent" do
+    it "refuses a GET whose form body carries since, before or limit, and answers it without one (IH4)" do
       insert_node("!rc0c0001", 0x0c0001, now - 3600)
       insert_node("!rc0c0002", 0x0c0002, now - 10)
       # limit=7 is served uncached (RC3), so every answer is a fresh query.
@@ -471,30 +472,32 @@ RSpec.describe "Read-path cache keys and predicates" do
       expect(both.length).to eq(2)
 
       ["since=#{now - 30}", "before=#{now - 30}", "limit=1"].each do |body|
-        ids = get_json_with_form_body("/api/nodes?limit=7", body).map { |node| node["node_id"] }.sort
-        expect(ids).to eq(both), "a body of #{body} changed the answer"
+        expect_form_body_refused("/api/nodes?limit=7", body)
       end
+      expect(get_json("/api/nodes?limit=7").map { |node| node["node_id"] }.sort).to eq(both)
     end
 
     it "takes the bucketed endpoints' window and bucket from the query string only" do
       insert_telemetry(1, now - 120)
       insert_activity(now - 120)
 
-      series = get_json_with_form_body("/api/telemetry/aggregated", "windowSeconds=604800&bucketSeconds=3600")
+      expect_form_body_refused("/api/telemetry/aggregated", "windowSeconds=604800&bucketSeconds=3600")
+      expect_form_body_refused("/api/stats/activity", "window_seconds=604800&bucket_seconds=7200")
+      series = get_json("/api/telemetry/aggregated")
       expect(series.map { |bucket| bucket["bucket_seconds"] }.uniq).to eq([300])
-      activity = get_json_with_form_body("/api/stats/activity", "window_seconds=604800&bucket_seconds=7200")
-      expect(bucket_widths(activity)).to eq([3600])
+      expect(bucket_widths(get_json("/api/stats/activity"))).to eq([3600])
     end
 
-    it "keeps a cached page cached when a form body carries since, before or limit" do
+    it "keeps a cached page cached when a GET carries a form body (IH4)" do
       insert_node("!rc0c0001", 0x0c0001, now - 60)
       expect(get_json("/api/nodes?limit=10").length).to eq(1)
       # Written past the ingest routes, so only a fresh query shows it.
       insert_node("!rc0c0002", 0x0c0002, now - 30)
 
       ["since=1", "before=#{now}", "limit=999"].each do |body|
-        expect(get_json_with_form_body("/api/nodes?limit=10", body).length).to eq(1), "a body of #{body} bypassed the cache"
+        expect_form_body_refused("/api/nodes?limit=10", body)
       end
+      expect(get_json("/api/nodes?limit=10").length).to eq(1)
     end
   end
 end
