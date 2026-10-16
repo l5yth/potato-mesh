@@ -32,11 +32,15 @@ end
 
 require "tmpdir"
 require "fileutils"
+require_relative "support/suite_tmpdir"
 
 ENV["RACK_ENV"] = "test"
 ENV["INSTANCE_DOMAIN"] ||= "spec.mesh.test"
 
-SPEC_TMPDIR = Dir.mktmpdir("potato-mesh-spec-")
+# The run's one temporary directory: TMPDIR points at its tmp directory, and
+# an at_exit hook removes it; a SIGKILL or a second INT leaves it behind
+# (SPEC TD1).
+SPEC_TMPDIR = SuiteTmpdir.create!
 ENV["XDG_DATA_HOME"] = File.join(SPEC_TMPDIR, "xdg-data")
 ENV["XDG_CONFIG_HOME"] = File.join(SPEC_TMPDIR, "xdg-config")
 
@@ -70,7 +74,9 @@ RSpec.configure do |config|
     PotatoMesh::App::DataProcessing.collision_warning_limiter.reset!
   end
 
+  # A spec that leaves anything in the suite's TMPDIR fails the run; the
+  # at_exit hook removes SPEC_TMPDIR either way (SPEC TD2).
   config.after(:suite) do
-    FileUtils.remove_entry(SPEC_TMPDIR) if File.directory?(SPEC_TMPDIR)
+    SuiteTmpdir.check!(SuiteTmpdir.tmp_path(SPEC_TMPDIR))
   end
 end
