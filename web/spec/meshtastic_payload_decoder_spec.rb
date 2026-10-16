@@ -94,9 +94,11 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
       FileUtils.mkdir_p(File.dirname(script_path))
       File.write(script_path, "")
 
-      with_repo_root(Dir.mktmpdir) do
-        allow(PotatoMesh::Config).to receive(:web_root).and_return(dir)
-        expect(described_class.decoder_script_path).to eq(script_path)
+      Dir.mktmpdir do |empty_root|
+        with_repo_root(empty_root) do
+          allow(PotatoMesh::Config).to receive(:web_root).and_return(dir)
+          expect(described_class.decoder_script_path).to eq(script_path)
+        end
       end
     end
   end
@@ -200,8 +202,10 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
   it "returns nil when no python executable can be found" do
     with_env("MESHTASTIC_PYTHON", nil) do
       with_env("PATH", "") do
-        with_repo_root(Dir.mktmpdir) do
-          expect(described_class.python_executable_path).to be_nil
+        Dir.mktmpdir do |empty_root|
+          with_repo_root(empty_root) do
+            expect(described_class.python_executable_path).to be_nil
+          end
         end
       end
     end
