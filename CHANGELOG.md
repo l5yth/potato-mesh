@@ -37,6 +37,7 @@
 * Data: a MeshCore sender name shared by several roster contacts resolves to the most recently advertised one (#883)
 * Data: the MeshCore ingestor posts an advert from the radio's RX log only when its signature verifies, refusing small-order keys and replayed adverts, so a node's SNR, RSSI and hops now come from the first copy heard; roster contacts are unchanged (SPEC SG1-SG5)
 * Web: live refreshes keep unchanged nodes-table rows, so an open `+` row, focus, a text selection, an overlay opened from a badge and the row under a scrolled page stay put; a moved overlay's close button now works (#881, SPEC DR1)
+* Web: live refreshes show each ping's rows and an empty collection's first row instead of an older answer from the browser cache: API reads with `since` above 0 and empty lists send `Cache-Control: no-cache`, an unchanged one revalidating to a 304, and other reads keep `max-age=10` (SPEC DN1, DN2, DN5)
 * Web: nodes table cells show bare numbers with fixed decimals, and each numeric column header names its unit, Frequency (MHz) included; a powered battery reads `100 ⚡` (SPEC DV1)
 * Web: long names in the nodes table are underlined only while their row is hovered or the link has keyboard focus (SPEC DV2)
 * Web: the node page and /charts align their content to the 16 px page edge, the node overlay to its dialog padding (SPEC DV4)
