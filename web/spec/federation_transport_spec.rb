@@ -147,11 +147,13 @@ RSpec.describe "Federation transport" do
           ports["http"] = http_peer.port
           dual = [IPAddr.new(LocalFederationPeers::LOOPBACK), IPAddr.new("::1")]
           allow(application).to receive(:resolve_remote_ip_addresses).and_return(dual)
-          allow(TCPSocket).to receive(:open).and_wrap_original do |original, host, port, *rest|
+          # Ruby 4.0's Net::HTTP passes +open_timeout:+ as a keyword, so the
+          # keywords are passed on as keywords.
+          allow(TCPSocket).to receive(:open).and_wrap_original do |original, host, port, *rest, **options|
             failure = port == https_port && failures[host.to_s.include?(":") ? :v6 : :v4]
             raise failure, "spec: connect(2) for #{host} port #{port}" if failure
 
-            original.call(host, port, *rest)
+            original.call(host, port, *rest, **options)
           end
 
           nodes, uri = application.fetch_instance_json("peer.invalid", "/api/nodes?limit=10")
