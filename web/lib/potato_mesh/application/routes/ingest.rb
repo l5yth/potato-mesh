@@ -45,7 +45,13 @@ module PotatoMesh
             # within a single POST.  Both checks honour the same
             # KNOWN_PROTOCOLS whitelist.
             batch_protocol = resolve_record_protocol(db, data, ingestor_node_id)
-            data.each do |node_id, node|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              PotatoMesh::App::Prometheus::NODES_GAUGE.set(prometheus_node_count(db))
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
+            end
+            ingest_batch(db, data, context: "ingest.nodes", after_commit: committed) do |node_id, node| # SPEC BT1: one transaction
               next if node_id == "ingestor"
               next if node_id == "protocol"
               # Any JSON key would otherwise become a node id: only a
@@ -61,9 +67,6 @@ module PotatoMesh
               per_node = normalize_protocol_value(node["protocol"])
               upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end
-            PotatoMesh::App::Prometheus::NODES_GAUGE.set(prometheus_node_count(db))
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -85,18 +88,21 @@ module PotatoMesh
             halt 400, { error: "too many messages" }.to_json if messages.size > 1000
             db = open_database
             protocol_cache = {}
-            # One payload-decode cap for the whole request (SPEC DB2).
-            decode_budget = PotatoMesh::App::Meshtastic::PayloadDecoder::Budget.new
-            messages.each do |msg|
-              insert_message(db, msg, protocol_cache: protocol_cache, decode_budget: decode_budget)
+            # One payload-decode cap per request (SPEC DB2), spent before the batch takes the write lock (SPEC BT4).
+            predecoded = predecode_message_payloads(db, messages, budget: PotatoMesh::App::Meshtastic::PayloadDecoder::Budget.new)
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              # A message ingest also touches the author node's last_heard (#822),
+              # so invalidate the nodes cache and publish a nodes change in addition
+              # to messages — the dashboard then refreshes (and flashes) that node.
+              # Mirrors how the positions route invalidates api:nodes:.
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:nodes:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("messages", private_mode: private_mode?)
+              PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             end
-            # A message ingest also touches the author node's last_heard (#822),
-            # so invalidate the nodes cache and publish a nodes change in addition
-            # to messages — the dashboard then refreshes (and flashes) that node.
-            # Mirrors how the positions route invalidates api:nodes:.
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:nodes:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("messages", private_mode: private_mode?)
-            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
+            ingest_batch(db, messages, context: "ingest.messages", after_commit: committed) do |msg| # SPEC BT1: one transaction
+              insert_message(db, msg, protocol_cache: protocol_cache, predecoded: predecoded[msg])
+            end
             status 201
             { status: "ok" }.to_json
           ensure
@@ -432,16 +438,19 @@ module PotatoMesh
             halt 400, { error: "too many positions" }.to_json if positions.size > 1000
             db = open_database
             protocol_cache = {}
-            positions.each do |pos|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("positions", private_mode: private_mode?)
+              # A position ingest also advances the node's last_heard
+              # (touch_node_last_seen), so publish a nodes change as well
+              # (mirrors the messages route, #822): the dashboard re-pulls and
+              # flashes that node with a freshly-updated "last seen".
+              PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
+            end
+            ingest_batch(db, positions, context: "ingest.positions", after_commit: committed) do |pos| # SPEC BT1: one transaction
               insert_position(db, pos, protocol_cache: protocol_cache)
             end
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("positions", private_mode: private_mode?)
-            # A position ingest also advances the node's last_heard
-            # (touch_node_last_seen), so publish a nodes change as well
-            # (mirrors the messages route, #822): the dashboard re-pulls and
-            # flashes that node with a freshly-updated "last seen".
-            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -463,11 +472,14 @@ module PotatoMesh
             halt 400, { error: "too many neighbor packets" }.to_json if neighbor_payloads.size > 1000
             db = open_database
             protocol_cache = {}
-            neighbor_payloads.each do |packet|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:neighbors:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("neighbors", private_mode: private_mode?)
+            end
+            ingest_batch(db, neighbor_payloads, context: "ingest.neighbors", after_commit: committed) do |packet| # SPEC BT1: one transaction
               insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:neighbors:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("neighbors", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -489,17 +501,20 @@ module PotatoMesh
             halt 400, { error: "too many telemetry packets" }.to_json if telemetry_packets.size > 1000
             db = open_database
             protocol_cache = {}
-            telemetry_packets.each do |packet|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              # A telemetry ingest advances the node's last_heard
+              # (update_node_from_telemetry -> touch_node_last_seen), so also
+              # invalidate the nodes cache and publish a nodes change (mirrors
+              # the positions/messages routes): the dashboard re-pulls and
+              # flashes that node with a freshly-updated "last seen".
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:nodes:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("telemetry", private_mode: private_mode?)
+              PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
+            end
+            ingest_batch(db, telemetry_packets, context: "ingest.telemetry", after_commit: committed) do |packet| # SPEC BT1: one transaction
               insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
-            # A telemetry ingest advances the node's last_heard
-            # (update_node_from_telemetry -> touch_node_last_seen), so also
-            # invalidate the nodes cache and publish a nodes change (mirrors
-            # the positions/messages routes): the dashboard re-pulls and
-            # flashes that node with a freshly-updated "last seen".
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:nodes:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("telemetry", private_mode: private_mode?)
-            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -521,22 +536,25 @@ module PotatoMesh
             halt 400, { error: "too many waypoints" }.to_json if waypoint_payloads.size > 1000
             db = open_database
             protocol_cache = {}
-            waypoint_payloads.each do |packet|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              # A waypoint ingest advances the author node's last_heard
+              # (touch_node_last_seen) and — per the W8 re-roll — waypoints are
+              # on the FLASHING side of the live-update boundary: the route
+              # publishes "nodes" alongside its own collection (mirroring the
+              # positions/messages routes) so the author's row + marker flash
+              # with a fresh "last seen" and the waypoint pin fades. The
+              # waypoints event itself is suppressed under PRIVATE by PubSub
+              # (SPEC W3, message-grade privacy); nodes events are not
+              # privacy-gated. Stats are invalidated because waypoints count
+              # into the telemetry umbrella (SPEC W9).
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:waypoints:", "api:nodes:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("waypoints", private_mode: private_mode?)
+              PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
+            end
+            ingest_batch(db, waypoint_payloads, context: "ingest.waypoints", after_commit: committed) do |packet| # SPEC BT1: one transaction
               insert_waypoint(db, packet, protocol_cache: protocol_cache)
             end
-            # A waypoint ingest advances the author node's last_heard
-            # (touch_node_last_seen) and — per the W8 re-roll — waypoints are
-            # on the FLASHING side of the live-update boundary: the route
-            # publishes "nodes" alongside its own collection (mirroring the
-            # positions/messages routes) so the author's row + marker flash
-            # with a fresh "last seen" and the waypoint pin fades. The
-            # waypoints event itself is suppressed under PRIVATE by PubSub
-            # (SPEC W3, message-grade privacy); nodes events are not
-            # privacy-gated. Stats are invalidated because waypoints count
-            # into the telemetry umbrella (SPEC W9).
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:waypoints:", "api:nodes:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("waypoints", private_mode: private_mode?)
-            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -558,11 +576,14 @@ module PotatoMesh
             halt 400, { error: "too many traces" }.to_json if trace_packets.size > 1000
             db = open_database
             protocol_cache = {}
-            trace_packets.each do |packet|
+            # Runs once the batch has committed, even if an interrupt then lands (SPEC BT5).
+            committed = lambda do
+              PotatoMesh::App::ApiCache.invalidate_prefix("api:traces:", "api:stats:")
+              PotatoMesh::App::PubSub.publish("traces", private_mode: private_mode?)
+            end
+            ingest_batch(db, trace_packets, context: "ingest.traces", after_commit: committed) do |packet| # SPEC BT1: one transaction
               insert_trace(db, packet, protocol_cache: protocol_cache)
             end
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:traces:", "api:stats:")
-            PotatoMesh::App::PubSub.publish("traces", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure

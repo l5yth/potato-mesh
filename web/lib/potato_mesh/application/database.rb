@@ -470,8 +470,8 @@ module PotatoMesh
             # runs once per backfill version, not on every boot.  The runtime
             # guard alone governs rows inserted later and does not stop every
             # duplicate: until #880 it let through cross-slot copies whose
-            # sender two ingestors resolved differently, and copies further
-            # apart than the window or caught in the check-then-insert race
+            # sender two ingestors resolved differently, and before SPEC BT1
+            # the check-then-insert race; copies further apart than the window
             # still pass (``CONTRACTS.md``).  A guard change that should also
             # clear history bumps +MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION+.
             current_version = db.get_first_value("PRAGMA user_version").to_i

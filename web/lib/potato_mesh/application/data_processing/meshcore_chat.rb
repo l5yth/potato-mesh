@@ -187,9 +187,10 @@ module PotatoMesh
             # unconditionally — routing this through +upsert_node+ would gate the
             # rename behind its +excluded.last_heard >= nodes.last_heard+ guard
             # and, on an out-of-order (older) chat message, leave the row demoted
-            # to synthetic but still generically named.
+            # to synthetic but still generically named.  A transaction of its
+            # own when called alone, a savepoint inside a batch's (SPEC BT2).
             with_busy_retry do
-              db.transaction do
+              write_transaction(db, :meshcore_chat_node) do
                 db.execute(
                   "UPDATE nodes SET long_name = ?, synthetic = 1 WHERE node_id = ?",
                   [long_name, node_id],

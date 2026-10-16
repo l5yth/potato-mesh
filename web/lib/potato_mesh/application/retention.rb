@@ -81,11 +81,14 @@ module PotatoMesh
           # cascades keeps the DELETE list small and avoids the need to
           # manually clean +trace_hops+ before its parent.
           #
-          # The whole sweep runs inside a single transaction so a crash or
-          # shutdown mid-pass either commits every table's deletions or
-          # leaves the DB untouched — never half-purged.
+          # The whole sweep runs in one write transaction with an explicit
+          # BEGIN IMMEDIATE, COMMIT and ROLLBACK, so a crash, a shutdown, a
+          # killed thread, a Timeout or a throw mid-pass commits no table's
+          # deletions; only a sweep that reached COMMIT is stored (SPEC BT7).
+          # The gem's Database#transaction block committed the tables done
+          # so far on a kill, a Timeout or a throw.
           with_busy_retry do
-            db.transaction do
+            PotatoMesh::App::DataProcessing.write_transaction(db, :retention_sweep) do
               RETENTION_TARGETS.each do |table, column|
                 sql = "DELETE FROM #{table} WHERE #{column} IS NOT NULL AND #{column} < ?"
                 db.execute(sql, [cutoff])

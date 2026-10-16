@@ -89,10 +89,12 @@ module PotatoMesh
       # @param message [Hash] inbound message payload.
       # @param protocol_cache [Hash, nil] optional per-batch ingestor protocol cache.
       # @param decode_budget [PotatoMesh::App::Meshtastic::PayloadDecoder::Budget, nil]
-      #   the ingest request's payload decodes (SPEC DB2); nil sets no
-      #   per-request cap.
+      #   the payload decodes a call outside a transaction may start (SPEC
+      #   DB2); nil sets no per-request cap.
+      # @param predecoded [PredecodedPayload, nil] the decode the ingest batch
+      #   ran for this message before its transaction (SPEC BT4).
       # @return [void]
-      def insert_message(db, message, protocol_cache: nil, decode_budget: nil)
+      def insert_message(db, message, protocol_cache: nil, decode_budget: nil, predecoded: nil)
         message = bound_message_payload(message) # SPEC SL3/SL5/SL10: nil skips the message
         return unless message.is_a?(Hash)
 
@@ -105,35 +107,7 @@ module PotatoMesh
         rx_iso = string_or_nil(message["rx_iso"])
         rx_iso ||= Time.at(rx_time).utc.iso8601
 
-        raw_from_id = message["from_id"]
-        if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
-          alt_from = message["from"]
-          raw_from_id = alt_from unless alt_from.nil? || alt_from.to_s.strip.empty?
-        end
-
-        trimmed_from_id = string_or_nil(raw_from_id)
-        canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
-        from_id = trimmed_from_id
-        if canonical_from_id
-          if from_id.nil?
-            from_id = canonical_from_id
-          elsif prefer_canonical_sender?(message)
-            from_id = canonical_from_id
-          elsif from_id.start_with?("!") && from_id.casecmp(canonical_from_id) != 0
-            from_id = canonical_from_id
-          end
-        end
-        if from_id && !from_id.start_with?("^")
-          canonical_parts = canonical_node_parts(from_id, message["from_num"])
-          if canonical_parts && !from_id.start_with?("!")
-            from_id = canonical_parts[0]
-            message["from_num"] ||= canonical_parts[1]
-          end
-        end
-        # A copy naming its sender only by number names the node that number
-        # canonicalises to, the node the writes below touch, so the row and
-        # the merge into a stored copy hold it to that sender (SPEC KC1).
-        from_id ||= canonical_node_parts(nil, message["from_num"])&.first
+        raw_from_id, trimmed_from_id, from_id = message_sender_ids(db, message)
         sender_present = !from_id.nil? || !coerce_integer(message["from_num"]).nil? || !trimmed_from_id.nil?
 
         raw_to_id = message["to_id"]
@@ -261,13 +235,11 @@ module PotatoMesh
           # the channel is absent/nil.  ``from_id`` + non-empty ``text`` keep
           # encrypted or anonymous traffic on the id-PK path.
           #
-          # Known race: the SELECT and the downstream INSERT do not share a
-          # transaction, so two Puma threads carrying the same content with
-          # different ids can both pass the pre-check and both insert.  The
-          # survivors are not cleaned up retroactively, since the backfill in
-          # +Database#ensure_schema_upgrades+ is one-shot (``CONTRACTS.md``);
-          # wrapping the pair in ``db.transaction(:immediate)`` is a future
-          # tightening if the race is ever observed in production.
+          # An ingest batch writes this SELECT and the INSERT below in its
+          # one IMMEDIATE transaction (SPEC BT1), so a concurrent copy with
+          # another id waits for the write lock and then finds this one; the
+          # check-then-insert race of two Puma threads is closed.  A call
+          # outside a transaction still runs the pair as two statements.
           if protocol == "meshcore" && from_id && channel_index && text && !text.to_s.empty?
             # Match on the sender-stable ``channel_name`` (NULL-safe ``IS ?``)
             # rather than the per-receiver ``channel`` slot index.  Two
@@ -377,6 +349,7 @@ module PotatoMesh
             snr: message["snr"],
             rssi: message["rssi"],
             decode_budget: decode_budget,
+            predecoded: predecoded,
           )
         end
 
@@ -432,6 +405,51 @@ module PotatoMesh
             )
           end
         end
+      end
+
+      # The sender references of a message, as {#insert_message} and the
+      # batch's decode before its transaction read them (SPEC BT4): the
+      # reference the record carries in +from_id+, else in +from+; that
+      # reference trimmed; and the canonical sender id, which a stored node
+      # matching the reference names. A canonicalised numeric reference
+      # fills +message["from_num"]+ in.
+      #
+      # @param db [SQLite3::Database] open database handle, read only here.
+      # @param message [Hash] the bounded message payload.
+      # @return [Array(Object, String, String)] the raw reference, it
+      #   trimmed, and the sender id; each nil when absent.
+      def message_sender_ids(db, message)
+        raw_from_id = message["from_id"]
+        if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
+          alt_from = message["from"]
+          raw_from_id = alt_from unless alt_from.nil? || alt_from.to_s.strip.empty?
+        end
+
+        trimmed_from_id = string_or_nil(raw_from_id)
+        canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
+        from_id = trimmed_from_id
+        if canonical_from_id
+          if from_id.nil?
+            from_id = canonical_from_id
+          elsif prefer_canonical_sender?(message)
+            from_id = canonical_from_id
+          elsif from_id.start_with?("!") && from_id.casecmp(canonical_from_id) != 0
+            from_id = canonical_from_id
+          end
+        end
+        if from_id && !from_id.start_with?("^")
+          canonical_parts = canonical_node_parts(from_id, message["from_num"])
+          if canonical_parts && !from_id.start_with?("!")
+            from_id = canonical_parts[0]
+            message["from_num"] ||= canonical_parts[1]
+          end
+        end
+        # A copy naming its sender only by number names the node that number
+        # canonicalises to, the node insert_message's writes touch, so the
+        # row and the merge into a stored copy hold it to that sender (SPEC
+        # KC1).
+        from_id ||= canonical_node_parts(nil, message["from_num"])&.first
+        [raw_from_id, trimmed_from_id, from_id]
       end
     end
   end
