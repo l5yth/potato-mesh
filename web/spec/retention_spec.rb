@@ -16,6 +16,7 @@
 
 require "spec_helper"
 require "sqlite3"
+require_relative "support/statement_pauses"
 
 # Specs covering the 365-day data retention purge implemented in
 # +PotatoMesh::App::Retention+.  The module is wired into the running
@@ -419,6 +420,94 @@ RSpec.describe PotatoMesh::App::Retention do
       expect(harness_class).to receive(:purge_old_data!).once.and_return({})
 
       expect { harness_class.retention_thread_loop }.not_to raise_error
+    end
+  end
+
+  describe ".purge_old_data! in one write transaction (SPEC BT7)" do
+    include StatementPauses
+
+    # Rows of the seeded dataset the sweep removes, counted over every table
+    # it deletes them from.
+    #
+    # @return [Integer] stale rows still stored.
+    def stale_rows
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+      [
+        "SELECT COUNT(*) FROM nodes WHERE node_id = '!aaaaa001'",
+        "SELECT COUNT(*) FROM destinations WHERE id = '#{"b" * 32}'",
+        "SELECT COUNT(*) FROM messages WHERE id = 2",
+        "SELECT COUNT(*) FROM positions WHERE id = 2",
+        "SELECT COUNT(*) FROM telemetry WHERE id = 2",
+        "SELECT COUNT(*) FROM traces WHERE id = 2",
+        "SELECT COUNT(*) FROM ingestors WHERE node_id = '!aaaaa001'",
+      ].sum { |sql| db.get_first_value(sql) }
+    ensure
+      db&.close
+    end
+
+    # Empty every retention target and seed the dataset again.
+    #
+    # @return [void]
+    def reseed
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.execute("PRAGMA foreign_keys = ON")
+      described_class::RETENTION_TARGETS.each { |table, _column| db.execute("DELETE FROM #{table}") }
+      db.close
+      seed_retention_dataset(now)
+    end
+
+    # Run the sweep and leave it by a +throw+ just before statement
+    # +target+.
+    #
+    # @param target [Integer] statement to throw before.
+    # @return [void]
+    def throw_at_statement(target)
+      count = 0
+      allow_any_instance_of(SQLite3::Database).to receive(:prepare).and_wrap_original do |original, sql, *args, **options, &block|
+        count += 1
+        throw :spec_leave if count == target
+        original.call(sql, *args, **options, &block)
+      end
+      catch(:spec_leave) { harness_class.purge_old_data!(now: now) }
+    ensure
+      stub_statement_pauses
+    end
+
+    it "runs BEGIN IMMEDIATE TRANSACTION and COMMIT TRANSACTION, never the gem's transaction block" do
+      stub_statement_pauses
+      seed_retention_dataset(now)
+
+      statements = statements_of { harness_class.purge_old_data!(now: now) }
+
+      expect(statements.grep(/\A(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\b/i)).to eq(["BEGIN IMMEDIATE TRANSACTION", "COMMIT TRANSACTION"])
+      expect(stale_rows).to eq(0)
+    end
+
+    it "stores all of a sweep or none of it when a kill, a Timeout or a throw lands before any of its statements" do
+      stub_statement_pauses
+      seed_retention_dataset(now)
+      total = statements_of { harness_class.purge_old_data!(now: now) }.size
+      partial = []
+      open_after = []
+
+      (1..total).each do |target|
+        %i[kill timeout throw].each do |kind|
+          reseed
+          seeded = stale_rows
+          if kind == :throw
+            throw_at_statement(target)
+          else
+            interrupt_at_statement(target, kind) { harness_class.purge_old_data!(now: now) }
+          end
+          left = stale_rows
+          partial << [target, kind, left] unless [0, seeded].include?(left)
+          open_after << [target, kind] unless write_lock_free?
+        end
+      end
+
+      expect(total).to be >= 13
+      expect(partial).to eq([])
+      expect(open_after).to eq([])
     end
   end
 

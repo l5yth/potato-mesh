@@ -17,6 +17,10 @@
 module PotatoMesh
   module App
     module DataProcessing
+      # Meshtastic port numbers whose decrypted payload is decoded and stored:
+      # POSITION, NODEINFO, TELEMETRY, TRACEROUTE and NEIGHBORINFO (SPEC DB4).
+      DECODED_PAYLOAD_PORTNUMS = [3, 4, 67, 70, 71].freeze
+
       # Decode and store decrypted payloads in domain-specific tables.
       #
       # @param db [SQLite3::Database] open database handle.
@@ -33,9 +37,11 @@ module PotatoMesh
       # @param snr [Numeric, nil] signal-to-noise ratio.
       # @param rssi [Integer, nil] RSSI value.
       # @param decode_budget [PotatoMesh::App::Meshtastic::PayloadDecoder::Budget, nil]
-      #   the ingest request's payload decodes (SPEC DB2); nil sets no
-      #   per-request cap.
-      # @return [void]
+      #   the payload decodes a call outside a transaction may start (SPEC
+      #   DB2); nil sets no per-request cap.
+      # @param predecoded [PredecodedPayload, nil] the decode the ingest batch
+      #   ran before its transaction (SPEC BT4).
+      # @return [Boolean] true when the decoded payload was stored.
       def store_decrypted_payload(
         db,
         message,
@@ -50,26 +56,16 @@ module PotatoMesh
         hop_limit:,
         snr:,
         rssi:,
-        decode_budget: nil
+        decode_budget: nil,
+        predecoded: nil
       )
-        payload_bytes = decrypted[:payload]
-        return false unless payload_bytes
+        request = decrypted_payload_decode_request(decrypted, portnum)
+        return false unless request
 
-        portnum_value = coerce_integer(portnum || decrypted[:portnum])
-        return false unless portnum_value
-
-        payload_b64 = Base64.strict_encode64(payload_bytes)
-        supported_ports = [3, 4, 67, 70, 71]
-        return false unless supported_ports.include?(portnum_value)
-
+        portnum_value, payload_b64 = request
         # A decode the bounds skip returns nil, as a failed one does: the
         # message stays stored encrypted (SPEC DB1-DB3).
-        decoded = PotatoMesh::App::Meshtastic::PayloadDecoder.decode(
-          portnum: portnum_value,
-          payload_b64: payload_b64,
-          budget: decode_budget,
-          message_id: packet_id,
-        )
+        decoded = decode_decrypted_payload(db, request, packet_id, decode_budget: decode_budget, predecoded: predecoded)
         return false unless decoded.is_a?(Hash)
         return false unless decoded["payload"].is_a?(Hash)
 
@@ -199,6 +195,67 @@ module PotatoMesh
         else
           false
         end
+      end
+
+      # The decode a decrypted payload asks for: its port number and its bytes
+      # in base64, when it carries bytes of a type the decoder reads
+      # ({DECODED_PAYLOAD_PORTNUMS}).
+      #
+      # @param decrypted [Hash] decrypted payload metadata, +:payload+ and
+      #   +:portnum+.
+      # @param portnum [Object, nil] the message's port number, read before
+      #   the decrypted one.
+      # @return [Array(Integer, String), nil] port number and base64 payload;
+      #   nil when the payload asks for no decode.
+      def decrypted_payload_decode_request(decrypted, portnum)
+        payload_bytes = decrypted[:payload]
+        return unless payload_bytes
+
+        portnum_value = coerce_integer(portnum || decrypted[:portnum])
+        return unless DECODED_PAYLOAD_PORTNUMS.include?(portnum_value)
+
+        [portnum_value, Base64.strict_encode64(payload_bytes)]
+      end
+
+      # Decode +request+ without the write lock held (SPEC BT4).
+      #
+      # An ingest batch decodes before its transaction takes the write lock
+      # and hands the result in as +predecoded+, which is used when it was
+      # made for this same request. Outside a transaction the payload is
+      # decoded here, within +decode_budget+ (SPEC DB1-DB3). Inside one,
+      # where a decode would hold the write lock for up to its deadline, it
+      # is not decoded: the message stays encrypted, as after a failed
+      # decode, and one debug line says so.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param request [Array(Integer, String)] port number and base64
+      #   payload ({#decrypted_payload_decode_request}).
+      # @param message_id [Integer] the message, for the log line.
+      # @param decode_budget [PotatoMesh::App::Meshtastic::PayloadDecoder::Budget, nil]
+      #   decodes a call outside a transaction may start.
+      # @param predecoded [PredecodedPayload, nil] the batch's decode.
+      # @return [Hash, nil] the decoder's result; nil when the decode failed,
+      #   a bound skipped it, or it would run under the write lock.
+      def decode_decrypted_payload(db, request, message_id, decode_budget:, predecoded:)
+        return predecoded.decoded if predecoded&.request == request
+
+        portnum, payload_b64 = request
+        if db.transaction_active?
+          debug_log(
+            "Left a Meshtastic payload undecoded under the write lock",
+            context: "data_processing.store_decrypted_payload",
+            message_id: message_id,
+            portnum: portnum,
+          )
+          return nil
+        end
+
+        PotatoMesh::App::Meshtastic::PayloadDecoder.decode(
+          portnum: portnum,
+          payload_b64: payload_b64,
+          budget: decode_budget,
+          message_id: message_id,
+        )
       end
 
       # Decide whether a decrypted payload claims an id other than its

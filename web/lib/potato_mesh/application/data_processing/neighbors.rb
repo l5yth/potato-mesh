@@ -51,57 +51,62 @@ module PotatoMesh
         ingestor = string_or_nil(payload["ingestor"])
         protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
-        ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
-        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo, protocol: protocol)
-
-        neighbor_entries = []
-        neighbors_payload = payload["neighbors"]
-        neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
-        lookups = 0
-
-        neighbors_list.each do |neighbor|
-          # The snapshot stores its first NEIGHBOR_ENTRIES neighbours, each of
-          # which may mint a placeholder node.  The count is of the entries
-          # this loop stores, so an entry it skips takes no place (SPEC IB3).
-          break if neighbor_entries.length >= FieldLimits::NEIGHBOR_ENTRIES
-          next unless neighbor.is_a?(Hash)
-
-          neighbor_ref = neighbor["neighbor_id"] || neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"]
-          neighbor_num = coerce_integer(
-            neighbor["neighbor_num"] || neighbor["node_num"] || neighbor["nodeId"] || neighbor["id"],
-          )
-
-          canonical_neighbor = canonical_node_parts(neighbor_ref, neighbor_num)
-          if canonical_neighbor
-            neighbor_id, neighbor_num, = canonical_neighbor
-          else
-            # Only a blank reference, or none, arrives here (SPEC SL11), so the
-            # entry can name its neighbour by its number alone.  A number below
-            # 0 names no node.  One beside a blank reference resolves through a
-            # lookup, at most NEIGHBOR_ENTRIES of them per snapshot (SPEC IB3).
-            next if neighbor_num.nil? || neighbor_num.negative?
-
-            lookups += 1
-            next if lookups > FieldLimits::NEIGHBOR_ENTRIES
-
-            neighbor_id = normalize_node_id(db, neighbor_num)
-          end
-
-          next unless neighbor_id
-
-          neighbor_id = "!#{neighbor_id.delete_prefix("!").downcase}" if neighbor_id.start_with?("!")
-
-          entry_rx_time = coerce_integer(neighbor["rx_time"]) || rx_time
-          entry_rx_time = now if entry_rx_time && entry_rx_time > now
-          snr = coerce_float(neighbor["snr"])
-
-          ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time, protocol: protocol)
-
-          neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor, protocol]
-        end
-
+        # The reporting node, the placeholders its neighbours mint and the
+        # snapshot are written in one transaction of their own, or in a
+        # savepoint inside an ingest batch's, so no other connection can
+        # delete a placeholder between its check and the snapshot rows that
+        # reference it (SPEC BT2, BT6).
         with_busy_retry do
-          db.transaction do
+          write_transaction(db, :insert_neighbors) do
+            ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
+            touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo, protocol: protocol)
+
+            neighbor_entries = []
+            neighbors_payload = payload["neighbors"]
+            neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
+            lookups = 0
+
+            neighbors_list.each do |neighbor|
+              # The snapshot stores its first NEIGHBOR_ENTRIES neighbours, each of
+              # which may mint a placeholder node.  The count is of the entries
+              # this loop stores, so an entry it skips takes no place (SPEC IB3).
+              break if neighbor_entries.length >= FieldLimits::NEIGHBOR_ENTRIES
+              next unless neighbor.is_a?(Hash)
+
+              neighbor_ref = neighbor["neighbor_id"] || neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"]
+              neighbor_num = coerce_integer(
+                neighbor["neighbor_num"] || neighbor["node_num"] || neighbor["nodeId"] || neighbor["id"],
+              )
+
+              canonical_neighbor = canonical_node_parts(neighbor_ref, neighbor_num)
+              if canonical_neighbor
+                neighbor_id, neighbor_num, = canonical_neighbor
+              else
+                # Only a blank reference, or none, arrives here (SPEC SL11), so the
+                # entry can name its neighbour by its number alone.  A number below
+                # 0 names no node.  One beside a blank reference resolves through a
+                # lookup, at most NEIGHBOR_ENTRIES of them per snapshot (SPEC IB3).
+                next if neighbor_num.nil? || neighbor_num.negative?
+
+                lookups += 1
+                next if lookups > FieldLimits::NEIGHBOR_ENTRIES
+
+                neighbor_id = normalize_node_id(db, neighbor_num)
+              end
+
+              next unless neighbor_id
+
+              neighbor_id = "!#{neighbor_id.delete_prefix("!").downcase}" if neighbor_id.start_with?("!")
+
+              entry_rx_time = coerce_integer(neighbor["rx_time"]) || rx_time
+              entry_rx_time = now if entry_rx_time && entry_rx_time > now
+              snr = coerce_float(neighbor["snr"])
+
+              ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time, protocol: protocol)
+
+              neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor, protocol]
+            end
+
             if neighbor_entries.empty?
               db.execute("DELETE FROM neighbors WHERE node_id = ?", [node_id])
             else

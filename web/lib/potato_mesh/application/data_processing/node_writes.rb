@@ -617,7 +617,7 @@ module PotatoMesh
           identity_hash,
         ]
         with_busy_retry do
-          db.transaction do
+          write_transaction(db, :upsert_node) do # SPEC BT2: alone a transaction, in a batch a savepoint
             db.execute(<<~SQL, row)
               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                 hops_away,snr,rssi,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
