@@ -31,7 +31,8 @@ on:
       # tests/test_configure_script.py runs it.
       - 'configure.sh'
       - 'web/lib/potato_mesh/config.rb'
-      # tests/test_dockerfile_sync.py compares these two files.
+      # tests/test_dockerfile_sync.py compares these two files;
+      # tests/test_dockerfile_chromium.py runs their Chromium step.
       - 'Dockerfile'
       - 'web/Dockerfile'
       # tests/test_dependency_manifests.py reads the web Gemfile and its lock.

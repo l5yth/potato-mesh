@@ -63,13 +63,20 @@ ENV WITH_OG_IMAGE=${WITH_OG_IMAGE}
 # Install runtime dependencies. Chromium powers the runtime Open Graph
 # preview generator; the accompanying font and library packages are the
 # minimum set required to render the dashboard headlessly on Alpine.
+# Alpine builds Chromium for x86_64 and aarch64 only (no armv7 since
+# 2026-10-15), so any other architecture builds as with WITH_OG_IMAGE=0
+# (SPEC RB3).
 RUN apk add --no-cache \
     python3 \
     sqlite \
     tzdata \
     curl \
     && if [ "$WITH_OG_IMAGE" = "1" ]; then \
-         apk add --no-cache chromium nss freetype harfbuzz ttf-freefont; \
+         arch="$(apk --print-arch)"; \
+         case "$arch" in \
+           x86_64|aarch64) apk add --no-cache chromium nss freetype harfbuzz ttf-freefont ;; \
+           *) echo "Alpine builds no Chromium for $arch; Open Graph previews use the packaged default image" ;; \
+         esac; \
        fi
 
 # Create non-root user
