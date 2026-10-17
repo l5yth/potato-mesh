@@ -457,7 +457,7 @@ export async function initializeFederationPage(options = {}) {
   };
   let sortState = {
     key: 'lastUpdateTime',
-    direction: tableSorters.lastUpdateTime ? tableSorters.lastUpdateTime.defaultDirection : 'desc'
+    direction: tableSorters.lastUpdateTime.defaultDirection
   };
 
   /**

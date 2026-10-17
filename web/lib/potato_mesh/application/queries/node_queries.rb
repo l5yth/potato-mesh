@@ -252,7 +252,7 @@ module PotatoMesh
                  synthetic, public_key
           FROM nodes
         SQL
-        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
           ORDER BY last_heard DESC
           LIMIT ?
@@ -428,7 +428,7 @@ module PotatoMesh
         clauses << hidden_client_node_id_filter("node_id") if private_mode?
         sql = +"SELECT id, node_id, identity_hash, name, aspect, role, interface, " \
                "first_heard, last_heard, protocol FROM destinations"
-        sql << " WHERE #{clauses.join(" AND ")}" if clauses.any?
+        sql << " WHERE #{clauses.join(" AND ")}"
         sql << " ORDER BY last_heard DESC LIMIT ?"
         params << limit
         with_busy_retry { handle.execute(sql, params) }

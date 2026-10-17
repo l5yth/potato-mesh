@@ -191,10 +191,7 @@ def _region_frequency(lora_message: Any) -> int | float | str | None:
     if enum_name:
         digits = re.findall(r"\d+", enum_name)
         for token in digits:
-            try:
-                freq = int(token)
-            except ValueError:  # pragma: no cover - regex guarantees digits
-                continue
+            freq = int(token)
             if freq >= 100:
                 return freq
         for token in reversed(digits):

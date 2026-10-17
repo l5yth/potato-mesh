@@ -67,13 +67,6 @@ module PotatoMesh
         }
       end
 
-      # Generate the meta description used in SEO tags.
-      #
-      # @return [String] combined descriptive sentence.
-      def meta_description
-        PotatoMesh::Meta.description(private_mode: private_mode?)
-      end
-
       # Generate the structured meta configuration for the UI.
       #
       # @param view [Symbol, String, nil] logical view identifier used to

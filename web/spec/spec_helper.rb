@@ -56,12 +56,12 @@ require_relative "../app"
 require "rack/test"
 require "rspec"
 
-# SPEC CV1, CV2: a full-suite run, and any run with COVERAGE_GATE=1 (CI),
-# exits non-zero below these floors: the lowest of five runs on 2026-10-16
-# (98.794% and 87.603%) less 0.1 point, truncated to two decimals, the
-# precision SimpleCov compares at. Raise them by the same rule as coverage
-# grows; never lower them.
-CoverageGate.apply_floor(SimpleCov, RSpec.configuration, spec_dir: __dir__, line: 98.69, branch: 87.50)
+# SPEC CV1, CV2, DD8: a full-suite run, and any run with COVERAGE_GATE=1 (CI),
+# exits non-zero below these floors: the lowest of five runs on 2026-10-16,
+# after the dead-code deletion (98.922% and 89.199%), less 0.1 point,
+# truncated to two decimals, the precision SimpleCov compares at. Raise them
+# by the same rule as coverage grows; never lower them.
+CoverageGate.apply_floor(SimpleCov, RSpec.configuration, spec_dir: __dir__, line: 98.82, branch: 89.09)
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|

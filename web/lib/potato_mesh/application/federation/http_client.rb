@@ -26,7 +26,7 @@ module PotatoMesh
         while current
           return true if current.is_a?(Errno::ECONNREFUSED)
 
-          current = current.respond_to?(:cause) ? current.cause : nil
+          current = current.cause
         end
 
         false
@@ -72,7 +72,7 @@ module PotatoMesh
         while current
           return true if retryable_classes.any? { |klass| current.is_a?(klass) }
 
-          current = current.respond_to?(:cause) ? current.cause : nil
+          current = current.cause
         end
 
         false
@@ -184,7 +184,7 @@ module PotatoMesh
       def build_remote_http_client(uri, ip_address: nil)
         http = Net::HTTP.new(uri.host, uri.port)
         if ip_address
-          http.ipaddr = ip_address if http.respond_to?(:ipaddr=)
+          http.ipaddr = ip_address
         else
           remote_addresses = resolve_remote_ip_addresses(uri)
           if http.respond_to?(:ipaddr=) && remote_addresses.any?
@@ -201,7 +201,7 @@ module PotatoMesh
         return http unless http.use_ssl?
 
         http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-        http.min_version = :TLS1_2 if http.respond_to?(:min_version=)
+        http.min_version = :TLS1_2
         store = remote_instance_cert_store
         http.cert_store = store if store
         callback = remote_instance_verify_callback
@@ -222,7 +222,7 @@ module PotatoMesh
 
         store = OpenSSL::X509::Store.new
         store.set_default_paths
-        store.flags = 0 if store.respond_to?(:flags=)
+        store.flags = 0
         @remote_instance_cert_store = store
       rescue OpenSSL::X509::StoreError => e
         debug_log(
@@ -274,10 +274,10 @@ module PotatoMesh
       # @param error_code [Integer, nil] OpenSSL verification error value.
       # @return [Boolean] true when the error should be ignored.
       def crl_unavailable_error?(error_code)
-        allowed_errors = [OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL]
-        if defined?(OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL_ISSUER)
-          allowed_errors << OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL_ISSUER
-        end
+        allowed_errors = [
+          OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL,
+          OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL_ISSUER,
+        ]
         allowed_errors.include?(error_code)
       end
     end

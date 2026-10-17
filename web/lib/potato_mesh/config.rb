@@ -871,7 +871,7 @@ module PotatoMesh
     # @return [Hash{Symbol=>Float}] latitude and longitude in decimal degrees.
     def map_center
       raw = fetch_string("MAP_CENTER", DEFAULT_MAP_CENTER)
-      lat_str, lon_str = raw.split(",", 2).map { |part| part&.strip }.compact
+      lat_str, lon_str = raw.split(",", 2).map(&:strip)
       lat = Float(lat_str, exception: false)
       lon = Float(lon_str, exception: false)
       lat = DEFAULT_MAP_CENTER_LAT unless lat
@@ -924,13 +924,6 @@ module PotatoMesh
     # @return [String] contact URI or identifier.
     def contact_link
       fetch_string("CONTACT_LINK", DEFAULT_CONTACT_LINK)
-    end
-
-    # Retrieve the configured connection target for the ingestor service.
-    #
-    # @return [String] serial device, TCP endpoint, or Bluetooth target.
-    def connection_target
-      fetch_string("CONNECTION", "/dev/ttyACM0")
     end
 
     # Optional absolute URL to use for the social share preview image.

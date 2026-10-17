@@ -197,7 +197,7 @@ module PotatoMesh
         thread = settings.public_send(setting_name)
         if thread&.alive?
           begin
-            thread.wakeup if thread.respond_to?(:wakeup)
+            thread.wakeup
           rescue ThreadError
             # The thread may not currently be sleeping; continue shutdown.
           end

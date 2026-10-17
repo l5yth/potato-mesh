@@ -239,10 +239,8 @@ module PotatoMesh
       def spawn_workers(size)
         size.times do |index|
           worker = Thread.new do
-            Thread.current.name = "#{@name}-#{index}" if Thread.current.respond_to?(:name=)
-            Thread.current.report_on_exception = false if Thread.current.respond_to?(:report_on_exception=)
-            # Daemon threads allow the process to exit even if a job is stuck.
-            Thread.current.daemon = true if Thread.current.respond_to?(:daemon=)
+            Thread.current.name = "#{@name}-#{index}"
+            Thread.current.report_on_exception = false
 
             loop do
               task, block = @queue.pop

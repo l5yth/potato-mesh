@@ -176,8 +176,7 @@ module PotatoMesh
         thread = Thread.new do
           retention_thread_loop
         end
-        thread.name = "potato-mesh-retention" if thread.respond_to?(:name=)
-        thread.daemon = true if thread.respond_to?(:daemon=)
+        thread.name = "potato-mesh-retention"
         set(:retention_thread, thread) if respond_to?(:set)
         thread
       end
@@ -263,7 +262,7 @@ module PotatoMesh
         thread = settings.retention_thread
         if thread&.alive?
           begin
-            thread.wakeup if thread.respond_to?(:wakeup)
+            thread.wakeup
           rescue ThreadError
             # Thread may not be sleeping; continue.
           end

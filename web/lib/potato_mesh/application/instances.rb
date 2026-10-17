@@ -53,11 +53,10 @@ module PotatoMesh
             [timestamp, entry[0].to_i]
           end
           keeper = sorted_entries.last
-          next unless keeper
 
           deletions.concat(sorted_entries[0...-1].map { |entry| entry[0].to_i })
 
-          current_domain = entries.find { |entry| entry[0] == keeper[0] }&.[](1)
+          current_domain = entries.find { |entry| entry[0] == keeper[0] }[1]
           if canonical_domain && current_domain != canonical_domain
             updates[keeper[0].to_i] = canonical_domain
           end
@@ -68,7 +67,7 @@ module PotatoMesh
             context: "instances.cleanup",
             domain: canonical_domain,
             removed: removed_count,
-          ) if removed_count.positive?
+          )
         end
 
         unless deletions.empty?
@@ -99,15 +98,6 @@ module PotatoMesh
       # @param row [Hash] raw database row with string keys.
       # @return [Hash, nil] cleaned hash or +nil+ when the row is discarded.
       def normalize_instance_row(row)
-        unless row.is_a?(Hash)
-          warn_log(
-            "Discarded malformed instance row",
-            context: "instances.normalize",
-            reason: "row not hash",
-          )
-          return nil
-        end
-
         id = string_or_nil(row["id"])
         domain = sanitize_instance_domain(row["domain"])&.downcase
         pubkey = sanitize_public_key_pem(row["pubkey"])
@@ -161,8 +151,8 @@ module PotatoMesh
         warn_log(
           "Failed to normalise instance row",
           context: "instances.normalize",
-          instance_id: row.respond_to?(:[]) ? row["id"] : nil,
-          domain: row.respond_to?(:[]) ? row["domain"] : nil,
+          instance_id: row["id"],
+          domain: row["domain"],
           error_class: e.class.name,
           error_message: e.message,
         )

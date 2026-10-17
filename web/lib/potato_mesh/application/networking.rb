@@ -53,10 +53,6 @@ module PotatoMesh
           end
 
           hostname = uri.hostname
-          unless hostname
-            raise "INSTANCE_DOMAIN URL must include a hostname: #{candidate.inspect}"
-          end
-
           ip_host = ipv6_literal?(hostname)
           candidate_host = ip_host ? "[#{ip_host}]" : hostname
           candidate = candidate_host
