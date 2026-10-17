@@ -3,6 +3,8 @@
 
 # CHANGELOG
 
+## v1.0.0
+
 ### Features
 * Web/Data: Reticulum gets its own visual identity - trifoil marker on violet `#7b61ff`, MeshCore's tile moves to `#1f2937`, a four-step role color ramp, hexagon shape, and a legend group under MeshCore (SPEC RD1-RD8)
 * Data: Reticulum node roles are derived from the announce aspect, so a multi-aspect peer no longer flips roles (SPEC RD4/RE10)
@@ -14,6 +16,7 @@
 * Data: MeshCore channel messages scoped to a country code, `eu`, or a German or Austrian state or Swiss canton code (`de-by`, `at-9`, `ch-zh`) show that region also when the radio's default flood scope is another region or unset (SPEC SC3)
 * Data: MeshCore channel messages scoped to `de-bebb`, `de-nord`, `de-ost`, `de-sued` or `de-west` show that region also when the radio's default flood scope is another region or unset (SPEC SN1)
 * Web: `GET /api/nodes` and `GET /api/nodes/:id` serve each node's `public_key`, so a monitor can match a node that changed its id but kept its key (#1019, SPEC PK1-PK4)
+* Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 
 ### Fixes
 * Web: MeshCore `@[Name]` mentions and replies no longer create, refresh, or revive nodes (#883)
@@ -242,9 +245,6 @@
 * Web: the map builds a neighbor or trace line's tooltip when it opens instead of on every repaint, and short-name badges render faster; a live repaint with 800 nodes and 4,000 neighbor lines takes about half as long (SPEC MT1-MT3)
 * Web: Meshtastic payload decoding is bounded: a decode is killed with its process group after 4 s, one `POST /api/messages` decodes at most 4 messages, and each web process runs at most 2 decodes at once; a message past a bound is stored still encrypted, as when decoding fails (SPEC DB1-DB4)
 * Web: the filter box refilters the nodes table, the map and the chat once typing pauses for 200 ms, not on every keystroke; Enter applies the text at once, as do the box's ×, the role and protocol toggles and Clear filters (SPEC DE1/DE2)
-
-### Features
-* Data/Web: Reticulum protocol support - `PROTOCOL=reticulum` ingests announces as `protocol="reticulum"` nodes end-to-end (ingest, stats, federation wire, UI) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 
 ## v0.7.5
 
