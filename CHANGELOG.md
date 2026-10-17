@@ -71,6 +71,7 @@
 * CI: the env-surface check runs in pytest whenever a deployment surface changes, and also checks names with digits, names read through helpers, and retired names (SPEC PX6/PX8)
 * CI: test results reach Codecov also when tests fail; workflows use codecov-action v7 and checkout v7; Dependabot opens up to 20 GitHub Actions update PRs at a time (SPEC DW1/DW2/DW4)
 * Docker: the root `Dockerfile` builds the same image as `web/Dockerfile`, including Chromium for Open Graph previews (skip it with `--build-arg WITH_OG_IMAGE=0`), the custom pages directory, and the `APP_VERSION` build arg (SPEC DF1)
+* Docker: the `linux-armv7` web image has no Chromium, as Alpine no longer builds it for armv7: `/og-image.png` serves its fallback image unless `OG_IMAGE_URL` is set (SPEC RB3)
 * Docs: `SECURITY.md` says how to report a vulnerability privately (SPEC SEC1)
 * Web: `/metrics` no longer exports nodes that opted out or that private mode hides; series exported before an opt-out stop at once (SPEC PM1/PM2)
 * Web: with `PRIVATE=1`, a hidden client (`CLIENT_HIDDEN`) is left out of positions, telemetry, neighbors, traces, destinations, ingestors, the stats counts, the `/version` and well-known freshness hints, the preview image and its node page, not only the node list; a trace it relayed between other nodes keeps its other hops (SPEC HC1-HC4, HC7)

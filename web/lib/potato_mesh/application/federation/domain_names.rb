@@ -217,7 +217,9 @@ module PotatoMesh
       # trailing dots, each label that is not ASCII in Punycode (NFKC and
       # lower case first), and the port kept. A bracketed IPv6 literal keeps
       # its form here, for FB10 to refuse. Text longer than any hostname,
-      # and a label longer than 63 characters, do not sanitize.
+      # and a label longer than 63 characters, do not sanitize. BINARY text
+      # is read as UTF-8 (SPEC RB1); text that is not valid UTF-8 does not
+      # sanitize.
       #
       # @param value [Object] a domain as received, with an optional port.
       # @return [String, nil] the canonical domain, nil when it does not
@@ -226,6 +228,11 @@ module PotatoMesh
         text = string_or_nil(value)
         return nil if text.nil? || text.length > MAX_DOMAIN_TEXT_LENGTH
 
+        # Addrinfo#ip_address and Resolv.getname return BINARY text, and so
+        # does the INSTANCE_DOMAIN detected from them; NFKC refuses that
+        # encoding whatever the bytes. Read the bytes as UTF-8, as a JSON body
+        # or a stored row already is.
+        text = text.dup.force_encoding(Encoding::UTF_8) if text.encoding == Encoding::BINARY
         match = text.match(/\A(?<host>.*?)(?::(?<port>\d+))?\z/m)
         host = match[:host]
         unless host.start_with?("[")
