@@ -42,19 +42,15 @@ module PotatoMesh
           # Render a dashboard-oriented ERB template within the shared layout.
           #
           # @param template [Symbol] identifier for the ERB template.
-          # @param view_mode [Symbol, String] logical view identifier for CSS hooks.
-          # @param view_meta [Symbol, String, nil] meta-tag selector. Defaults to
-          #   +view_mode+ so most callers can omit it; pass an explicit value
-          #   when the layout view differs from the meta archetype (e.g. the
-          #   dynamic +/pages/:slug+ routes whose view_mode is per-slug).
+          # @param view_mode [Symbol, String] logical view identifier for CSS hooks
+          #   and the meta-tag selector.
           # @param meta_overrides [Hash, nil] explicit replacements for
           #   individual meta values (title, description, image, noindex).
           # @param extra_locals [Hash] additional locals merged into the rendering context.
           # @return [String] rendered ERB output.
-          def render_root_view(template, view_mode: :dashboard, view_meta: nil, meta_overrides: nil, extra_locals: {})
-            view_mode_sym = view_mode.respond_to?(:to_sym) ? view_mode.to_sym : view_mode
-            view_meta_sym = view_meta.nil? ? view_mode_sym : (view_meta.respond_to?(:to_sym) ? view_meta.to_sym : view_meta)
-            meta = meta_configuration(view: view_meta_sym, overrides: meta_overrides)
+          def render_root_view(template, view_mode: :dashboard, meta_overrides: nil, extra_locals: {})
+            view_mode_sym = view_mode.to_sym
+            meta = meta_configuration(view: view_mode_sym, overrides: meta_overrides)
             config = frontend_app_config
             theme = resolve_initial_theme
 
@@ -82,8 +78,7 @@ module PotatoMesh
               map_zoom: PotatoMesh::Config.map_zoom,
               static_pages: PotatoMesh::App::Pages.static_pages,
             }
-            sanitized_locals = extra_locals.is_a?(Hash) ? extra_locals : {}
-            merged_locals = base_locals.merge(sanitized_locals)
+            merged_locals = base_locals.merge(extra_locals)
 
             erb template, layout: :"layouts/app", locals: merged_locals
           end
@@ -93,11 +88,9 @@ module PotatoMesh
           # versions; this helper keeps behaviour consistent across supported
           # releases.
           #
-          # @param value [Hash, nil] collection subject to filtering.
+          # @param value [Hash] collection subject to filtering.
           # @return [Hash] hash excluding +nil+ values.
           def reject_nil_values(value)
-            return {} unless value.is_a?(Hash)
-
             value.each_with_object({}) do |(key, entry), memo|
               memo[key] = entry unless entry.nil?
             end
@@ -332,8 +325,8 @@ module PotatoMesh
           end
 
           # Build the URL list emitted by +/sitemap.xml+ for a public
-          # deployment. Each entry is a hash with +:loc+ and an optional
-          # +:lastmod+ / +:changefreq+ pair.
+          # deployment. Each entry is a hash with +:loc+, +:changefreq+ and an
+          # optional +:lastmod+.
           #
           # +lastmod+ is intentionally omitted for top-level dashboard
           # routes. The data behind those views changes continuously, so
@@ -400,7 +393,7 @@ module PotatoMesh
               lines << "  <url>"
               lines << "    <loc>#{xml_escape(entry[:loc])}</loc>"
               lines << "    <lastmod>#{xml_escape(entry[:lastmod])}</lastmod>" if entry[:lastmod]
-              lines << "    <changefreq>#{xml_escape(entry[:changefreq])}</changefreq>" if entry[:changefreq]
+              lines << "    <changefreq>#{xml_escape(entry[:changefreq])}</changefreq>"
               lines << "  </url>"
             end
             lines << "</urlset>"

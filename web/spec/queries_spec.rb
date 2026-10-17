@@ -1830,5 +1830,24 @@ RSpec.describe PotatoMesh::App::Queries do
       )
       expect(rows.length).to eq(reference.length)
     end
+
+    it "serves a bucket without its time fields when the stored time is not an integer" do
+      # telemetry is not a STRICT table, so its INTEGER NOT NULL rx_time keeps
+      # a REAL infinity. The bucket start, first and last timestamps then read
+      # as Infinity, which coerce_integer rejects.
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, rx_time, rx_iso, node_id, battery_level) VALUES (?,?,?,?,?)",
+          [1, Float::INFINITY, Time.at(now).utc.iso8601, "!aabbccdd", 80.0],
+        )
+      end
+
+      buckets = queries.query_telemetry_buckets(window_seconds: 86_400, bucket_seconds: 300)
+
+      expect(buckets.length).to eq(1)
+      expect(buckets.first.keys).to contain_exactly("bucket_seconds", "sample_count", "aggregates")
+      expect(buckets.first).to include("bucket_seconds" => 300, "sample_count" => 1)
+      expect(buckets.first["aggregates"]["battery_level"]).to eq("avg" => 80.0, "min" => 80.0, "max" => 80.0)
+    end
   end
 end

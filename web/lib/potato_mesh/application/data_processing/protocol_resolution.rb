@@ -62,8 +62,6 @@ module PotatoMesh
       # @param value [Object] candidate protocol value.
       # @return [String, nil] canonical protocol string or +nil+ when invalid.
       def normalize_protocol_value(value)
-        return nil unless value.respond_to?(:to_s)
-
         normalized = value.to_s.strip.downcase
         KNOWN_PROTOCOLS.include?(normalized) ? normalized : nil
       end

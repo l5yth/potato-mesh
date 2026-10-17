@@ -61,7 +61,7 @@ module PotatoMesh
         sql = <<~SQL
           SELECT * FROM positions
         SQL
-        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
           ORDER BY rx_time DESC
           LIMIT ?
@@ -142,7 +142,7 @@ module PotatoMesh
         sql = <<~SQL
           SELECT * FROM neighbors
         SQL
-        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
           ORDER BY rx_time DESC
           LIMIT ?
@@ -232,7 +232,7 @@ module PotatoMesh
           SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, protocol
           FROM traces
         SQL
-        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
           ORDER BY rx_time DESC
           LIMIT ?

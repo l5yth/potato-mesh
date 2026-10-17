@@ -93,8 +93,8 @@ module PotatoMesh
 
         rows.each do |r|
           r.delete_if { |key, _| key.is_a?(Integer) }
-          r["reply_id"] = coerce_integer(r["reply_id"]) if r.key?("reply_id")
-          r["emoji"] = string_or_nil(r["emoji"]) if r.key?("emoji")
+          r["reply_id"] = coerce_integer(r["reply_id"])
+          r["emoji"] = string_or_nil(r["emoji"])
           if string_or_nil(r["encrypted"])
             r.delete("portnum")
           end

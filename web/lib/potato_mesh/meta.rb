@@ -80,7 +80,7 @@ module PotatoMesh
     def view_label(view)
       return nil if view.nil?
 
-      symbol = view.respond_to?(:to_sym) ? view.to_sym : view
+      symbol = view.to_sym
       {
         map: "Map",
         chat: "Chat",
@@ -115,7 +115,7 @@ module PotatoMesh
     def view_description(view, private_mode:)
       return nil if view.nil?
 
-      symbol = view.respond_to?(:to_sym) ? view.to_sym : view
+      symbol = view.to_sym
       site = Sanitizer.sanitized_site_name
       channel = Sanitizer.sanitized_channel
       frequency = Sanitizer.sanitized_frequency

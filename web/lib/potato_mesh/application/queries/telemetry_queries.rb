@@ -62,7 +62,7 @@ module PotatoMesh
         sql = <<~SQL
           SELECT * FROM telemetry
         SQL
-        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
           ORDER BY rx_time DESC
           LIMIT ?

@@ -114,14 +114,6 @@ module PotatoMesh
         PotatoMesh::Sanitizer.sanitize_instance_domain(value, downcase: downcase)
       end
 
-      # Proxy for {PotatoMesh::Sanitizer.instance_domain_host}.
-      #
-      # @param domain [String] domain literal.
-      # @return [String, nil] host portion of the domain.
-      def instance_domain_host(domain)
-        PotatoMesh::Sanitizer.instance_domain_host(domain)
-      end
-
       # Proxy for {PotatoMesh::Sanitizer.ip_from_domain}.
       #
       # @param domain [String] domain literal.

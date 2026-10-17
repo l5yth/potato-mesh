@@ -441,7 +441,7 @@ export function initializeApp(config) {
    */
   let sortState = {
     key: 'last_heard',
-    direction: tableSorters.last_heard ? tableSorters.last_heard.defaultDirection : 'desc'
+    direction: tableSorters.last_heard.defaultDirection
   };
   /** @type {Array<Object>} */
   let allNodes = [];
@@ -6459,9 +6459,6 @@ export function initializeApp(config) {
       },
       updateWaypointsToggleState,
       openWaypointOverlay,
-      _setLoadedWaypoints: rows => {
-        allWaypoints = Array.isArray(rows) ? rows : [];
-      },
       /** Number of position entries currently loaded (test use only). */
       getLoadedPositionCount: () => allPositionEntries.length,
       /** Number of telemetry entries currently loaded (test use only). */

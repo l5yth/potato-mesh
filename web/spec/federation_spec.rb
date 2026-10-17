@@ -1915,7 +1915,6 @@ RSpec.describe PotatoMesh::App::Federation do
         thread_double
       end
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
-      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
       allow(federation_helpers).to receive(:set)
 
       result = federation_helpers.start_federation_announcer!
@@ -1943,7 +1942,6 @@ RSpec.describe PotatoMesh::App::Federation do
         thread_double
       end
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
-      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
       allow(federation_helpers).to receive(:set)
 
       federation_helpers.start_federation_announcer!
@@ -1969,7 +1967,6 @@ RSpec.describe PotatoMesh::App::Federation do
         thread_double
       end
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
-      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
       allow(federation_helpers).to receive(:set)
 
       federation_helpers.start_federation_announcer!
@@ -2017,7 +2014,6 @@ RSpec.describe PotatoMesh::App::Federation do
       end
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
       allow(thread_double).to receive(:respond_to?).with(:report_on_exception=).and_return(false)
-      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
       federation_helpers.start_initial_federation_announcement!
       captured
     end
@@ -2080,7 +2076,6 @@ RSpec.describe PotatoMesh::App::Federation do
       end
       allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
       allow(thread_double).to receive(:respond_to?).with(:report_on_exception=).and_return(false)
-      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
 
       federation_helpers.start_initial_federation_announcement!
       captured.call
