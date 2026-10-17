@@ -58,6 +58,10 @@ ALPINE_PACKAGES = {
     "armv7": set(_COMMON_PACKAGES),
 }
 
+# What the step installs every time, then with Open Graph previews (RB3).
+BASE_PACKAGES = ["python3", "sqlite", "tzdata", "curl"]
+OG_PACKAGES = ["chromium", "nss", "freetype", "harfbuzz", "ttf-freefont"]
+
 # A POSIX ``apk`` stand-in: ``--print-arch`` prints ``$FAKE_APK_ARCH``; ``add``
 # records each package in ``$FAKE_APK_LOG`` and fails as apk does for a package
 # missing from ``$FAKE_APK_PACKAGES`` (space separated).
@@ -89,8 +93,8 @@ def _instructions(text: str) -> list[tuple[str, str]]:
     """Split a Dockerfile into its instructions, each with its build stage.
 
     Continuation lines (a trailing backslash) are joined the way Docker joins
-    them, without the backslash and the newline. Comment and blank lines
-    between instructions are dropped.
+    them, without the backslash and the newline. Comment and blank lines are
+    dropped, inside a continued instruction too, as Docker drops them.
 
     Args:
         text: Full contents of a Dockerfile.
@@ -105,7 +109,7 @@ def _instructions(text: str) -> list[tuple[str, str]]:
     stage = ""
     pending = ""
     for line in text.splitlines():
-        if not pending and (not line.strip() or line.lstrip().startswith("#")):
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
         if line.endswith("\\"):
             pending += line[:-1]
@@ -193,7 +197,10 @@ def _run_step(
 def test_chromium_step_builds_on_every_release_platform(
     dockerfile: str, tmp_path: Path
 ) -> None:
-    """Each release platform builds; Chromium comes where Alpine builds it."""
+    """Each release platform builds; the preview packages come where Alpine builds Chromium.
+
+    Elsewhere the step installs none of them and says so (RB3).
+    """
 
     command = _chromium_step(dockerfile)
     platforms = _release_platforms()
@@ -204,14 +211,14 @@ def test_chromium_step_builds_on_every_release_platform(
         process, installed = _run_step(command, arch, "1", tmp_path)
 
         assert process.returncode == 0, f"{dockerfile} on {platform}: {process.stderr}"
-        assert ("chromium" in installed) is ("chromium" in ALPINE_PACKAGES[arch]), (
-            platform,
-            installed,
-        )
-        assert {"python3", "sqlite", "tzdata", "curl"} <= set(installed), (
-            platform,
-            installed,
-        )
+        if "chromium" in ALPINE_PACKAGES[arch]:
+            assert installed == BASE_PACKAGES + OG_PACKAGES, (platform, installed)
+        else:
+            assert installed == BASE_PACKAGES, (platform, installed)
+            assert f"Alpine builds no Chromium for {arch};" in process.stdout, (
+                platform,
+                process.stdout,
+            )
 
 
 @pytest.mark.parametrize("dockerfile", DOCKERFILES)
@@ -226,7 +233,7 @@ def test_chromium_step_installs_no_chromium_without_og_images(
         process, installed = _run_step(command, arch, "0", tmp_path)
 
         assert process.returncode == 0, f"{dockerfile} on {arch}: {process.stderr}"
-        assert installed == ["python3", "sqlite", "tzdata", "curl"], (arch, installed)
+        assert installed == BASE_PACKAGES, (arch, installed)
 
 
 def test_fake_apk_refuses_a_package_its_architecture_lacks(tmp_path: Path) -> None:
@@ -242,9 +249,12 @@ def test_fake_apk_refuses_a_package_its_architecture_lacks(tmp_path: Path) -> No
 
 
 def test_instructions_join_continuations_and_track_stages() -> None:
-    """Continuations join without the backslash; each instruction keeps its stage."""
+    """Continuations join without the backslash or an inner comment; each instruction keeps its stage."""
 
-    text = "# header\nFROM alpine AS builder\nRUN a \\\n    b\n\nFROM alpine AS production\n# note\nRUN c\n"
+    text = (
+        "# header\nFROM alpine AS builder\nRUN a \\\n    # inner note\n    b\n\n"
+        "FROM alpine AS production\n# note\nRUN c\n"
+    )
 
     assert _instructions(text) == [
         ("builder", "FROM alpine AS builder"),
