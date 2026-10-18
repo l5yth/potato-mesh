@@ -5,6 +5,7 @@
 
 ### Fixes
 * Web/Data: the mesh activity card hides a protocol with no packets in the last 24 hours and shows the other rates rounded, `0` for an active protocol below 0.5 packets/h; `GET /api/stats` serves `packets.hour` with 3 decimals instead of a whole number, and the activity announcement still prints a whole number (SPEC IR1-IR3); update ingestors that announce (`TX_ANNOUNCE=1`) with the web app; older ones announce the rate with decimals
+* Web: the footer and the phone menu label the chat link `Chat:` (SPEC CK1)
 
 ## v1.0.0
 

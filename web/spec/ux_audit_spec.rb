@@ -212,7 +212,7 @@ RSpec.describe "UX audit remediation markup" do
         expect(nav).to include('<a href="/pages/about" class="mobile-nav__link">About</a>')
         expect(nav).to include('<a href="/pages/rules" class="mobile-nav__link">Rules &amp; &lt;Etiquette&gt;</a>')
         expect(nav).to include('<a href="https://github.com/l5yth/potato-mesh" class="mobile-nav__link" target="_blank" rel="noopener noreferrer">GitHub: l5yth/potato-mesh</a>')
-        expect(nav).to include('<a href="https://matrix.to/#/#mesh:example.org" class="mobile-nav__link" target="_blank" rel="noopener noreferrer">chat: #mesh:example.org</a>')
+        expect(nav).to include('<a href="https://matrix.to/#/#mesh:example.org" class="mobile-nav__link" target="_blank" rel="noopener noreferrer">Chat: #mesh:example.org</a>')
       end
     end
 
@@ -239,7 +239,7 @@ RSpec.describe "UX audit remediation markup" do
     it "shows a contact link without a URL as escaped text" do
       allow(PotatoMesh::Config).to receive(:contact_link).and_return("ask at the <info> tent")
       html = body_of("/")
-      expect(pages_nav(html)).to include('<span class="mobile-nav__link">chat: ask at the &lt;info&gt; tent</span>')
+      expect(pages_nav(html)).to include('<span class="mobile-nav__link">Chat: ask at the &lt;info&gt; tent</span>')
       expect(footer_of(html)).to include("ask at the &lt;info&gt; tent")
       expect(footer_of(html)).not_to include("<info>")
     end
@@ -247,8 +247,26 @@ RSpec.describe "UX audit remediation markup" do
     it "leaves the contact entry out when no contact link is set" do
       allow(PotatoMesh::Config).to receive(:contact_link).and_return(" ")
       html = body_of("/")
-      expect(pages_nav(html)).not_to include("chat:")
+      expect(pages_nav(html)).not_to include("Chat:")
       expect(footer_of(html)).not_to include("footer-contact")
+    end
+  end
+
+  describe "community chat label (CK1)" do
+    # Named to match no other criterion's -e filter ("phone menu" is SH-A2's).
+    it "labels the contact link Chat:, as GitHub:, in the footer and the Pages group" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return("#mesh:example.org")
+      html = body_of("/")
+      # Both surfaces report, so a fix that reaches only one of them fails.
+      aggregate_failures do
+        expect(pages_nav(html)).to include(">Chat: #mesh:example.org</a>")
+        # The footer prints the label in front of its link, inside the
+        # contact wrapper.
+        expect(footer_of(html)).to match(
+          %r{<span class="footer-contact">\s*Chat:\s*<a href="https://matrix\.to/#/#mesh:example\.org"[^>]*>#mesh:example\.org</a>},
+        )
+        [pages_nav(html), footer_of(html)].each { |links| expect(links).not_to include("chat:") }
+      end
     end
   end
 
