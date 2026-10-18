@@ -3,6 +3,9 @@
 
 # CHANGELOG
 
+### Fixes
+* Web: the footer and the phone menu label the chat link `Chat:` (SPEC CK1)
+
 ## v1.0.0
 
 ### Features
