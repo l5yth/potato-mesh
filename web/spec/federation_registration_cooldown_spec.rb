@@ -17,7 +17,7 @@
 require "spec_helper"
 require_relative "support/federation_fake_peers"
 
-# Registrations inside a peer host's fetch cooldown are judged against what
+# Registrations inside a peer endpoint's fetch cooldown are judged against what
 # the fetch that started the cooldown kept (SPEC FL7), an announcement never
 # rolls the stored row back (SPEC FL1, FL7), and the first crawl runs with the
 # first announcement after boot (SPEC FL3). Through the app's real request code
@@ -174,13 +174,16 @@ RSpec.describe "Federation registrations inside a peer's cooldown" do
       expect(fed.total(x)).to eq(0)
     end
 
-    it "answers 503 for another domain on the host, whose fetch kept nothing for it" do
+    it "does not defer the default-port domain for a port variant's own fetch (FL-G1/PV1)" do
+      # A port variant keys its own cooldown bucket, so it never claims the
+      # host's default-port cooldown: the bare domain is verified on its own
+      # fetch, not answered from the variant's (SPEC PV1).
       expect(announce("#{a}:8443").status).to eq(400)
 
       response = announce(a)
 
-      expect(response.status).to eq(503)
-      expect(fed.counts(a)).to eq(well_known: 1, nodes_acceptance: 1)
+      expect(response.status).to eq(201)
+      expect(fed.counts(a)).to eq(well_known: 2, nodes_acceptance: 2)
     end
 
     it "lets what a fetch kept expire with the cooldown" do

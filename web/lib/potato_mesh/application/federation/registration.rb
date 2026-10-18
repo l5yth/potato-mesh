@@ -58,10 +58,10 @@ module PotatoMesh
         slots[:mutex].synchronize { slots[:in_flight] = 0 }
       end
 
-      # Answer a registration whose host is inside its fetch cooldown or
-      # backoff from what the fetch that started the cooldown learned of the
-      # domain, without a new fetch (SPEC FL7). Request context only; always
-      # halts.
+      # Answer a registration whose endpoint is inside its fetch cooldown or
+      # backoff (SPEC PV1) from what the fetch that started the cooldown
+      # learned of the domain, without a new fetch (SPEC FL7). Request context
+      # only; always halts.
       #
       # An announcement under a key other than the stored one is judged
       # against the kept well-known document, or refused on the kept fetch
@@ -69,22 +69,22 @@ module PotatoMesh
       # in the crawl (SPEC FS8). Either is then judged on the kept node-list
       # result. Whatever cannot be checked is deferred with 503: no document
       # kept for a new key, or no node list kept, which is also the case once
-      # the cooldown ended while the host still backs off. A copy that passes
+      # the cooldown ended while the endpoint still backs off. A copy that passes
       # is stored, newest copy winning, and answered 201.
       #
       # @param db [SQLite3::Database] open database handle.
       # @param attributes [Hash] the verified announcement's attributes.
       # @param signature [String] its signature.
       # @param same_key [Boolean] whether the stored row holds the same key.
-      # @param wait [Numeric] seconds left of the host's cooldown or backoff.
+      # @param wait [Numeric] seconds left of the endpoint's cooldown or backoff.
       # @return [void]
       def answer_instance_registration_from_cooldown!(db, attributes, signature, same_key:, wait:)
         domain = attributes[:domain]
-        host = federation_peer_host(domain)
+        peer_key = federation_backoff_key(domain)
         cooldown = PotatoMesh::Config.federation_peer_fetch_cooldown_seconds
-        known = federation_peer_backoff.knowledge(host, federation_domain_key(domain), cooldown: cooldown) || {}
-        # Once the cooldown ended only the backoff holds the host.
-        reason = federation_peer_backoff.cooldown_seconds(host, cooldown: cooldown).positive? ? "peer fetch cooldown" : "peer backoff"
+        known = federation_peer_backoff.knowledge(peer_key, federation_domain_key(domain), cooldown: cooldown) || {}
+        # Once the cooldown ended only the backoff holds the endpoint.
+        reason = federation_peer_backoff.cooldown_seconds(peer_key, cooldown: cooldown).positive? ? "peer fetch cooldown" : "peer backoff"
         unless same_key
           defer_instance_registration!(domain, wait, reason) unless known[:well_known]
           check = verify_well_known_identity(domain, attributes[:pubkey], cached: known[:well_known])
@@ -133,7 +133,7 @@ module PotatoMesh
       def judge_registering_instance(domain)
         nodes, metadata = fetch_instance_json(domain, remote_instance_acceptance_path)
         remote_instance_acceptance(nodes, metadata).tap do |acceptance|
-          federation_peer_backoff.record_acceptance(federation_peer_host(domain), federation_domain_key(domain), acceptance)
+          federation_peer_backoff.record_acceptance(federation_backoff_key(domain), federation_domain_key(domain), acceptance)
         end
       end
 

@@ -242,8 +242,8 @@ module PotatoMesh
 
       # Fetch and JSON-decode a federation document from a peer.
       #
-      # A host backing off sends nothing (SPEC FL4). The outcome feeds the
-      # backoff: a transport failure, a 429 or a 503 backs off the host,
+      # An endpoint backing off sends nothing (SPEC FL4, PV1). The outcome
+      # feeds its backoff: a transport failure, a 429 or a 503 backs it off,
       # honouring a +Retry-After+; any other answer clears it. A request this
       # instance's own deadline kept from being sent counts neither way; one
       # the worker pool's task timeout cuts short counts as a failure before
@@ -258,8 +258,8 @@ module PotatoMesh
       def fetch_instance_json(domain, path)
         return [nil, ["federation shutdown requested"]] if federation_shutdown_requested?
 
-        host = federation_peer_host(domain)
-        backoff = federation_peer_backoff.backoff_seconds(host)
+        peer_key = federation_backoff_key(domain)
+        backoff = federation_peer_backoff.backoff_seconds(peer_key)
         return [nil, ["#{domain}#{path}: backing off for #{backoff.ceil} s"]] if backoff.positive?
 
         errors = []
@@ -272,14 +272,14 @@ module PotatoMesh
             body = perform_instance_http_request(uri)
             if body
               payload = JSON.parse(body)
-              federation_peer_backoff.record_success(host)
+              federation_peer_backoff.record_success(peer_key)
               return [payload, uri]
             end
           rescue PotatoMesh::App::WorkerPool::TaskTimeoutError
             # The pool's task timeout cut the fetch short: it counts as a
-            # failed fetch, so the host backs off and a later crawl skips it,
+            # failed fetch, so the endpoint backs off and a later crawl skips it,
             # and the task ends (SPEC FL4, FL6, FT4).
-            federation_peer_backoff.record_failure(host)
+            federation_peer_backoff.record_failure(peer_key)
             raise
           rescue JSON::ParserError => e
             # The peer answered; plain http adds no chance (SPEC FT1).
@@ -292,7 +292,7 @@ module PotatoMesh
             errors << "#{uri}: #{e.message}"
             failed = e.peer_failure?
             retry_after = e.retry_after
-            federation_peer_backoff.record_success(host) unless failed
+            federation_peer_backoff.record_success(peer_key) unless failed
             break
           rescue FederationDeadlineError => e
             # Nothing was sent, and no later candidate could be: the time was
@@ -305,7 +305,7 @@ module PotatoMesh
             break unless federation_http_fallback?(uri, e)
           end
         end
-        federation_peer_backoff.record_failure(host, retry_after: retry_after) if failed
+        federation_peer_backoff.record_failure(peer_key, retry_after: retry_after) if failed
         [nil, errors]
       end
     end

@@ -291,6 +291,24 @@ RSpec.describe "Federation peer state" do
     end
   end
 
+  describe ".federation_backoff_key" do
+    it "keys a default-port endpoint by the bare host and shares one bucket per host for the port variants" do
+      domains = ["peer.mesh", "peer.mesh:443", "peer.mesh:80", "peer.mesh:8443", "peer.mesh:9443", "[2001:db8::1]:8443", "Peer.Mesh", "Peer.Mesh:8443"]
+
+      expect(domains.map { |domain| application.federation_backoff_key(domain) }).to eq(
+        [
+          "peer.mesh", "peer.mesh", "peer.mesh", "peer.mesh#port-variant", "peer.mesh#port-variant",
+          "[2001:db8::1]#port-variant", "peer.mesh", "peer.mesh#port-variant",
+        ],
+      )
+    end
+
+    it "returns nil for a domain that is no host, so the stores ignore it" do
+      expect(application.federation_backoff_key(nil)).to be_nil
+      expect(application.federation_backoff_key("bad host")).to be_nil
+    end
+  end
+
   describe ".federation_retry_after_seconds" do
     let(:now) { Time.utc(2026, 10, 7, 12, 0, 0) }
 

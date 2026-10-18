@@ -208,7 +208,7 @@ module PotatoMesh
         domains.each_with_object(scheduled) do |domain, scheduled_tasks|
           break if federation_shutdown_requested?
 
-          backoff = federation_peer_backoff.backoff_seconds(federation_peer_host(domain))
+          backoff = federation_peer_backoff.backoff_seconds(federation_backoff_key(domain))
           if backoff.positive?
             debug_log(
               "Skipped federation announcement",
