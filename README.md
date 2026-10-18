@@ -329,7 +329,7 @@ Configure with the environment variables below.
 | `MESH_UDP_GROUP` | `239.0.0.69,224.0.0.69` | Comma-separated multicast groups joined in UDP transport. The default listens on both; set one address to listen on that group only. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `MESH_UDP_ALLOWED_SOURCES` | _unset_ | Comma-separated IPv4 addresses or CIDRs (e.g. `192.168.1.20,10.0.0.0/24`) allowed to send in UDP transport; packets from any other address are dropped. Unset accepts every host. An invalid entry stops the ingestor at startup. |
-| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Required for `PROTOCOL=reticulum` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the id is derived from your primary identity and this overrides it. |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat. Required for the UDP transport, which cannot auto-detect "self". Required for `PROTOCOL=reticulum` in Docker, when nothing on the ingestor's RNS stack announces, or when two local identities tie; otherwise the id is derived from your primary identity and this overrides it. For `PROTOCOL=reticulum`, the full 32-hex identity hash also pins the host identity. |
 | `RETICULUM_CONFIG_DIR` | `~/.reticulum` | Which RNS config the ingestor uses, and so which interfaces it can see. Point it at the directory your `rnsd` uses. See [Reticulum](#reticulum). |
 | `RETICULUM_FREQ` | _from RNS config_ | Frequency shown for Reticulum nodes. Overrides the value read from your `RNodeInterface` section. Also shown in the footer join strip when both are set. |
 | `RETICULUM_PRESET` | _from RNS config_ | Radio preset shown for Reticulum nodes. Overrides the value derived from your bandwidth/spreading-factor/coding-rate. Also shown in the footer join strip when both are set. |
@@ -466,6 +466,18 @@ identities tie. The ingestor retries every minute and registers the id once
 something announces. Set `INGESTOR_NODE_ID` to pin it in a tie, or if nothing
 on the ingestor's RNS stack announces. The id is neither the transport identity
 nor the hash `rnstatus` prints as "Transport Instance".
+
+To pin the host identity too, set `INGESTOR_NODE_ID` to the full 32-hex identity
+hash. Its destinations are then found without discovery, and `rns.transport`
+stays listed when nothing on this machine announces. If that identity announces
+no `lxmf` or `nomadnetwork` destination here, the ingestor switches to the one
+announcing the most here, unless two tie, and logs `Reticulum host identity
+switched` with both ids; it switches back when that identity announces one.
+
+To keep the host's own destinations listed, have each local app announce at
+least once a week: set `announce_interval` (minutes) in nomadnet's `[node]` and
+`[client]` sections and in lxmd's `[propagation]` and `[lxmf]` sections. lxmd's
+`[lxmf]` section sets none by default.
 
 Changing the id strands the old row. Setting, changing, or removing
 `INGESTOR_NODE_ID` moves the ingestor's node id; the previous row stays in
