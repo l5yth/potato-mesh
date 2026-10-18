@@ -713,10 +713,10 @@ One row per announced destination, newest `last_heard` first.
 
 ```jsonc
 {
-  "total":      { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 50 } },
-  "meshcore":   { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 50 } },
-  "meshtastic": { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 30 } },
-  "reticulum":  { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 10 } },
+  "total":      { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 90.5 } },
+  "meshcore":   { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 50.042 } },
+  "meshtastic": { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 30.458 } },
+  "reticulum":  { "nodes": {…}, "messages": {…}, "telemetry": {…}, "packets": { "hour": 10.0 } },
   "sampled": false
 }
 ```
@@ -742,8 +742,10 @@ One row per announced destination, newest `last_heard` first.
   umbrella rows that reference one by `node_id`, `neighbor_id`, `src` or `dest`,
   as the GET routes do (SPEC HC3).
 - `<scope>.packets.hour` (additive, SPEC MA4/MA5) carries the 24-hour
-  packets/hour moving average as a rounded integer, exposed as a `packets` metric
-  under each scope (single `hour` window). It is aggregated MAX-per-protocol:
+  packets/hour moving average as a float rounded to 3 decimals, exposed as a
+  `packets` metric under each scope (single `hour` window). One packet in the
+  window reads `0.042`, so `0.0` means no packet in the window (SPEC IR1; a
+  rounded integer before). It is aggregated MAX-per-protocol:
   `MAX` over that protocol's ingestors of *(the ingestor's `packets` total in the
   last 24 h ÷ 24)* - a single radio hears ≤ what is actually transmitted, so the
   busiest vantage is the best dedup-free estimate of air traffic and never
@@ -759,7 +761,9 @@ One row per announced destination, newest `last_heard` first.
   `messages`, it is not privacy-gated
   (packets are a public aggregate, no message content). Additive to the 0.7.x
   `/api/stats` tree - no version bump; the ingestor dogfeeds it for the activity
-  announcement (MA6). Each stored row counts at most 1000000000 (SPEC IB4).
+  announcement (MA6) and prints it rounded half up to a whole number (SPEC IR3);
+  an ingestor from before SPEC IR prints the 3-decimal float as served. Each
+  stored row counts at most 1000000000 (SPEC IB4).
 - `sampled` is unchanged: always `false` (the counts are exact, not sampled).
 
 ### GET /api/stats/activity packets/hour time-series (SPEC F2)
@@ -779,7 +783,8 @@ served as the nearest canonical pair (Bucketed series windows above). An optiona
 
 Each bucket's per-protocol value is the MAX over that protocol's ingestors of
 their summed `packets` in the bucket, ÷ the bucket's hour-span → a packets/hour
-rate; `total` is the SUM across protocols (matching the live
+rate rounded to a whole number (a bucket spans 1 or 2 hours, so a bucket with a
+packet reads at least 1); `total` is the SUM across protocols (matching the live
 `<scope>.packets.hour`, SPEC MA4). Every known protocol (`meshcore`,
 `meshtastic`, `reticulum`) emits its own series key; `reticulum` originally
 folded into `total` without a key and went live with the Reticulum ingestor

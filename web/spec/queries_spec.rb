@@ -1711,15 +1711,24 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(result["total"]).to eq(30)
     end
 
-    it "rounds the hourly rate to the nearest integer" do
+    it "rounds the hourly rate to 3 decimals (IR1)" do
       seed_activity([["!coreaaaa", now - 100, 100, "meshcore"]])
-      # 100 / 24 = 4.166… → 4
-      expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(4)
+      # 100 / 24 = 4.1666… → 4.167
+      expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(4.167)
+    end
+
+    it "reads one packet in 24 h as 0.042 and no activity as 0.0 (IR1)" do
+      seed_activity([["!coreaaaa", now - 100, 1, "meshcore"]])
+      result = queries.query_packets_per_hour(now: now)
+      # 1 / 24 = 0.0416… → 0.042: a protocol with any packet never reads 0.
+      expect(result).to eq("total" => 0.042, "meshcore" => 0.042, "meshtastic" => 0.0, "reticulum" => 0.0)
+      expect(result.values).to all(be_a(Float))
     end
 
     it "sums the rounded per-protocol rates so total == meshcore + meshtastic" do
-      # 1210 / 24 = 50.4 → 50; 730 / 24 = 30.4 → 30. Rounding after the raw sum
-      # would give round(1940 / 24) = 81, which would not equal the exposed 50 + 30.
+      # 1210 / 24 = 50.4166… → 50.417; 730 / 24 = 30.4166… → 30.417. Rounding
+      # after the raw sum would give 1940 / 24 = 80.8333… → 80.833, which would
+      # not equal the exposed 50.417 + 30.417.
       seed_activity(
         [
           ["!coreaaaa", now - 100, 1210, "meshcore"],
@@ -1727,9 +1736,9 @@ RSpec.describe PotatoMesh::App::Queries do
         ],
       )
       result = queries.query_packets_per_hour(now: now)
-      expect(result["meshcore"]).to eq(50)
-      expect(result["meshtastic"]).to eq(30)
-      expect(result["total"]).to eq(80) # 50 + 30, not round(1940 / 24) = 81
+      expect(result["meshcore"]).to eq(50.417)
+      expect(result["meshtastic"]).to eq(30.417)
+      expect(result["total"]).to eq(80.834) # 50.417 + 30.417, not 1940 / 24 → 80.833
     end
   end
 

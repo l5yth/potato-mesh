@@ -242,13 +242,15 @@ test('normaliseActiveNodeStatsPayload keeps only the protocol rates that are pre
   assert.deepEqual(result.packets, { total: 90 });
 });
 
-test('normaliseActiveNodeStatsPayload clamps negative and truncates float packet rates', () => {
+test('normaliseActiveNodeStatsPayload clamps negative and keeps the decimals of packet rates (IR2)', () => {
   const result = normaliseActiveNodeStatsPayload({
     total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 12.9 } },
     meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: -3 } },
+    meshtastic: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 0.042 } },
+    reticulum: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 0.4 } },
     sampled: false,
   });
-  assert.deepEqual(result.packets, { total: 12, meshcore: 0 });
+  assert.deepEqual(result.packets, { total: 12.9, meshcore: 0, meshtastic: 0.042, reticulum: 0.4 });
 });
 
 // ---------------------------------------------------------------------------

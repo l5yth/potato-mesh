@@ -95,7 +95,9 @@ function normaliseProtocolBucket(bucket) {
  * Returns null when ``total.packets.hour`` is absent or non-finite (e.g. a
  * pre-MA5 instance), so the mesh-activity card can hide rather than render a
  * bogus 0. ``meshcore``/``meshtastic``/``reticulum`` are included only when
- * present.
+ * present. A rate keeps its decimals (the API serves three, SPEC IR1), so the
+ * card can tell an active rate under 0.5 from an inactive 0 (SPEC IR2); a
+ * negative rate reads 0.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
  * @returns {{total: number, meshcore?: number, meshtastic?: number, reticulum?: number}|null} Rates or null.
@@ -103,7 +105,7 @@ function normaliseProtocolBucket(bucket) {
 function normalisePacketsRates(payload) {
   const readHourRate = scope => {
     const hour = Number(payload?.[scope]?.packets?.hour);
-    return Number.isFinite(hour) ? Math.max(0, Math.trunc(hour)) : null;
+    return Number.isFinite(hour) ? Math.max(0, hour) : null;
   };
   const total = readHourRate('total');
   if (total === null) {

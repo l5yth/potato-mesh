@@ -13,10 +13,10 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<%# Static pages, GitHub and the community chat link (SPEC UX11, SH2): one list
-    for the footer's links row and the phone menu's Pages group, so both
+<%# Static pages, GitHub and the community chat link (SPEC UX11, SH2, CK1): one
+    list for the footer's links row and the phone menu's Pages group, so both
     escape every slug, title and contact value here. With `in_menu` each entry
-    is one `.mobile-nav__link` carrying its own label (`GitHub:`, `chat:`);
+    is one `.mobile-nav__link` carrying its own label (`GitHub:`, `Chat:`);
     without it the entries keep the footer's dot separators, with each label
     in front of its link. %>
 <% links_pages = defined?(static_pages) && static_pages ? static_pages : []
@@ -32,7 +32,7 @@
    end
    link_entries << { label: "GitHub:", href: "https://github.com/l5yth/potato-mesh", text: "l5yth/potato-mesh", external: true }
    if links_contact
-     link_entries << { label: "chat:", href: links_contact_url && Rack::Utils.escape_html(links_contact_url),
+     link_entries << { label: "Chat:", href: links_contact_url && Rack::Utils.escape_html(links_contact_url),
                        text: Rack::Utils.escape_html(links_contact), external: true, wrapper: "footer-contact" }
    end %>
 <% link_entries.each_with_index do |entry, index| %>

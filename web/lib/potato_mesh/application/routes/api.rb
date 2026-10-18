@@ -238,13 +238,14 @@ module PotatoMesh
               # Scope → metric → window tree (SPEC S1). The MA4 packets/hour
               # moving average is folded in as an additive +packets+ metric under
               # each scope (+<scope>.packets.hour+, SPEC MA5) — a single +hour+
-              # window because it is a rate, not a windowed count. Both figures
-              # come from independent read-side queries. +sampled+ stays last and
-              # +false+ for backward continuity with the prior payload.
+              # window because it is a rate, not a windowed count, served as a
+              # float to 3 decimals (SPEC IR1). Both figures come from
+              # independent read-side queries. +sampled+ stays last and +false+
+              # for backward continuity with the prior payload.
               stats = query_active_node_stats
               rates = query_packets_per_hour
               stats.each do |scope, metrics|
-                metrics["packets"] = { "hour" => rates[scope] || 0 }
+                metrics["packets"] = { "hour" => rates[scope] || 0.0 }
               end
               stats.merge("sampled" => false).to_json
             end

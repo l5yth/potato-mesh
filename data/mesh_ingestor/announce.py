@@ -32,6 +32,7 @@ network or shape error returns ``None`` so the caller can fail closed.
 from __future__ import annotations
 
 import json
+import math
 import time
 import urllib.request
 
@@ -124,7 +125,8 @@ def fetch_activity(
 
     These are the mesh-wide numbers the announcement quotes (SPEC MA6):
     ``active_nodes`` = ``<protocol>.nodes.day`` and ``packets_per_hour`` =
-    ``<protocol>.packets.hour`` (the MA4 rate exposed under each scope).
+    ``<protocol>.packets.hour`` (the MA4 rate exposed under each scope, served
+    with three decimals since SPEC IR1; :func:`build_announcement` rounds it).
 
     Parameters:
         instance_url: Base URL of the PotatoMesh instance.
@@ -133,7 +135,8 @@ def fetch_activity(
 
     Returns:
         A ``(active_nodes, packets_per_hour)`` tuple, or ``None`` on any
-        fetch/parse error or malformed shape.
+        fetch/parse error or malformed shape, a non-finite packets/hour
+        included (SPEC IR3).
     """
 
     data = _get_json(f"{instance_url}/api/stats", timeout=timeout)
@@ -151,6 +154,11 @@ def fetch_activity(
     if not isinstance(active_nodes, int) or not isinstance(
         packets_per_hour, (int, float)
     ):
+        return None
+    # NaN and infinity have no whole number to announce (SPEC IR3). Only a
+    # float is checked: an int is always finite, and one beyond the float
+    # range would make math.isfinite raise instead of failing soft.
+    if isinstance(packets_per_hour, float) and not math.isfinite(packets_per_hour):
         return None
     return int(active_nodes), packets_per_hour
 
@@ -171,6 +179,28 @@ def protocol_display_name(protocol: str | None) -> str:
     return _PROTOCOL_DISPLAY_NAMES.get(protocol, protocol.capitalize())
 
 
+def _whole_packets_per_hour(packets_per_hour: float | int) -> int:
+    """Round a packets/hour rate half up to the whole number announced (SPEC IR3).
+
+    ``GET /api/stats`` serves the rate with three decimals (SPEC IR1); the
+    announcement prints it as the map card does. Halves round up, as
+    JavaScript's ``Math.round`` does for these non-negative rates, where
+    :func:`round` would round them to even: ``0.5`` prints ``1`` and ``2.5``
+    prints ``3``. An int is already whole and is returned as it is, also one
+    too large to convert to a float.
+
+    Parameters:
+        packets_per_hour: Finite, non-negative packets/hour rate.
+
+    Returns:
+        The rate rounded half up to an integer.
+    """
+
+    if isinstance(packets_per_hour, int):
+        return packets_per_hour
+    return math.floor(packets_per_hour + 0.5)
+
+
 def build_announcement(
     protocol: str,
     active_nodes: int,
@@ -187,7 +217,8 @@ def build_announcement(
     Parameters:
         protocol: ``"meshtastic"`` or ``"meshcore"``.
         active_nodes: 24-hour active-node count for *protocol*.
-        packets_per_hour: 24-hour packets/hour moving average for *protocol*.
+        packets_per_hour: 24-hour packets/hour moving average for *protocol*,
+            printed rounded half up to a whole number (SPEC IR3).
         instance_url: Base URL of the instance (already carries the scheme).
         char_limit: Optional explicit limit; defaults to the protocol's entry in
             :data:`ANNOUNCE_CHAR_LIMITS`.
@@ -198,7 +229,8 @@ def build_announcement(
 
     text = (
         f"{protocol_display_name(protocol)} activity in the last 24h: "
-        f"{active_nodes} active nodes, {packets_per_hour} packets/hour. "
+        f"{active_nodes} active nodes, "
+        f"{_whole_packets_per_hour(packets_per_hour)} packets/hour. "
         f"{instance_url}"
     )
     limit = (
