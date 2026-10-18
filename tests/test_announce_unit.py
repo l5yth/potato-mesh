@@ -78,6 +78,15 @@ class TestBuildAnnouncementMessage:
             "50 packets/hour. https://mesh.example"
         )
 
+    @pytest.mark.parametrize(
+        ("rate", "shown"),
+        [(41.667, "42"), (50.0, "50"), (0.042, "0"), (0.5, "1"), (2.5, "3"), (7, "7")],
+    )
+    def test_message_rounds_the_rate_half_up_to_a_whole_number(self, rate, shown):
+        """The served 3-decimal rate prints as a whole number, halves up (IR3)."""
+        text = announce.build_announcement("meshcore", 12, rate, "https://mesh.example")
+        assert f"12 active nodes, {shown} packets/hour. " in text
+
     def test_message_uses_protocol_display_name(self):
         """Meshtastic renders its capitalised display name."""
         text = announce.build_announcement("meshtastic", 3, 7, "https://m")
@@ -195,6 +204,36 @@ class TestDogfeedFetchActivity:
             },
         )
         assert announce.fetch_activity("https://mesh.example", "meshcore") is None
+
+    @pytest.mark.parametrize("rate", [float("nan"), float("inf")])
+    def test_dogfeed_returns_none_on_non_finite_packets(self, monkeypatch, rate):
+        """A packets/hour no whole number can print is malformed (IR3)."""
+        _install_fake_http(
+            monkeypatch,
+            {
+                "https://mesh.example/api/stats": {
+                    "meshcore": {"nodes": {"day": 5}, "packets": {"hour": rate}},
+                },
+            },
+        )
+        assert announce.fetch_activity("https://mesh.example", "meshcore") is None
+
+    def test_dogfeed_passes_an_integer_beyond_float_range(self, monkeypatch):
+        """A JSON integer no float can hold is returned and printed whole (IR3)."""
+        huge = 10**400
+        _install_fake_http(
+            monkeypatch,
+            {
+                "https://mesh.example/api/stats": {
+                    "meshcore": {"nodes": {"day": 5}, "packets": {"hour": huge}},
+                },
+            },
+        )
+        assert announce.fetch_activity("https://mesh.example", "meshcore") == (5, huge)
+        text = announce.build_announcement(
+            "meshcore", 5, huge, "https://m", char_limit=1000
+        )
+        assert f"5 active nodes, {huge} packets/hour. " in text
 
     def test_dogfeed_returns_none_on_network_error(self, monkeypatch):
         """A transport error fails soft to ``None``."""
