@@ -58,10 +58,10 @@ module PotatoMesh
       end
 
       # Feed one announcement's outcome to the peer backoff, as a fetch's
-      # outcome is (SPEC FB5, FL4): no answer on any candidate, or a +429+
-      # or a +503+, honouring its +Retry-After+, backs the host off; any
-      # other answer clears it. An announcement cut short by shutdown counts
-      # neither way.
+      # outcome is (SPEC FB5, FL4, PV1): no answer on any candidate, or a
+      # +429+ or a +503+, honouring its +Retry-After+, backs the target's
+      # endpoint off; any other answer clears it. An announcement cut short
+      # by shutdown counts neither way.
       #
       # @param domain [String] the target domain.
       # @param answer [Net::HTTPResponse, nil] the last answer the target
@@ -70,14 +70,14 @@ module PotatoMesh
       def record_announce_outcome(domain, answer)
         return if federation_shutdown_requested?
 
-        host = federation_peer_host(domain)
+        peer_key = federation_backoff_key(domain)
         backoff = federation_peer_backoff
         if answer.nil?
-          backoff.record_failure(host)
+          backoff.record_failure(peer_key)
         elsif [429, 503].include?(answer.code.to_i)
-          backoff.record_failure(host, retry_after: federation_retry_after_seconds(answer["Retry-After"]))
+          backoff.record_failure(peer_key, retry_after: federation_retry_after_seconds(answer["Retry-After"]))
         else
-          backoff.record_success(host)
+          backoff.record_success(peer_key)
         end
       end
     end

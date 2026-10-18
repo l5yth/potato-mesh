@@ -373,7 +373,11 @@ RSpec.describe "Federation transport" do
         expect(outcome).to be_a(PotatoMesh::App::WorkerPool::TaskTimeoutError)
         expect(outcome.message).to eq("task exceeded timeout")
         expect(served_over("http")).to eq([])
-        expect(application.federation_peer_backoff.backoff_seconds("peer.invalid")).to be_between(1, 60)
+        # A non-default port variant backs off its own bucket, not the host's
+        # default-port endpoint (SPEC PV1).
+        expect(application.federation_peer_backoff.backoff_seconds("peer.invalid")).to eq(0)
+        variant_key = application.federation_backoff_key("peer.invalid:8443")
+        expect(application.federation_peer_backoff.backoff_seconds(variant_key)).to be_between(1, 60)
       end
 
       context "when the task timeout fires before the request timeout" do

@@ -250,15 +250,15 @@ module PotatoMesh
       #
       # When a request would pass the crawl's request budget, its domain
       # budget or its deadline, the crawl stops: this logs it and throws
-      # {FEDERATION_CRAWL_STOPPED}. The first request to a host claims the
-      # host's cooldown for this crawl, so its later requests in the crawl
-      # pass while every other crawl and registration waits.
+      # {FEDERATION_CRAWL_STOPPED}. The first request to an endpoint (SPEC
+      # PV1) claims its cooldown for this crawl, so the crawl's later
+      # requests to it pass while other crawls and registrations wait.
       #
       # @param crawl [CrawlState] the crawl.
       # @param domain [String] sanitized domain the request goes to.
       # @yieldreturn [Array(Object, Object)] the +fetch_instance_json+ result.
       # @return [Array(Object, Object)] the block's result, or
-      #   +[nil, [reason]]+ when the host's cooldown is held elsewhere.
+      #   +[nil, [reason]]+ when the endpoint's cooldown is held elsewhere.
       def federation_crawl_request(crawl, domain)
         unless crawl.request_allowed?(domain)
           debug_log(
@@ -272,21 +272,21 @@ module PotatoMesh
           throw FEDERATION_CRAWL_STOPPED
         end
 
-        host = federation_peer_host(domain)
-        unless crawl.claimed?(host)
-          wait = federation_peer_backoff.claim(host, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
+        peer_key = federation_backoff_key(domain)
+        unless crawl.claimed?(peer_key)
+          wait = federation_peer_backoff.claim(peer_key, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
           return [nil, ["#{domain}: peer fetch cooldown, #{wait.ceil} s left"]] if wait.positive?
 
-          crawl.claim(host)
+          crawl.claim(peer_key)
         end
         crawl.spend_request(domain)
         yield
       end
 
       # Whether a crawl leaves +host+ alone: another domain of the host was
-      # already visited in this crawl, or the host was fetched inside its
-      # cooldown, or backs off, outside this crawl (SPEC FL1, FL3). The
-      # stored record is kept.
+      # already visited in this crawl, or the domain's endpoint was fetched
+      # inside its cooldown, or backs off, outside this crawl (SPEC FL1, FL3,
+      # PV1). The stored record is kept.
       #
       # @param crawl [CrawlState] the crawl.
       # @param host [String, nil] peer host.
@@ -304,23 +304,23 @@ module PotatoMesh
           )
           return true
         end
-        return false if crawl.claimed?(host)
-
-        wait = federation_peer_backoff.wait_seconds(host, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
+        peer_key = federation_backoff_key(domain)
+        return false if crawl.claimed?(peer_key)
+        wait = federation_peer_backoff.wait_seconds(peer_key, cooldown: PotatoMesh::Config.federation_peer_fetch_cooldown_seconds)
         return false unless wait.positive?
 
         debug_log(
           message,
           context: "federation.instances",
           domain: domain,
-          reason: federation_peer_backoff.backoff_seconds(host).positive? ? "peer backoff" : "peer fetch cooldown",
+          reason: federation_peer_backoff.backoff_seconds(peer_key).positive? ? "peer backoff" : "peer fetch cooldown",
           retry_in: wait.ceil,
         )
         true
       end
 
       # Judge a peer on the result of its acceptance-list fetch (SPEC FL2),
-      # in the shape both paths keep for the host's cooldown (SPEC FL7).
+      # in the shape both paths keep for the endpoint's cooldown (SPEC FL7, PV1).
       #
       # @param nodes [Array, nil] the decoded node list, nil when the fetch
       #   failed.
@@ -344,7 +344,7 @@ module PotatoMesh
 
       # Judge +domain+ on its one node list, once per host and crawl (SPEC
       # FL1, FL2): later copies reuse the outcome, a failure included. The
-      # outcome is also kept for the host's cooldown (SPEC FL7).
+      # outcome is also kept for its endpoint's cooldown (SPEC FL7, PV1).
       #
       # @param crawl [CrawlState] the crawl.
       # @param domain [String] sanitized domain.
@@ -358,7 +358,7 @@ module PotatoMesh
         nodes, metadata = federation_crawl_request(crawl, domain) do
           fetch_instance_json(domain, remote_instance_acceptance_path).tap do |result|
             acceptance = remote_instance_acceptance(*result)
-            federation_peer_backoff.record_acceptance(host, federation_domain_key(domain), acceptance)
+            federation_peer_backoff.record_acceptance(federation_backoff_key(domain), federation_domain_key(domain), acceptance)
           end
         end
         acceptance ||= remote_instance_acceptance(nodes, metadata)
@@ -454,8 +454,8 @@ module PotatoMesh
       # count fallbacks and the walk of the entry's own list, happen once per
       # host and crawl; the list is queued, behind the lists queued before
       # it, when the instance's row is kept (SPEC FB6); the crawl never
-      # fetches this instance's own domain nor a host inside its peer fetch
-      # cooldown (SPEC FL1-FL3, FS8, FS9).
+      # fetches this instance's own domain nor an endpoint inside its peer
+      # fetch cooldown (SPEC FL1-FL3, FS8, FS9, PV1).
       #
       # @param db [SQLite3::Database] open database handle.
       # @param crawl [CrawlState] the crawl.
@@ -577,9 +577,9 @@ module PotatoMesh
       # One crawl state runs through the walk (SPEC FL1, FL6): each host is
       # fetched at most once, the walk stops at the crawl's request budget,
       # domain budget ({PotatoMesh::Config.federation_max_domains_per_crawl}
-      # domains fetched) or deadline, and a host fetched inside its
+      # domains fetched) or deadline, and an endpoint fetched inside its
       # {PotatoMesh::Config.federation_peer_fetch_cooldown_seconds} outside
-      # this crawl is skipped. A peer is judged on one
+      # this crawl is skipped (SPEC PV1). A peer is judged on one
       # +/api/nodes?limit=10+ list, its newest nodes inside the 7-day floor
       # (ACCEPTANCE FS-A5); node counts come from the signed record, else
       # from {#fill_missing_instance_counts!} (SPEC FL2, RL9). The domain is
@@ -680,7 +680,7 @@ module PotatoMesh
 
       # Walk the list of one queued domain, unless it is this instance's own,
       # federation refuses it (SPEC FB10), its host's list was walked in this
-      # crawl, or its host is skipped (SPEC FL1, FL3). A database error ends
+      # crawl, or the crawl skips it (SPEC FL1, FL3, PV1). A database error ends
       # the walk of a list a peer named, logged as the entry that named it,
       # and the crawl goes on; for a list the crawl started from it ends the
       # crawl (SPEC FK2).

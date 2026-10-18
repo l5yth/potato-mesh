@@ -28,9 +28,9 @@ module PotatoMesh
       # relayed-record check share this one check. Within a crawl the
       # document is fetched once per domain and every record is judged
       # against it, so a forged record costs one fetch and cannot spoil the
-      # genuine record's check (SPEC FL1). A registration inside the host's
+      # genuine record's check (SPEC FL1). A registration inside its endpoint's
       # fetch cooldown is judged against the document, or the fetch failure,
-      # that the fetch which started the cooldown kept (SPEC FL7).
+      # that the fetch which started the cooldown kept (SPEC FL7, PV1).
       #
       # @param domain [String] sanitized domain whose document is fetched.
       # @param pubkey [String] canonical PEM public key the document must name.
@@ -61,10 +61,10 @@ module PotatoMesh
 
       # Load a domain's well-known document with the block, once per crawl
       # and through the crawl's limits, or directly outside a crawl. What a
-      # fetch learned, the document or the failure, is kept for the host's
-      # fetch cooldown (SPEC FL7). In one crawl the bare domain of a host and
-      # all its port variants together fetch once each; a further variant is
-      # refused unfetched and so stays unconfirmed (SPEC FL1).
+      # fetch learned, the document or the failure, is kept for its endpoint's
+      # fetch cooldown, a port variant's apart from its host's (SPEC FL7, PV1).
+      # In one crawl a host's bare domain and its port variants together fetch
+      # once each; a further variant stays unfetched and unconfirmed (SPEC FL1).
       #
       # @param domain [String] sanitized domain.
       # @param crawl [CrawlState, nil] the crawl, nil outside one.
@@ -74,7 +74,7 @@ module PotatoMesh
         host = federation_peer_host(domain)
         key = federation_domain_key(domain)
         learn = lambda do
-          fetch.call.tap { |result| federation_peer_backoff.record_well_known(host, key, *result) }
+          fetch.call.tap { |result| federation_peer_backoff.record_well_known(federation_backoff_key(domain), key, *result) }
         end
         return learn.call unless crawl
 

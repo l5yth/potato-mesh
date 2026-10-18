@@ -22,23 +22,23 @@ module PotatoMesh
   module App
     module Federation
       # Bounded, process-wide memory of the federation fetches this instance
-      # made, keyed by peer host (SPEC FL3, FL4).
+      # made, per +host+ key (SPEC FL3, FL4, PV1).
       #
-      # Per host it keeps when a crawl or a registration last claimed a fetch
-      # of it (the peer fetch cooldown), until when requests to it back off
-      # after a 429 or 503 with +Retry-After+ or after consecutive failures,
-      # and, per URL, the +ETag+ and +Last-Modified+ of its last successful
-      # answer together with that body, so a repeat request can revalidate
-      # and a 304 reuses the body. It also keeps, until the cooldown ends,
-      # what the fetches under the current claim learned of each domain on
-      # the host, its well-known document (or the fetch failure) and its
-      # node-list acceptance, so a registration inside the cooldown is
-      # answered from them (SPEC FL7). Hosts beyond {MAX_HOSTS} are evicted
-      # least recently used first, a body over {MAX_BODY_BYTES} or a document
-      # over {MAX_DOCUMENT_BYTES} is not kept, at most
-      # {MAX_KNOWN_DOMAINS_PER_HOST} domains of one host are known at once,
+      # A key is a peer endpoint, +federation_backoff_key+: the bare host for
+      # its default port, one key for all its port variants. Per key it keeps
+      # when a crawl or a registration last claimed a fetch (the peer fetch
+      # cooldown), until when requests to it back off after a 429 or 503 with
+      # +Retry-After+ or after consecutive failures, and what the fetches under
+      # the current claim learned of each domain, its well-known document (or
+      # the fetch failure) and its node-list acceptance, until the cooldown
+      # ends, so a registration inside it is answered from them (SPEC FL7). The
+      # revalidation store keeps, per URL under the URL's host, the +ETag+ and
+      # +Last-Modified+ of its last successful answer with that body. Keys
+      # beyond {MAX_HOSTS} are evicted least recently used first, a body over
+      # {MAX_BODY_BYTES} or a document over {MAX_DOCUMENT_BYTES} is not kept, at
+      # most {MAX_KNOWN_DOMAINS_PER_HOST} domains of one key are known at once,
       # and the kept bodies and documents never exceed {MAX_TOTAL_BODY_BYTES}
-      # together. All methods are thread-safe and ignore a nil host.
+      # together. All methods are thread-safe and ignore a nil key.
       class PeerBackoff
         # Seconds of the backoff after a first failure; each further
         # consecutive failure doubles it.
@@ -47,7 +47,7 @@ module PotatoMesh
         # Ceiling of every backoff, a peer's +Retry-After+ included.
         BACKOFF_MAX_SECONDS = 86_400
 
-        # Hosts remembered at once.
+        # Keys remembered at once.
         MAX_HOSTS = 1024
 
         # Largest response body kept for revalidation.
@@ -60,13 +60,13 @@ module PotatoMesh
         # long before.
         MAX_BACKOFF_DOUBLINGS = 20
 
-        # Largest well-known document kept for a host's cooldown, as JSON.
+        # Largest well-known document kept for a key's cooldown, as JSON.
         MAX_DOCUMENT_BYTES = 65_536
 
-        # Domains of one host whose verification results are kept at once.
+        # Domains of one key whose verification results are kept at once.
         MAX_KNOWN_DOMAINS_PER_HOST = 4
 
-        # Start knowing no host: no claim, backoff, kept body or kept result.
+        # Start knowing no key: no claim, backoff, kept body or kept result.
         #
         # @return [void]
         def initialize
@@ -76,13 +76,13 @@ module PotatoMesh
         end
 
         # Claim a fetch of +host+ unless it must wait: record the claim as the
-        # start of the host's cooldown, which starts knowing nothing.
+        # start of the key's cooldown, which starts knowing nothing.
         #
-        # @param host [String, nil] peer host.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
         # @return [Float] 0.0 when the claim succeeded, otherwise the seconds
-        #   left before the host may be fetched.
+        #   left before the key may be fetched.
         def claim(host, cooldown:, now: Time.now.to_f)
           return 0.0 if host.nil?
 
@@ -100,10 +100,10 @@ module PotatoMesh
         # Seconds before +host+ may be fetched again: the longer of what is
         # left of its cooldown and of its backoff.
         #
-        # @param host [String, nil] peer host.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
-        # @return [Float] seconds, 0.0 when the host may be fetched now.
+        # @return [Float] seconds, 0.0 when the key may be fetched now.
         def wait_seconds(host, cooldown:, now: Time.now.to_f)
           return 0.0 if host.nil?
 
@@ -112,8 +112,8 @@ module PotatoMesh
 
         # Seconds left of +host+'s fetch cooldown alone.
         #
-        # @param host [String, nil] peer host.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
         # @return [Float] seconds, 0.0 when no cooldown runs.
         def cooldown_seconds(host, cooldown:, now: Time.now.to_f)
@@ -124,9 +124,9 @@ module PotatoMesh
 
         # Seconds left of +host+'s backoff.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @param now [Float] current time in seconds.
-        # @return [Float] seconds, 0.0 when the host is not backing off.
+        # @return [Float] seconds, 0.0 when the key is not backing off.
         def backoff_seconds(host, now: Time.now.to_f)
           return 0.0 if host.nil?
 
@@ -137,7 +137,7 @@ module PotatoMesh
         # doubled per consecutive failure, at least the peer's +Retry-After+,
         # at most {BACKOFF_MAX_SECONDS}.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @param retry_after [Numeric, nil] seconds the peer asked for.
         # @param now [Float] current time in seconds.
         # @return [void]
@@ -155,7 +155,7 @@ module PotatoMesh
 
         # Record that +host+ answered: clear its failures and backoff.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @return [void]
         def record_success(host)
           return if host.nil?
@@ -206,9 +206,9 @@ module PotatoMesh
         # Keep what a fetch under +host+'s current claim learned of +domain+'s
         # well-known document: the document, or the failure of its fetch. A
         # document over {MAX_DOCUMENT_BYTES} is not kept, nor anything for a
-        # host without a claim.
+        # key without a claim.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @param domain [String] sanitized domain whose document was fetched.
         # @param document [Hash, nil] the document, nil when the fetch failed.
         # @param metadata [Object] the fetch's URI or its errors.
@@ -233,7 +233,7 @@ module PotatoMesh
         # Keep what a fetch under +host+'s current claim learned of +domain+'s
         # node list: whether it accepted the peer, and why not.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @param domain [String] sanitized domain whose node list was fetched.
         # @param acceptance [Hash] +:accepted+, plus +:error+, +:reason+ and
         #   +:details+ for a refusal.
@@ -250,9 +250,9 @@ module PotatoMesh
         # What the fetches under +host+'s current claim learned of +domain+,
         # while its cooldown runs.
         #
-        # @param host [String, nil] peer host.
+        # @param host [String, nil] peer key (+federation_backoff_key+).
         # @param domain [String] sanitized domain.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
         # @return [Hash, nil] +:well_known+ (document and metadata) and
         #   +:acceptance+, each when learned; nil once the cooldown ended or
@@ -268,7 +268,7 @@ module PotatoMesh
           end
         end
 
-        # Forget every host.
+        # Forget every key.
         #
         # @return [void]
         def reset!
@@ -281,11 +281,11 @@ module PotatoMesh
         private
 
         # The entry for +host+, created when missing and moved to the most
-        # recently used end; the least recently used hosts beyond
+        # recently used end; the least recently used keys beyond
         # {MAX_HOSTS} are evicted. Called with the mutex held.
         #
-        # @param host [String] peer host.
-        # @return [Hash] the host's entry.
+        # @param host [String] peer key.
+        # @return [Hash] the key's entry.
         def entry_locked(host)
           entry = @hosts.delete(host) || { fetched_at: nil, backoff_until: nil, failures: 0, validators: {}, knowledge: {} }
           @hosts[host] = entry
@@ -300,7 +300,7 @@ module PotatoMesh
         # Forget the validators and body kept for +url+, releasing their
         # bytes. Called with the mutex held.
         #
-        # @param entry [Hash] the host's entry.
+        # @param entry [Hash] the key's entry.
         # @param url [String] full request URL.
         # @return [void]
         def drop_validator_locked(entry, url)
@@ -309,12 +309,12 @@ module PotatoMesh
         end
 
         # The knowledge of +domain+ under +host+'s current claim, created when
-        # missing; the oldest domain of the host goes beyond
+        # missing; the oldest domain of the key goes beyond
         # {MAX_KNOWN_DOMAINS_PER_HOST}. Called with the mutex held.
         #
-        # @param host [String] peer host.
-        # @param domain [String] domain key on the host.
-        # @return [Hash, nil] the domain's knowledge, nil when the host holds
+        # @param host [String] peer key.
+        # @param domain [String] domain key under the peer key.
+        # @return [Hash, nil] the domain's knowledge, nil when the key holds
         #   no claim.
         def knowledge_slot_locked(host, domain)
           entry = @hosts[host]
@@ -331,17 +331,17 @@ module PotatoMesh
           knowledge[domain]
         end
 
-        # Forget everything the host's claim kept, releasing the bytes of its
+        # Forget everything the key's claim kept, releasing the bytes of its
         # documents. Called with the mutex held.
         #
-        # @param entry [Hash] the host's entry.
+        # @param entry [Hash] the key's entry.
         # @return [void]
         def drop_knowledge_locked(entry)
           entry[:knowledge].each_value { |known| @body_bytes -= known[:bytes].to_i }
           entry[:knowledge].clear
         end
 
-        # Drop kept bodies and documents, least recently used host first,
+        # Drop kept bodies and documents, least recently used key first,
         # until they fit {MAX_TOTAL_BODY_BYTES}. Called with the mutex held.
         #
         # @return [void]
@@ -357,19 +357,19 @@ module PotatoMesh
         # Seconds before +host+ may be fetched again, the longer of what is
         # left of its cooldown and of its backoff. Called with the mutex held.
         #
-        # @param host [String] peer host.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param host [String] peer key.
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
-        # @return [Float] seconds, 0.0 when the host may be fetched now.
+        # @return [Float] seconds, 0.0 when the key may be fetched now.
         def wait_locked(host, cooldown, now)
           entry = @hosts[host]
           [cooldown_left_locked(entry, cooldown, now), backoff_left_locked(entry, now)].max.to_f
         end
 
-        # Seconds left of a host's cooldown. Called with the mutex held.
+        # Seconds left of a key's cooldown. Called with the mutex held.
         #
-        # @param entry [Hash, nil] the host's entry, nil for an unknown host.
-        # @param cooldown [Numeric] seconds between two claims of one host.
+        # @param entry [Hash, nil] the key's entry, nil for an unknown key.
+        # @param cooldown [Numeric] seconds between two claims of one key.
         # @param now [Float] current time in seconds.
         # @return [Float] seconds, 0.0 when no cooldown runs.
         def cooldown_left_locked(entry, cooldown, now)
@@ -378,11 +378,11 @@ module PotatoMesh
           [entry[:fetched_at] + cooldown - now, 0.0].max
         end
 
-        # Seconds left of a host's backoff. Called with the mutex held.
+        # Seconds left of a key's backoff. Called with the mutex held.
         #
-        # @param entry [Hash, nil] the host's entry, nil for an unknown host.
+        # @param entry [Hash, nil] the key's entry, nil for an unknown key.
         # @param now [Float] current time in seconds.
-        # @return [Float] seconds, 0.0 when the host is not backing off.
+        # @return [Float] seconds, 0.0 when the key is not backing off.
         def backoff_left_locked(entry, now)
           return 0.0 unless entry && entry[:backoff_until]
 
@@ -406,8 +406,9 @@ module PotatoMesh
         PotatoMesh::App::Federation.peer_backoff
       end
 
-      # The host part of a federation domain, the key of the peer fetch
-      # cooldown and backoff: ports of one host share them.
+      # The host part of a federation domain, without its port: the key of a
+      # crawl's per-host state (SPEC FL1). The peer store's cooldown, backoff
+      # and kept knowledge use {#federation_backoff_key} instead (SPEC PV1).
       #
       # @param domain [String, nil] sanitized domain, optionally with a port.
       # @return [String, nil] lowercase host, or nil when the domain does not
@@ -441,6 +442,36 @@ module PotatoMesh
       def federation_port_variant?(domain)
         key = federation_domain_key(domain)
         key != federation_peer_host(key)
+      end
+
+      # Suffix of the peer-store key of a host's non-default port variants
+      # (SPEC PV1). A +#+ begins a URI fragment and never survives into a
+      # host, so {#federation_peer_host} never returns one: the suffixed key
+      # cannot collide with any bare host.
+      PORT_VARIANT_BACKOFF_SUFFIX = "#port-variant"
+
+      # The {PeerBackoff} key of a federation domain: its fetch cooldown,
+      # backoff and kept-knowledge bucket (SPEC FL3, FL4, FL7, PV1).
+      #
+      # A default port reads as the bare host (SPEC FL1), so +host+,
+      # +host:443+ and +host:80+ share the host's bucket. Every non-default
+      # port variant of the host shares one *separate* bucket, keyed by the
+      # host with {PORT_VARIANT_BACKOFF_SUFFIX}. So a closed port any caller
+      # can name (PV1) writes no cooldown, backoff or fetch failure onto the
+      # host's default-port endpoint and never occupies its kept-knowledge
+      # slot, while all of the host's port variants together still cost at
+      # most one fetch per cooldown, preserving the amplification bound
+      # (SPEC FL1, FL6). The key is lower case whatever the domain's letter
+      # case. A nil host yields a nil key, which every store method ignores.
+      #
+      # @param domain [String, nil] sanitized domain, optionally with a port.
+      # @return [String, nil] the bucket key, or nil when the domain has no
+      #   host.
+      def federation_backoff_key(domain)
+        host = federation_peer_host(domain)
+        return host if host.nil?
+
+        federation_port_variant?(domain.to_s.downcase) ? "#{host}#{PORT_VARIANT_BACKOFF_SUFFIX}" : host
       end
 
       # Parse an HTTP +Retry-After+ value: delay seconds or an HTTP date.

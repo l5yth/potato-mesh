@@ -352,13 +352,13 @@ module PotatoMesh
               halt 201, { status: "registered" }.to_json
             end
 
-            # A peer host is fetched at most once per
-            # FEDERATION_PEER_FETCH_COOLDOWN, by a crawl or a registration;
-            # inside it a registration is answered from what that fetch
-            # learned (SPEC FL3, FL7).
-            peer_host = federation_peer_host(attributes[:domain])
+            # At most once per FEDERATION_PEER_FETCH_COOLDOWN a crawl or a
+            # registration fetches a peer endpoint: a host's default port, or
+            # all its port variants together. Inside it a registration is
+            # answered from what that fetch learned (SPEC FL3, FL7, PV1).
+            peer_key = federation_backoff_key(attributes[:domain])
             cooldown = PotatoMesh::Config.federation_peer_fetch_cooldown_seconds
-            peer_wait = federation_peer_backoff.wait_seconds(peer_host, cooldown: cooldown)
+            peer_wait = federation_peer_backoff.wait_seconds(peer_key, cooldown: cooldown)
             if peer_wait.positive?
               answer_instance_registration_from_cooldown!(
                 db, attributes, signature, same_key: same_key, wait: peer_wait,
@@ -372,7 +372,7 @@ module PotatoMesh
               defer_instance_registration!(attributes[:domain], verification_deadline, "too many registrations in flight")
             end
             begin
-              peer_wait = federation_peer_backoff.claim(peer_host, cooldown: cooldown)
+              peer_wait = federation_peer_backoff.claim(peer_key, cooldown: cooldown)
               defer_instance_registration!(attributes[:domain], peer_wait, "peer fetch cooldown") if peer_wait.positive?
 
               with_federation_deadline(verification_deadline) do

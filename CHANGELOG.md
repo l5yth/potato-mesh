@@ -3,6 +3,9 @@
 
 # CHANGELOG
 
+### Fixes
+* Web: an unauthenticated `POST /api/instances` for a peer on a non-default, closed port can no longer block that peer's federation; a port variant keeps its own fetch cooldown and backoff, separate from the host's default-port endpoint (SPEC PV1)
+
 ## v1.0.0
 
 ### Features
