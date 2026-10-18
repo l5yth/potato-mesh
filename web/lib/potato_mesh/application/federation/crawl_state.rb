@@ -24,8 +24,8 @@ module PotatoMesh
       #
       # It holds the crawl's limits, a domain budget, a request budget, a
       # deadline and a quota of new domains per relayer, and what the crawl
-      # learned on the way: the hosts it claimed in the process-wide peer
-      # fetch cooldown, the hosts whose instance list it walked, the outcome
+      # learned on the way: the peer endpoints it claimed in the fetch
+      # cooldown (SPEC PV1), the hosts whose instance list it walked, the outcome
       # of each host's visit, the well-known document of each domain it
       # fetched (failures included), the port variant of each host whose
       # well-known it fetched, the new domains each relayer brought in the
@@ -204,18 +204,18 @@ module PotatoMesh
           @fetched_domains << domain
         end
 
-        # @param host [String] peer host.
-        # @return [Boolean] true when this crawl holds the host's cooldown.
-        def claimed?(host)
-          @claimed.include?(host)
+        # @param key [String] peer endpoint key (+federation_backoff_key+).
+        # @return [Boolean] true when this crawl holds the endpoint's cooldown.
+        def claimed?(key)
+          @claimed.include?(key)
         end
 
-        # Record that this crawl holds +host+'s cooldown.
+        # Record that this crawl holds the cooldown of the endpoint +key+ names.
         #
-        # @param host [String] peer host.
+        # @param key [String] peer endpoint key (+federation_backoff_key+).
         # @return [void]
-        def claim(host)
-          @claimed << host
+        def claim(key)
+          @claimed << key
         end
 
         # @param host [String] peer host.
@@ -274,8 +274,8 @@ module PotatoMesh
         end
       end
 
-      # Clear the process-wide federation peer state: the fetch cooldown, the
-      # backoff and the revalidation store of every peer host, the
+      # Clear the process-wide federation peer state: the fetch cooldown and
+      # backoff of every peer endpoint, the revalidation store, the
       # registration verifications counted in flight, and the announce
       # targets kept for the next cycle (SPEC FB5).
       #
