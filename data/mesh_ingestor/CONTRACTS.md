@@ -69,7 +69,8 @@ the derived id. It is required where nothing on that stack announces, as with
 Docker's default `potatomesh_reticulum` volume, and to pin the id when two
 identities tie, since a tie is not guessed. A supplied value is canonicalised
 through the Reticulum mapping, not the shared `canonical_node_id` (which
-truncates a 16-byte identity hash from the wrong end -- SPEC RE5). A protocol
+truncates a 16-byte identity hash from the wrong end -- SPEC RE5). A full
+32-hex value also names the host identity (SPEC HI4). A protocol
 adding its own self-id must keep the derived id stable across restarts, or it
 is worse than none. Its `extract_host_node_id` runs at connect and on every
 loop while it returns `None`, so it must be cheap and must not raise.
@@ -559,11 +560,27 @@ and on every self-node report after it (1 h), so they stay fresh on a
 connection that never recycles.
 
 - Source: 0-hop entries of the running stack's path table, mapped to their
-  owning identity via `RNS.Identity.recall`.
+  owning identity via `RNS.Identity.recall`. On a shared-instance client that
+  lookup reads the ingestor's own memory, which RNS cleans 5 minutes after
+  attaching, so the provider also remembers each answer and each 0-hop
+  announce, bounded, as a fallback only: an answer from RNS or a live 0-hop
+  announce replaces it (SPEC HI1, HI2).
 - The host's primary identity is the one fronting the most such
-  destinations, with the transport identity excluded from that count.
+  destinations, with the transport identity excluded from that count. A full
+  32-hex `INGESTOR_NODE_ID` names it instead, read on every call (SPEC HI4).
+  When that identity fronts none of the known aspects (`lxmf.delivery`,
+  `lxmf.propagation`, `nomadnetwork.node`) here and discovery elects exactly
+  one primary, the provider follows that identity: it reports it, registers
+  its node id for the heartbeat and the report, and logs one warning per
+  switch with the ids (`context=reticulum.host`). It returns to the pin once
+  the pinned identity fronts a known aspect here again. A tie or an empty
+  table changes nothing, and a change waits for a second evaluation that gives
+  the same answer, so one that alternates never re-registers. Discovery runs
+  on every call, even while the pin fronts, so the memory keeps learning the
+  other local identities before the client's clean (SPEC HI5).
 - Aspects are labelled by recomputing each known aspect's destination hash from
-  the identity hash (a destination hash is one-way and cannot be read back).
+  the identity hash (a destination hash is one-way and cannot be read back),
+  and counted while that hash is in the 0-hop table, with no recall (SPEC HI3).
 - Emitted as ordinary node records sharing one `nodeId`, each carrying its own
   `destination` mapping, so no separate ingest route is involved.
 - Refreshed through `self_node_items(iface)`, an optional provider hook that
@@ -576,7 +593,8 @@ connection that never recycles.
   transmitted. The transport gate is re-evaluated at every report.
 - An aspect whose app disconnects, or whose path entry expires (RNS culls one
   7 days after its timestamp unless traffic flows through it), leaves the 0-hop
-  table and is no longer refreshed.
+  table and is no longer refreshed. With a full-hash pin, `rns.transport` is
+  still refreshed while the stack routes.
 
 ### Reticulum host position (SPEC RP1-RP6)
 

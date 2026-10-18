@@ -3,6 +3,9 @@
 
 # CHANGELOG
 
+### Fixes
+* Data: the Reticulum host's destinations stay fresh after the ingestor's RNS client forgets them, and a full 32-hex `INGESTOR_NODE_ID` pins the host identity, keeping `rns.transport` listed when nothing on the host announces; while the pinned identity announces no `lxmf` or `nomadnetwork` destination on the host, the ingestor follows the identity announcing the most there, unless two tie (SPEC HI1-HI7)
+
 ## v1.0.0
 
 ### Features

@@ -378,7 +378,7 @@
               nodeId = lib.mkOption {
                 type = lib.types.nullOr lib.types.str;
                 default = null;
-                description = "Host node id for the ingestor heartbeat; required for transport=udp, and for protocol=reticulum when nothing on its RNS stack announces or two local identities tie";
+                description = "Host node id for the ingestor heartbeat; required for transport=udp, and for protocol=reticulum when nothing on its RNS stack announces or two local identities tie; for protocol=reticulum the full 32-hex identity hash also pins the host identity";
               };
 
               channelIndex = lib.mkOption {
