@@ -7272,6 +7272,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload).not_to have_key("active_nodes")
     end
 
+    it "serves packets.hour to 3 decimals, so one packet in 24 h reads 0.042 and an idle protocol 0.0 (IR1)" do
+      now = reference_time.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!reti0001", now - 100, 1, "reticulum"],
+        )
+      end
+
+      get "/api/stats"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["reticulum"]["packets"]).to eq("hour" => 0.042)
+      expect(payload["total"]["packets"]).to eq("hour" => 0.042)
+      # eql: the JSON carries 0.0, a float like the active rates, not 0.
+      expect(payload["meshcore"]["packets"]["hour"]).to eql(0.0)
+      expect(payload["meshtastic"]["packets"]["hour"]).to eql(0.0)
+    end
+
     it "returns exact SQL-backed activity counts with per-protocol breakdowns" do
       clear_database
       now = reference_time.to_i

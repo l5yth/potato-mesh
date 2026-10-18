@@ -25,10 +25,14 @@
  * inputs into DOM.
  *
  * Behaviour:
- * - ``meshtastic``, ``meshcore``, and ``reticulum`` each render a row
- *   (MA-F2, extended by #888 when the Reticulum ingestor went live).
- * - The card hides entirely when the visible total is 0 or the payload carries
- *   no packet rates (MA-F3).
+ * - ``meshtastic``, ``meshcore``, and ``reticulum`` each render a row while
+ *   active, their rate above 0 (MA-F2, extended by #888 when the Reticulum
+ *   ingestor went live; SPEC IR2). An inactive protocol, at exactly 0, has no
+ *   row. A row shows its rate rounded to a whole number, so ``0`` means active
+ *   below 0.5 packets/h, and the total adds the rows' whole numbers.
+ * - The card hides entirely when no visible protocol is active, the visible
+ *   total before rounding being 0, or the payload carries no packet rates
+ *   (MA-F3).
  * - A protocol hidden via the meta-row toggle (``hiddenProtocols``) drops its
  *   row and rebases the displayed total to the sum of the *visible* protocols
  *   (MA-F4, Invariant IV parity).
@@ -71,6 +75,18 @@ function round2(value) {
 }
 
 /**
+ * The whole number a packets/hour rate shows as: halves round up (SPEC IR2).
+ * An active rate below 0.5 shows ``0``; an inactive protocol has no row, so a
+ * shown ``0`` still means activity.
+ *
+ * @param {number} rate Non-negative packets/hour rate.
+ * @returns {number} Rate rounded to a whole number.
+ */
+function displayRate(rate) {
+  return Math.round(rate);
+}
+
+/**
  * Build the sparkline path strings from a series of per-bucket totals.
  *
  * Maps the totals across a ``0 0 158 26`` viewBox (1 px left inset, 2 px top /
@@ -106,15 +122,16 @@ export function sparklinePathsFromSeries(totals) {
 }
 
 /**
- * Coerce a candidate packets/hour rate to a non-negative integer, or null.
+ * Coerce a candidate packets/hour rate to a non-negative number, or null. The
+ * decimals stay (SPEC IR2): exactly 0 is inactive, anything above it active.
  *
  * @param {*} value Candidate rate.
- * @returns {number|null} Truncated non-negative rate, or null when unusable.
+ * @returns {number|null} Non-negative rate, or null when unusable.
  */
 function coerceRate(value) {
   const rate = Number(value);
   if (!Number.isFinite(rate) || rate < 0) return null;
-  return Math.trunc(rate);
+  return rate;
 }
 
 /**
@@ -146,11 +163,13 @@ function visibleSeriesTotals(series, hidden) {
  * sparkline series.
  *
  * Every {@link PROTOCOL_ROWS} protocol is considered; a
- * protocol that is hidden or carries no finite rate is dropped. The displayed
- * total is the sum of the visible protocol rates (so a toggled-off protocol
- * rebases it, MA-F4), and each row's bar is sized relative to the busiest
- * visible protocol. The card is visible only when at least one protocol row
- * survives and the total is greater than 0 (MA-F3). ``spark`` is the sparkline
+ * protocol that is hidden, carries no finite rate, or is inactive (exactly 0,
+ * SPEC IR2) is dropped. The displayed total adds the whole numbers the visible
+ * rows show (SPEC IR2), so the rows add up to it and a toggled-off protocol
+ * rebases it (MA-F4); each row's bar is sized from the unrounded rates relative
+ * to the busiest visible protocol. The card is visible while at least one
+ * protocol row survives, the visible total before rounding being above 0
+ * (MA-F3), even when the total shows 0. ``spark`` is the sparkline
  * paths over the **visible** protocols' per-bucket sum, or null when absent
  * (F2-4) — so the curve rebases with the toggles just like the total.
  *
@@ -169,17 +188,22 @@ export function buildMeshActivityModel(packets, hiddenProtocols, series) {
   for (const entry of PROTOCOL_ROWS) {
     if (hidden.has(entry.protocol)) continue;
     const rate = coerceRate(rates[entry.protocol]);
-    if (rate === null) continue;
+    // Exactly 0 is an inactive protocol, so it has no row (SPEC IR2); any rate
+    // above it is active, even one that shows "0" once rounded.
+    if (rate === null || rate === 0) continue;
     visible.push({ label: entry.label, iconSrc: entry.iconSrc, rate });
   }
-  const total = visible.reduce((sum, row) => sum + row.rate, 0);
+  // The total adds the whole numbers the rows show, so the rows add up to it.
+  const total = visible.reduce((sum, row) => sum + displayRate(row.rate), 0);
   const maxRate = visible.reduce((max, row) => Math.max(max, row.rate), 0);
+  // Every listed rate is above 0, so the busiest one is too.
   const rows = visible.map(row => ({
     ...row,
-    barPct: maxRate > 0 ? Math.round((row.rate / maxRate) * 100) : 0,
+    barPct: Math.round((row.rate / maxRate) * 100),
   }));
   return {
-    visible: rows.length > 0 && total > 0,
+    // A listed row is an active protocol, even one that shows "0" (MA-F3).
+    visible: rows.length > 0,
     total,
     rows,
     spark: sparklinePathsFromSeries(visibleSeriesTotals(series, hidden)),
@@ -192,7 +216,8 @@ export function buildMeshActivityModel(packets, hiddenProtocols, series) {
  * Every interpolated value is a static label, a constant icon URL, or a
  * number-coerced rate/percentage/coordinate, so the markup needs no escaping
  * (mirrors the ``formatActiveNodeStatsHtml`` convention in {@link module:stats}).
- * The sparkline SVG is emitted only when ``model.spark`` is present (F2-4).
+ * The total and each row's rate show as whole numbers (SPEC IR2). The
+ * sparkline SVG is emitted only when ``model.spark`` is present (F2-4).
  *
  * @param {{total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>, spark: ({line: string, area: string}|null)}} model
  *   Render model from {@link buildMeshActivityModel}.
@@ -207,7 +232,7 @@ export function renderMeshActivityCardHtml(model) {
         '<span class="map-activity-card__row-bar">' +
           `<span class="map-activity-card__row-bar-fill" style="width:${row.barPct}%"></span>` +
         '</span>' +
-        `<span class="map-activity-card__row-rate">${row.rate}</span>` +
+        `<span class="map-activity-card__row-rate">${displayRate(row.rate)}</span>` +
       '</div>'
     )
     .join('');

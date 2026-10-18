@@ -25,6 +25,16 @@ import {
   createMeshActivityCard,
 } from '../map-activity-card.js';
 
+/**
+ * Read the protocol rows back from the card's markup.
+ *
+ * @param {string} html Card inner HTML.
+ * @returns {Array<[string, string]>} Each row's label and displayed rate, in order.
+ */
+function renderedRows(html) {
+  return [...html.matchAll(/__row-name">([^<]*)<.*?__row-rate">([^<]*)</g)].map(match => [match[1], match[2]]);
+}
+
 // ---------------------------------------------------------------------------
 // sparklinePathsFromSeries
 // ---------------------------------------------------------------------------
@@ -103,6 +113,25 @@ test('buildMeshActivityModel drops a hidden protocol and rebases the total', () 
   assert.equal(model.total, 76);
 });
 
+test('buildMeshActivityModel lists a protocol only above 0 and shows its rate rounded (IR2)', () => {
+  const model = buildMeshActivityModel({ total: 2, meshtastic: 1.6, meshcore: 0, reticulum: 0.4 }, new Set(), null);
+  assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic', 'Reticulum']);
+  // Bars are sized from the unrounded rates: 0.4 / 1.6 is 25%.
+  assert.deepEqual(model.rows.map(row => row.barPct), [100, 25]);
+  assert.equal(model.total, 2);
+  const html = renderMeshActivityCardHtml(model);
+  assert.deepEqual(renderedRows(html), [['Meshtastic', '2'], ['Reticulum', '0']]);
+  assert.match(html, /map-activity-card__total-value">2</);
+  assert.doesNotMatch(html, /meshcore\.svg/);
+});
+
+test('buildMeshActivityModel totals the whole numbers the rows show, so the rows add up (IR2)', () => {
+  // 0.6 + 0.6 is 1.2, but the rows show 1 and 1, so the total shows 2, not 1.
+  const model = buildMeshActivityModel({ total: 1.2, meshtastic: 0.6, meshcore: 0.6 }, new Set(), null);
+  assert.deepEqual(renderedRows(renderMeshActivityCardHtml(model)), [['Meshtastic', '1'], ['Meshcore', '1']]);
+  assert.equal(model.total, 2);
+});
+
 test('buildMeshActivityModel hides when all protocols are off or the total is zero', () => {
   const allHidden = buildMeshActivityModel(
     { total: 120, meshtastic: 76, meshcore: 44 },
@@ -112,7 +141,7 @@ test('buildMeshActivityModel hides when all protocols are off or the total is ze
   assert.equal(allHidden.visible, false);
   const zero = buildMeshActivityModel({ total: 0, meshtastic: 0, meshcore: 0 }, new Set(), null);
   assert.equal(zero.visible, false);
-  assert.deepEqual(zero.rows.map(row => row.barPct), [0, 0]);
+  assert.deepEqual(zero.rows, []); // an inactive protocol has no row (IR2)
 });
 
 test('buildMeshActivityModel hides when packets are absent or malformed', () => {
@@ -212,6 +241,24 @@ test('createMeshActivityCard rebases when a protocol is toggled off', () => {
     });
     assert.equal(card.element.getAttribute('aria-label'), 'Mesh activity: 76 packets per hour');
     assert.doesNotMatch(card.element.innerHTML, /MeshCore/);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('createMeshActivityCard shows an active mesh under 0.5 packets/h as "0" and hides only at exactly 0 (IR2)', () => {
+  const env = createDomEnvironment();
+  try {
+    const card = createMeshActivityCard(env.document);
+    const active = { total: 0.042, meshtastic: 0, meshcore: 0.042, reticulum: 0 };
+    assert.equal(card.render({ packets: active, hiddenProtocols: new Set() }), true);
+    assert.deepEqual(renderedRows(card.element.innerHTML), [['Meshcore', '0']]);
+    assert.match(card.element.innerHTML, /map-activity-card__total-value">0</);
+    assert.equal(card.element.getAttribute('aria-label'), 'Mesh activity: 0 packets per hour');
+
+    const idle = { total: 0, meshtastic: 0, meshcore: 0, reticulum: 0 };
+    assert.equal(card.render({ packets: idle, hiddenProtocols: new Set() }), false);
+    assert.equal(card.element.innerHTML, '');
   } finally {
     env.cleanup();
   }

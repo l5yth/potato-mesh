@@ -385,8 +385,9 @@ RSpec.describe "Ingest input bounds" do
         get "/api/stats"
 
         expect(last_response.status).to eq(200)
-        # Two rows read as 1,000,000,000 each, over the 24-hour divisor.
-        expect(JSON.parse(last_response.body).dig("meshtastic", "packets", "hour")).to eq(83_333_333)
+        # Two rows read as 1,000,000,000 each, over the 24-hour divisor, to
+        # 3 decimals (SPEC IR1).
+        expect(JSON.parse(last_response.body).dig("meshtastic", "packets", "hour")).to eq(83_333_333.333)
       end
 
       it "are read at most at the cap by /api/stats/activity" do
