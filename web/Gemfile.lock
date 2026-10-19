@@ -75,9 +75,9 @@ GEM
       rack-protection (= 4.2.1)
       rack-session (>= 2.0.0, < 3)
       tilt (~> 2.0)
-    sqlite3 (2.9.6)
+    sqlite3 (2.10.0)
       mini_portile2 (~> 2.8.0)
-    sqlite3 (2.9.6-x86_64-linux-gnu)
+    sqlite3 (2.10.0-x86_64-linux-gnu)
     tilt (2.7.0)
     websocket-driver (0.8.2)
       base64
@@ -105,7 +105,7 @@ DEPENDENCIES
   simplecov (~> 1.3)
   simplecov_json_formatter (~> 0.1)
   sinatra (~> 4.0)
-  sqlite3 (~> 2.9)
+  sqlite3 (~> 2.10)
 
 CHECKSUMS
   addressable (2.9.0) sha256=7fdf6ac3660f7f4e867a0838be3f6cf722ace541dd97767fa42bc6cfa980c7af
@@ -145,8 +145,8 @@ CHECKSUMS
   simplecov (1.3.2) sha256=2a22ec1759f1b8db60881a2e038758956fc69ef93ed669be0bde0678de6d0e85
   simplecov_json_formatter (0.1.4) sha256=529418fbe8de1713ac2b2d612aa3daa56d316975d307244399fa4838c601b428
   sinatra (4.2.1) sha256=b7aeb9b11d046b552972ade834f1f9be98b185fa8444480688e3627625377080
-  sqlite3 (2.9.6) sha256=956fe606956420d04ac7157d3ace620c8caba2135b2e05c76e483493da24d08e
-  sqlite3 (2.9.6-x86_64-linux-gnu) sha256=613188ce02f614126ddbc38c5e217ccffd6306d0dcd9adca9764547aa890a634
+  sqlite3 (2.10.0) sha256=3fc6c4ac2249b1c54099e7b80e57afdd678e648c1f54de8ad3b4c775195c661a
+  sqlite3 (2.10.0-x86_64-linux-gnu) sha256=295f48b240ba663efa2e3b6f38cbc0f19f5c8a2823a71fda3bf15531be5dd0e8
   tilt (2.7.0) sha256=0d5b9ba69f6a36490c64b0eee9f6e9aad517e20dcc848800a06eb116f08c6ab3
   websocket-driver (0.8.2) sha256=97c556b019bf3410b4961002ac501621e9322d3f8a7bc02161a09301cc4c4146
   websocket-extensions (0.1.5) sha256=1c6ba63092cda343eb53fc657110c71c754c56484aad42578495227d717a8241
