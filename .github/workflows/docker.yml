@@ -18,15 +18,13 @@ on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
+    # A dispatch publishes the version tags only; promote-latest moves the
+    # default tag after a stable tag push passes test-images (SPEC LT).
     inputs:
       version:
         description: 'Version to publish (e.g., 1.0.0)'
         required: true
         default: '1.0.0'
-      publish_all_variants:
-        description: 'Publish all Docker image variants (latest tag)'
-        type: boolean
-        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -75,42 +73,38 @@ jobs:
 
     - name: Extract version from tag or input
       id: version
+      env:
+        # Read through env rather than an expression in the script: the
+        # dispatch input is free text.
+        EVENT_NAME: ${{ github.event_name }}
+        INPUT_VERSION: ${{ github.event.inputs.version }}
+        # Character ranges in the check below match ASCII only in this locale.
+        LC_ALL: C
+      # The check below needs bash's [[ =~ ]].
+      shell: bash
       run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          RAW_VERSION="${{ github.event.inputs.version }}"
+        if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          RAW_VERSION="$INPUT_VERSION"
         else
           RAW_VERSION=${GITHUB_REF#refs/tags/}
         fi
 
         STRIPPED_VERSION=${RAW_VERSION#v}
 
+        # Only a release version becomes a tag, so no tag push or dispatch
+        # input can name the default tag; promote-latest alone moves it
+        # (SPEC LT, tests/test_docker_latest_gate.py).
+        RELEASE_VERSION='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+        if [[ ! "$STRIPPED_VERSION" =~ $RELEASE_VERSION ]]; then
+          # %q prints the input on one line, so it cannot start a workflow command.
+          echo "::error::Not a release version (X.Y.Z or X.Y.Z-suffix): $(printf '%q' "$RAW_VERSION")"
+          exit 1
+        fi
+
         echo "version=$STRIPPED_VERSION" >> $GITHUB_OUTPUT
         echo "version_with_v=v$STRIPPED_VERSION" >> $GITHUB_OUTPUT
         echo "raw_version=$RAW_VERSION" >> $GITHUB_OUTPUT
         echo "Published version: $STRIPPED_VERSION"
-
-    - name: Determine tagging strategy
-      id: tagging
-      env:
-        EVENT_NAME: ${{ github.event_name }}
-        PUBLISH_ALL_VARIANTS: ${{ github.event.inputs.publish_all_variants || 'false' }}
-      run: |
-        VERSION="${{ steps.version.outputs.version }}"
-
-        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
-          IS_PRERELEASE=true
-        else
-          IS_PRERELEASE=false
-        fi
-
-        if [ "$IS_PRERELEASE" = "false" ] && { [ "$EVENT_NAME" = "push" ] || [ "$PUBLISH_ALL_VARIANTS" = "true" ]; }; then
-          INCLUDE_LATEST=true
-        else
-          INCLUDE_LATEST=false
-        fi
-
-        echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
-        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
 
     - name: Compute baked application version
       id: appversion
@@ -140,10 +134,11 @@ jobs:
         # unconsumed build-arg to warn about.
         build-args: |
           ${{ matrix.service == 'web' && format('APP_VERSION={0}', steps.appversion.outputs.app_version) || '' }}
+        # Version tags only: promote-latest moves the default tag once
+        # test-images has passed (SPEC LT).
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}-${{ matrix.architecture.name }}:${{ steps.version.outputs.version }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}-${{ matrix.architecture.name }}:${{ steps.version.outputs.version_with_v }}
-          ${{ steps.tagging.outputs.include_latest == 'true' && format('{0}/{1}-{2}-{3}:latest', env.REGISTRY, env.IMAGE_PREFIX, matrix.service, matrix.architecture.name) || '' }}
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
           org.opencontainers.image.description=PotatoMesh ${{ matrix.service == 'web' && 'Web Application' || matrix.service == 'ingestor' && 'Python Ingestor' || 'Matrix Bridge' }} for ${{ matrix.architecture.label }}
@@ -185,19 +180,6 @@ jobs:
         echo "version=$STRIPPED_VERSION" >> $GITHUB_OUTPUT
         echo "version_with_v=v$STRIPPED_VERSION" >> $GITHUB_OUTPUT
 
-    - name: Detect pre-release tag
-      id: tagging
-      run: |
-        VERSION="${{ steps.version.outputs.version }}"
-
-        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
-          INCLUDE_LATEST=false
-        else
-          INCLUDE_LATEST=true
-        fi
-
-        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
-
     - name: Test web application (Linux AMD64)
       run: |
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-amd64:${{ steps.version.outputs.version }}
@@ -223,9 +205,63 @@ jobs:
         sleep 5
         docker stop ingestor-test || true
 
+  promote-latest:
+    runs-on: ubuntu-latest
+    # The implicit success() runs this job only after every build leg and
+    # test-images passed, so a failed build or smoke test moves no default tag;
+    # a retag that fails partway leaves the images before it moved (SPEC LT3).
+    # A status function here (always(), failure(), cancelled()) would let an
+    # image that failed the smoke test become the default tag
+    # (tests/test_docker_latest_gate.py).
+    needs: [build-and-push, test-images]
+    # Stable tag pushes only: a pre-release tag or a dispatch moves nothing.
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+      && !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta')
+      && !contains(github.ref_name, '-alpha') && !contains(github.ref_name, '-dev')
+    environment: production
+    permissions:
+      packages: write
+
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Point latest at the tested release
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        # The images build-and-push publishes, one per service and
+        # architecture of its matrix. tests/test_docker_latest_gate.py checks
+        # that these two loop lines, and no others, list the matrix's services
+        # and architectures, and refuses a matrix written in another form (an
+        # include or exclude among them); it does not read the loop body.
+        IMAGES=""
+        for service in web ingestor matrix-bridge; do
+          for arch in linux-amd64 linux-arm64 linux-armv7; do
+            IMAGES="$IMAGES $REGISTRY/$IMAGE_PREFIX-$service-$arch"
+          done
+        done
+        # Resolve every source first, so a missing image moves no tag.
+        for image in $IMAGES; do
+          docker buildx imagetools inspect "$image:$VERSION" > /dev/null
+        done
+        # Copy each version's manifest to the default tag; nothing is rebuilt.
+        for image in $IMAGES; do
+          echo "Promoting $image:$VERSION to latest"
+          docker buildx imagetools create --tag "$image:latest" "$image:$VERSION"
+          docker buildx imagetools inspect "$image:latest"
+        done
+
   publish-summary:
     runs-on: ubuntu-latest
-    needs: [build-and-push, test-images]
+    needs: [build-and-push, test-images, promote-latest]
     if: always() && startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
 
     steps:
@@ -235,20 +271,10 @@ jobs:
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Determine tagging strategy
-      id: tagging
-      run: |
-        VERSION="${{ steps.version.outputs.version }}"
-
-        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
-          INCLUDE_LATEST=false
-        else
-          INCLUDE_LATEST=true
-        fi
-
-        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
-
     - name: Publish release summary
+      env:
+        # The default tags are listed only when promote-latest moved them.
+        PROMOTED: ${{ needs.promote-latest.result == 'success' }}
       run: |
         echo "## 🚀 PotatoMesh Images Published to GHCR" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -259,7 +285,7 @@ jobs:
         
         # Web images
         echo "### 🌐 Web Application" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+        if [ "$PROMOTED" = "true" ]; then
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
@@ -268,7 +294,7 @@ jobs:
 
         # Ingestor images
         echo "### 📡 Ingestor Service" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+        if [ "$PROMOTED" = "true" ]; then
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
@@ -277,7 +303,7 @@ jobs:
 
         # Matrix bridge images
         echo "### 🧩 Matrix Bridge" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+        if [ "$PROMOTED" = "true" ]; then
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
