@@ -94,6 +94,50 @@ class TestParseHiddenChannels:
 
 
 # ---------------------------------------------------------------------------
+# _parse_ocv_millivolts
+# ---------------------------------------------------------------------------
+
+
+class TestParseOcvMillivolts:
+    """Tests for :func:`config._parse_ocv_millivolts`."""
+
+    def test_none_returns_none(self):
+        """Unset variable means no override."""
+        assert config._parse_ocv_millivolts(None) is None
+
+    def test_blank_returns_none(self):
+        """Blank values behave like unset (a stray .env line is inert)."""
+        assert config._parse_ocv_millivolts("") is None
+        assert config._parse_ocv_millivolts("   ") is None
+
+    def test_ascending_input_stored_descending(self):
+        """The operator writes ascending; the curve is stored 100% → 0%."""
+        assert config._parse_ocv_millivolts("3100,3300,4190") == (4190, 3300, 3100)
+
+    def test_tolerates_whitespace_and_trailing_comma(self):
+        """Spaces around fragments and empty fragments are inert."""
+        assert config._parse_ocv_millivolts(" 3000 , 4000 , ") == (4000, 3000)
+
+    def test_rejects_non_numeric(self):
+        """A non-numeric fragment invalidates the whole override."""
+        assert config._parse_ocv_millivolts("3000,full") is None
+
+    def test_rejects_single_point(self):
+        """Interpolation needs at least two points."""
+        assert config._parse_ocv_millivolts("3700") is None
+
+    def test_rejects_non_ascending(self):
+        """Values must be strictly ascending as documented."""
+        assert config._parse_ocv_millivolts("4000,3000") is None
+        assert config._parse_ocv_millivolts("3000,3000,4000") is None
+
+    def test_rejects_non_positive(self):
+        """Zero or negative millivolt points are invalid."""
+        assert config._parse_ocv_millivolts("0,4000") is None
+        assert config._parse_ocv_millivolts("-100,4000") is None
+
+
+# ---------------------------------------------------------------------------
 # _resolve_instance_domain
 # ---------------------------------------------------------------------------
 

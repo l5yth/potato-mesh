@@ -178,6 +178,67 @@ def _millivolts_to_volts(value) -> float | None:
     return round(float(value) / 1000.0, 3)
 
 
+_MESHCORE_OCV_MILLIVOLTS: tuple[int, ...] = (
+    4190,
+    4050,
+    3990,
+    3890,
+    3800,
+    3720,
+    3630,
+    3530,
+    3420,
+    3300,
+    3100,
+)
+"""Estimate battery percentage based on voltage for a 1S Li-ion cell.
+
+Open-circuit voltage in millivolts at 100% to 0% state of charge in 10%
+steps.  Battery percentage is linearly interpolated between these points."""
+
+
+_NO_BATTERY_MARGIN_MILLIVOLTS: int = 500
+"""This far below the active curve's 0% point we assume no battery is
+installed and emit no estimate rather than 0%."""
+
+
+def _voltage_to_battery_level(voltage) -> int | None:
+    """Estimate a battery percentage from voltage via a 1S Li-ion discharge curve.
+
+    MeshCore firmware reports battery state as a raw voltage only.  Linear
+    interpolation between the OCV table's points, truncated to an integer
+    and clamped to 0–100, so battery percentages in the shared
+    ``battery_level`` column are comparable.  The built-in table can be
+    replaced per deployment via ``MESHCORE_OCV_MILLIVOLTS``
+    (:data:`config.MESHCORE_OCV_MILLIVOLTS`, already reversed to descending).
+
+    Parameters:
+        voltage: Single-cell battery voltage in volts.
+
+    Returns:
+        Estimated percentage 0–100, or ``None`` when the input is not a
+        number or is below the no-battery floor.
+    """
+    if isinstance(voltage, bool) or not isinstance(voltage, (int, float)):
+        return None
+    ocv = config.MESHCORE_OCV_MILLIVOLTS or _MESHCORE_OCV_MILLIVOLTS
+    millivolts = float(voltage) * 1000.0
+    if millivolts < ocv[-1] - _NO_BATTERY_MARGIN_MILLIVOLTS:
+        return None
+    soc = 0.0
+    for i, point in enumerate(ocv):
+        if point <= millivolts:
+            if i == 0:
+                soc = 100.0
+            else:
+                step = 100.0 / (len(ocv) - 1)
+                soc = step * (
+                    len(ocv) - 1 - i + (millivolts - point) / (ocv[i - 1] - point)
+                )
+            break
+    return max(0, min(100, int(soc)))
+
+
 def _status_to_telemetry_section(status: Mapping) -> dict | None:
     """Convert a ``STATUS_RESPONSE`` payload into a telemetry section.
 
@@ -246,6 +307,15 @@ def _queue_meshcore_telemetry(
     """
     if not node_id or not section:
         return False
+    if config.MESHCORE_ESTIMATE_BATTERY:
+        device = section.get("deviceMetrics")
+        if isinstance(device, Mapping) and "batteryLevel" not in device:
+            estimate = _voltage_to_battery_level(device.get("voltage"))
+            if estimate is not None:
+                section = {
+                    **section,
+                    "deviceMetrics": {**device, "batteryLevel": estimate},
+                }
     rx_time = int(time.time())
     packet = {
         "id": _derive_message_id(node_id, rx_time, f"tel-{kind}", ""),
