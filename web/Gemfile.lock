@@ -8,7 +8,7 @@ GEM
     crass (1.0.6)
     diff-lcs (1.6.2)
     erb (6.0.7)
-    ferrum (0.18.0)
+    ferrum (0.19.1)
       addressable (~> 2.5)
       base64 (~> 0.2)
       concurrent-ruby (~> 1.1)
@@ -90,7 +90,7 @@ PLATFORMS
 
 DEPENDENCIES
   erb (~> 6.0)
-  ferrum (~> 0.18)
+  ferrum (~> 0.19)
   kramdown (~> 2.4)
   kramdown-parser-gfm (~> 1.1)
   prometheus-client
@@ -114,7 +114,7 @@ CHECKSUMS
   crass (1.0.6) sha256=dc516022a56e7b3b156099abc81b6d2b08ea1ed12676ac7a5657617f012bd45d
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   erb (6.0.7) sha256=c5ca6dc25b0ef974a44dc8f59fe847577122483b1968a38dec305c60bf91ee92
-  ferrum (0.18.0) sha256=4cb8be16e352fc1d75f087e9214b34ec1b93ba932410c730a4724909ca89d7c6
+  ferrum (0.19.1) sha256=2e9ab588d24e08b6765a5a349bc5d367e5c09d3bead26270f1f2279ad7a4bc25
   kramdown (2.5.2) sha256=1ba542204c66b6f9111ff00dcc26075b95b220b07f2905d8261740c82f7f02fa
   kramdown-parser-gfm (1.1.0) sha256=fb39745516427d2988543bf01fc4cf0ab1149476382393e0e9c48592f6581729
   logger (1.7.0) sha256=196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203
