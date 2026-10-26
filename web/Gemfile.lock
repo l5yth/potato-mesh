@@ -5,7 +5,7 @@ GEM
       public_suffix (>= 2.0.2, < 8.0)
     base64 (0.3.0)
     concurrent-ruby (1.3.8)
-    crass (1.0.7)
+    crass (1.0.8)
     diff-lcs (1.6.2)
     erb (6.0.7)
     ferrum (0.19.1)
@@ -63,8 +63,8 @@ GEM
       rspec-core (>= 2, < 4, != 2.12.0)
     ruby2_keywords (0.0.5)
     rufo (0.18.2)
-    sanitize (7.0.0)
-      crass (~> 1.0.2)
+    sanitize (7.0.1)
+      crass (~> 1.0.8)
       nokogiri (>= 1.16.8)
     simplecov (1.3.2)
     simplecov_json_formatter (0.1.4)
@@ -101,7 +101,7 @@ DEPENDENCIES
   rspec (~> 3.12)
   rspec_junit_formatter (~> 0.6)
   rufo (~> 0.18.1)
-  sanitize (= 7.0.0)
+  sanitize (= 7.0.1)
   simplecov (~> 1.3)
   simplecov_json_formatter (~> 0.1)
   sinatra (~> 4.0)
@@ -111,7 +111,7 @@ CHECKSUMS
   addressable (2.9.0) sha256=7fdf6ac3660f7f4e867a0838be3f6cf722ace541dd97767fa42bc6cfa980c7af
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
   concurrent-ruby (1.3.8) sha256=b2f1be836e968ccc78ccfce277ea79c72a88633f22306782c16ff23fb415d1e1
-  crass (1.0.7) sha256=94868719948664c89ddcaf0a37c65048413dfcb1c869470a5f7a7ceb5390b295
+  crass (1.0.8) sha256=7a0145c7a2c59f8e7923b3a69ce819c444823a00a5127d805298fea13be24efe
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   erb (6.0.7) sha256=c5ca6dc25b0ef974a44dc8f59fe847577122483b1968a38dec305c60bf91ee92
   ferrum (0.19.1) sha256=2e9ab588d24e08b6765a5a349bc5d367e5c09d3bead26270f1f2279ad7a4bc25
@@ -141,7 +141,7 @@ CHECKSUMS
   rspec_junit_formatter (0.6.0) sha256=40dde674e6ae4e6cc0ff560da25497677e34fefd2338cc467a8972f602b62b15
   ruby2_keywords (0.0.5) sha256=ffd13740c573b7301cf7a2e61fc857b2a8e3d3aff32545d6f8300d8bae10e3ef
   rufo (0.18.2) sha256=f279bea838aae7cd51149413a2dfa3383044b1c93f1469ceaddd1ca3824fc46f
-  sanitize (7.0.0) sha256=269d1b9d7326e69307723af5643ec032ff86ad616e72a3b36d301ac75a273984
+  sanitize (7.0.1) sha256=6dc0d80edab7e5f6bb9036ee001aa8fea000359860c6e53cd909e16321e1ac79
   simplecov (1.3.2) sha256=2a22ec1759f1b8db60881a2e038758956fc69ef93ed669be0bde0678de6d0e85
   simplecov_json_formatter (0.1.4) sha256=529418fbe8de1713ac2b2d612aa3daa56d316975d307244399fa4838c601b428
   sinatra (4.2.1) sha256=b7aeb9b11d046b552972ade834f1f9be98b185fa8444480688e3627625377080

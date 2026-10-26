@@ -34,4 +34,4 @@ group :test do
   gem "rspec_junit_formatter", "~> 0.6", require: false
 end
 
-gem "sanitize", "7.0.0"
+gem "sanitize", "7.0.1"
