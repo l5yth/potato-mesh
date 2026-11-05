@@ -49,6 +49,7 @@ Jump to Contents:
 - [Ingestor](#ingestor) - configuration, running, transmitting, etc.
 - [Nix](#nix) - nix deployment
 - [Docker](#docker) - docker deployment
+- [One-Click Deploy](#one-click-deploy) - one-click deployment
 - [Matrix Bridge](#matrix-bridge) - configuration and deployment
 
 ## Web App
@@ -635,6 +636,10 @@ you avoid manual tag mistakes.
 Feel free to run the [configure.sh](./configure.sh) script to set up your
 environment. See the [Docker guide](DOCKER.md) for more details and custom
 deployment instructions.
+
+## One-Click Deploy
+
+[![Deploy on RepoCloud](https://d16t0pc4846x52.cloudfront.net/deploylobe.svg)](https://repocloud.io/details/PotatoMesh/)
 
 ## Matrix Bridge
 
