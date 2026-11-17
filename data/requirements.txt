@@ -3,7 +3,7 @@
 
 # Production dependencies
 meshtastic==2.7.11
-meshcore==2.3.17
+meshcore==2.3.19
 bleak==3.1.0
 protobuf==7.36.2
 # armv7 images compile cryptography from source with the Rust of the base
