@@ -477,6 +477,18 @@
                 description = "Comma-separated node ids exempt from the once-per-24h Meshcore contact telemetry cooldown; listed nodes are polled every round-robin rotation. Requires txEnabled";
               };
 
+              meshcoreEstimateBattery = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Estimate a battery percentage for Meshcore nodes from their reported voltage using a 1S Li-ion discharge curve";
+              };
+
+              meshcoreOcvMillivolts = lib.mkOption {
+                type = lib.types.str;
+                default = "";
+                description = "Discharge curve(s) for meshcoreEstimateBattery: ascending comma-separated millivolts (0% to 100%); separate curves with |, and start a curve with a !node id to scope it to that node. Empty uses the built-in curve";
+              };
+
               txEnabled = lib.mkOption {
                 type = lib.types.bool;
                 default = false;
@@ -596,6 +608,8 @@
                 MESHCORE_SELF_TELEMETRY_SECONDS = toString cfg.ingestor.meshcoreSelfTelemetrySeconds;
                 MESHCORE_TELEMETRY_POLL_SECONDS = toString cfg.ingestor.meshcoreTelemetryPollSeconds;
                 MESHCORE_TELEMETRY_POLL_24H_EXEMPT = cfg.ingestor.meshcoreTelemetryPoll24hExempt;
+                MESHCORE_ESTIMATE_BATTERY = if cfg.ingestor.meshcoreEstimateBattery then "1" else "0";
+                MESHCORE_OCV_MILLIVOLTS = cfg.ingestor.meshcoreOcvMillivolts;
                 PRIMARY_CHANNEL_ONLY = if cfg.ingestor.primaryChannelOnly then "1" else "0";
                 DROP_VIA_MQTT = if cfg.ingestor.dropViaMqtt then "1" else "0";
                 PRIMARY_CHANNEL_KEY = cfg.ingestor.primaryChannelKey;

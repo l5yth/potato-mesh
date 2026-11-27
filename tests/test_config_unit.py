@@ -94,6 +94,92 @@ class TestParseHiddenChannels:
 
 
 # ---------------------------------------------------------------------------
+# _parse_ocv_millivolts
+# ---------------------------------------------------------------------------
+
+
+class TestParseOcvMillivolts:
+    """Tests for :func:`config._parse_ocv_millivolts`."""
+
+    def test_none_returns_none(self):
+        """Unset variable means no override."""
+        assert config._parse_ocv_millivolts(None) == (None, {})
+
+    def test_blank_returns_none(self):
+        """Blank values behave like unset (a stray .env line is inert)."""
+        assert config._parse_ocv_millivolts("") == (None, {})
+        assert config._parse_ocv_millivolts("   ") == (None, {})
+        assert config._parse_ocv_millivolts(" | ") == (None, {})
+
+    def test_ascending_input_stored_descending(self):
+        """The operator writes ascending; the curve is stored 100% → 0%."""
+        assert config._parse_ocv_millivolts("3100,3300,4190") == (
+            (4190, 3300, 3100),
+            {},
+        )
+
+    def test_tolerates_whitespace_and_trailing_comma(self):
+        """Spaces around fragments and empty fragments are inert."""
+        assert config._parse_ocv_millivolts(" 3000 , 4000 , ") == ((4000, 3000), {})
+
+    def test_rejects_non_numeric(self):
+        """A non-numeric fragment invalidates the curve."""
+        assert config._parse_ocv_millivolts("3000,full") == (None, {})
+
+    def test_rejects_single_point(self):
+        """Interpolation needs at least two points."""
+        assert config._parse_ocv_millivolts("3700") == (None, {})
+
+    def test_rejects_non_ascending(self):
+        """Values must be strictly ascending as documented."""
+        assert config._parse_ocv_millivolts("4000,3000") == (None, {})
+        assert config._parse_ocv_millivolts("3000,3000,4000") == (None, {})
+
+    def test_rejects_non_positive(self):
+        """Zero or negative millivolt points are invalid."""
+        assert config._parse_ocv_millivolts("0,4000") == (None, {})
+        assert config._parse_ocv_millivolts("-100,4000") == (None, {})
+
+    def test_per_node_curve(self):
+        """A leading ``!node`` scopes the curve to that (canonical) node."""
+        assert config._parse_ocv_millivolts("!ABC12345,3000,4000") == (
+            None,
+            {"!abc12345": (4000, 3000)},
+        )
+
+    def test_global_and_multiple_node_curves(self):
+        """Pipe-separated curves mix a global curve with per-node overrides."""
+        glob, per_node = config._parse_ocv_millivolts(
+            "!abc12345, 3000,4000 | 3100,4190 |!def67890,3200,3700,4200"
+        )
+        assert glob == (4190, 3100)
+        assert per_node == {
+            "!abc12345": (4000, 3000),
+            "!def67890": (4200, 3700, 3200),
+        }
+
+    def test_invalid_curve_drops_only_that_curve(self):
+        """One bad curve or node id leaves the other curves intact."""
+        glob, per_node = config._parse_ocv_millivolts(
+            "3000,4000|!abc12345,4000,3000|!nothex!,3000,4000|!def67890,3100,4100"
+        )
+        assert glob == (4000, 3000)
+        assert per_node == {"!def67890": (4100, 3100)}
+
+    def test_duplicates_later_wins(self):
+        """A repeated global or node curve is replaced by the later one."""
+        glob, per_node = config._parse_ocv_millivolts(
+            "3000,4000|3100,4100|!abc12345,3000,3500|!abc12345,3200,3600"
+        )
+        assert glob == (4100, 3100)
+        assert per_node == {"!abc12345": (3600, 3200)}
+
+    def test_node_marker_only_honored_first(self):
+        """A ``!node`` after the first entry is not a node marker."""
+        assert config._parse_ocv_millivolts("3000,!abc12345,4000") == (None, {})
+
+
+# ---------------------------------------------------------------------------
 # _resolve_instance_domain
 # ---------------------------------------------------------------------------
 
