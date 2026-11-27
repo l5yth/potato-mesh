@@ -1726,6 +1726,39 @@ def test_voltage_to_battery_level_honors_custom_curve(monkeypatch):
     assert mc_tel._voltage_to_battery_level(2.4) is None
 
 
+def test_voltage_to_battery_level_prefers_per_node_curve(monkeypatch):
+    """A per-node curve beats the global override for that node only."""
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_OCV_MILLIVOLTS", (4000, 3000))
+    monkeypatch.setattr(
+        mc_tel.config,
+        "MESHCORE_OCV_MILLIVOLTS_BY_NODE",
+        {"!11223344": (5000, 3000)},
+        raising=False,
+    )
+    assert mc_tel._voltage_to_battery_level(3.5, "!11223344") == 25
+    # Other nodes (and no node) fall back to the global curve.
+    assert mc_tel._voltage_to_battery_level(3.5, "!99999999") == 50
+    assert mc_tel._voltage_to_battery_level(3.5) == 50
+
+
+def test_queue_meshcore_telemetry_uses_per_node_curve(monkeypatch):
+    """The queued estimate is computed with the reporting node's curve."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_ESTIMATE_BATTERY", True, raising=False)
+    monkeypatch.setattr(
+        mc_tel.config,
+        "MESHCORE_OCV_MILLIVOLTS_BY_NODE",
+        {"!11223344": (4000, 3000)},
+        raising=False,
+    )
+    assert mc_tel._queue_meshcore_telemetry(
+        stub, "!11223344", {"deviceMetrics": {"voltage": 3.5}}, "status"
+    )
+    device = captured[0]["decoded"]["telemetry"]["deviceMetrics"]
+    assert device == {"voltage": 3.5, "batteryLevel": 50}
+
+
 def test_voltage_to_battery_level_rejects_junk():
     """Non-numeric and non-positive inputs yield no estimate."""
     mc_tel = _telemetry_module()

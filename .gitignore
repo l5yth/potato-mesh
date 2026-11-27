@@ -80,3 +80,4 @@ web/pages/*.md
 ignored.txt
 ignored-*.txt
 ignored-*.txt.1
+.venv

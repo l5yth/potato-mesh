@@ -624,30 +624,19 @@ Off by default because the estimate is stored indistinguishably from a measured
 reading; garbage values also resolve to off."""
 
 
-def _parse_ocv_millivolts(raw_value: str | None) -> tuple[int, ...] | None:
-    """Parse a ``MESHCORE_OCV_MILLIVOLTS`` discharge-curve override.
-
-    The operator writes the open-circuit voltages in **millivolts, ascending**
-    (0% first, 100% last, e.g. ``3100,3300,...,4190``); the estimator walks
-    the curve from full toward empty, so the parsed tuple is stored reversed.
-    Any number of points ``>= 2`` is accepted — the interpolation divides
-    0–100% evenly across the segments.  An unparseable value drops the whole
-    override with a warning rather than raising, falling back to the built-in
-    curve (the fail-safe posture of :func:`_env_flag`): a typo costs the
-    operator their custom curve, never ingestor startup.
+def _parse_ocv_curve(raw_curve: str) -> tuple[int, ...] | None:
+    """Parse one comma-separated ascending millivolt discharge curve.
 
     Parameters:
-        raw_value: Raw environment string of comma-separated millivolt values.
+        raw_curve: Comma-separated millivolt values, 0% first, 100% last.
 
     Returns:
-        Tuple of millivolt points in descending order, or ``None`` when unset,
-        blank, or invalid.
+        Tuple of millivolt points in descending order (100% → 0%), or
+        ``None`` (with a warning logged) when the curve is invalid.
     """
 
-    if raw_value is None or not raw_value.strip():
-        return None
     points: list[int] = []
-    for part in raw_value.split(","):
+    for part in raw_curve.split(","):
         fragment = part.strip()
         if not fragment:
             continue
@@ -655,7 +644,7 @@ def _parse_ocv_millivolts(raw_value: str | None) -> tuple[int, ...] | None:
             points.append(int(fragment))
         except ValueError:
             _debug_log(
-                "Unparseable MESHCORE_OCV_MILLIVOLTS entry; override ignored",
+                "Unparseable MESHCORE_OCV_MILLIVOLTS entry; curve ignored",
                 context="config",
                 severity="warning",
                 value=fragment,
@@ -668,23 +657,104 @@ def _parse_ocv_millivolts(raw_value: str | None) -> tuple[int, ...] | None:
     ):
         _debug_log(
             "MESHCORE_OCV_MILLIVOLTS needs >= 2 positive strictly ascending "
-            "values; override ignored",
+            "values; curve ignored",
             context="config",
             severity="warning",
-            value=raw_value,
+            value=raw_curve,
         )
         return None
     return tuple(reversed(points))
 
 
-MESHCORE_OCV_MILLIVOLTS = _parse_ocv_millivolts(
-    os.environ.get("MESHCORE_OCV_MILLIVOLTS")
-)
-"""Optional override for the battery-estimate discharge curve.
+def _parse_ocv_millivolts(
+    raw_value: str | None,
+) -> tuple[tuple[int, ...] | None, dict[str, tuple[int, ...]]]:
+    """Parse a ``MESHCORE_OCV_MILLIVOLTS`` discharge-curve override.
 
-Set as ascending comma-separated millivolts (0% → 100%).  ``None`` (unset or
-invalid) means the built-in 1S Li-ion curve in
-``protocols.meshcore.telemetry`` is used.  Only consulted when
+    The value is one or more curves separated by ``|``.  Each curve is the
+    open-circuit voltages in **millivolts, ascending** (0% first, 100% last,
+    e.g. ``3100,3300,...,4190``).  A curve whose first comma-separated entry
+    is a node id (``!xxxxxxxx``) applies only to that node; a curve without
+    one applies globally (to every node lacking its own curve)::
+
+        3100,3300,...,4190|!abc12345,3000,3500,4100|!def67890,3200,4200
+
+    The estimator walks each curve from full toward empty, so the parsed
+    tuples are stored reversed.  Any number of points ``>= 2`` is accepted —
+    the interpolation divides 0–100% evenly across the segments.  An invalid
+    curve (or node id) drops just that curve with a warning rather than
+    raising (the fail-safe posture of :func:`_env_flag`): a typo costs the
+    operator one custom curve, never ingestor startup.  When the same node —
+    or the global slot — is given twice, the later curve wins with a warning.
+
+    Parameters:
+        raw_value: Raw environment string.
+
+    Returns:
+        ``(global_curve, per_node_curves)`` — the global descending tuple or
+        ``None``, and a dict of canonical node id → descending tuple.
+    """
+
+    global_curve: tuple[int, ...] | None = None
+    per_node: dict[str, tuple[int, ...]] = {}
+    if raw_value is None or not raw_value.strip():
+        return None, per_node
+    # Imported lazily: node_identity is dependency-free, but config is imported
+    # extremely early and keeps its module graph minimal on purpose.
+    from .node_identity import canonical_node_id
+
+    for raw_curve in raw_value.split("|"):
+        if not raw_curve.strip():
+            continue
+        head, _, rest = raw_curve.partition(",")
+        node_id: str | None = None
+        if head.strip().startswith("!"):
+            node_id = canonical_node_id(head.strip())
+            if node_id is None:
+                _debug_log(
+                    "Unparseable MESHCORE_OCV_MILLIVOLTS node id; curve ignored",
+                    context="config",
+                    severity="warning",
+                    value=head.strip(),
+                )
+                continue
+            raw_curve = rest
+        curve = _parse_ocv_curve(raw_curve)
+        if curve is None:
+            continue
+        if node_id is None:
+            if global_curve is not None:
+                _debug_log(
+                    "Duplicate global MESHCORE_OCV_MILLIVOLTS curve; "
+                    "later curve wins",
+                    context="config",
+                    severity="warning",
+                )
+            global_curve = curve
+        else:
+            if node_id in per_node:
+                _debug_log(
+                    "Duplicate MESHCORE_OCV_MILLIVOLTS curve for node; "
+                    "later curve wins",
+                    context="config",
+                    severity="warning",
+                    node_id=node_id,
+                )
+            per_node[node_id] = curve
+    return global_curve, per_node
+
+
+(
+    MESHCORE_OCV_MILLIVOLTS,
+    MESHCORE_OCV_MILLIVOLTS_BY_NODE,
+) = _parse_ocv_millivolts(os.environ.get("MESHCORE_OCV_MILLIVOLTS"))
+"""Optional overrides for the battery-estimate discharge curve.
+
+:data:`MESHCORE_OCV_MILLIVOLTS` is the global curve (descending tuple) or
+``None``, meaning the built-in 1S Li-ion curve in
+``protocols.meshcore.telemetry`` is used.
+:data:`MESHCORE_OCV_MILLIVOLTS_BY_NODE` maps canonical node ids to per-node
+curves, which take precedence over the global one.  Only consulted when
 :data:`MESHCORE_ESTIMATE_BATTERY` is on."""
 
 

@@ -202,7 +202,7 @@ _NO_BATTERY_MARGIN_MILLIVOLTS: int = 500
 installed and emit no estimate rather than 0%."""
 
 
-def _voltage_to_battery_level(voltage) -> int | None:
+def _voltage_to_battery_level(voltage, node_id: str | None = None) -> int | None:
     """Estimate a battery percentage from voltage via a 1S Li-ion discharge curve.
 
     MeshCore firmware reports battery state as a raw voltage only.  Linear
@@ -210,10 +210,14 @@ def _voltage_to_battery_level(voltage) -> int | None:
     and clamped to 0–100, so battery percentages in the shared
     ``battery_level`` column are comparable.  The built-in table can be
     replaced per deployment via ``MESHCORE_OCV_MILLIVOLTS``
-    (:data:`config.MESHCORE_OCV_MILLIVOLTS`, already reversed to descending).
+    (:data:`config.MESHCORE_OCV_MILLIVOLTS`, already reversed to descending),
+    and per node via :data:`config.MESHCORE_OCV_MILLIVOLTS_BY_NODE`, which
+    takes precedence over both.
 
     Parameters:
         voltage: Single-cell battery voltage in volts.
+        node_id: Canonical node id the reading belongs to, used to select a
+            per-node curve override.
 
     Returns:
         Estimated percentage 0–100, or ``None`` when the input is not a
@@ -221,7 +225,12 @@ def _voltage_to_battery_level(voltage) -> int | None:
     """
     if isinstance(voltage, bool) or not isinstance(voltage, (int, float)):
         return None
-    ocv = config.MESHCORE_OCV_MILLIVOLTS or _MESHCORE_OCV_MILLIVOLTS
+    per_node = getattr(config, "MESHCORE_OCV_MILLIVOLTS_BY_NODE", None) or {}
+    ocv = (
+        (per_node.get(node_id) if node_id else None)
+        or config.MESHCORE_OCV_MILLIVOLTS
+        or _MESHCORE_OCV_MILLIVOLTS
+    )
     millivolts = float(voltage) * 1000.0
     if millivolts < ocv[-1] - _NO_BATTERY_MARGIN_MILLIVOLTS:
         return None
@@ -310,7 +319,7 @@ def _queue_meshcore_telemetry(
     if config.MESHCORE_ESTIMATE_BATTERY:
         device = section.get("deviceMetrics")
         if isinstance(device, Mapping) and "batteryLevel" not in device:
-            estimate = _voltage_to_battery_level(device.get("voltage"))
+            estimate = _voltage_to_battery_level(device.get("voltage"), node_id)
             if estimate is not None:
                 section = {
                     **section,
